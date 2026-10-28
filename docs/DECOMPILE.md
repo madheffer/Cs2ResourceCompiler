@@ -169,6 +169,59 @@ and use the instanced key table, `KeyTable`'s `Instanced` branch; and path_parti
 whose nodes are CMapPathNode children). Prefab entities (`a:b` id paths) are written as nodes
 of the map.
 
+## Stage 2: brush entity geometry (2026-10-28)
+
+Each brush entity's model (`maps/<map>/entities/<name>_<id>.vmdl_c`) gives back its hulls
+(`Maps/Decompile/BrushGeometry.cs`), one CMapMesh per hull under the entity:
+
+- **Faces**: the hull's own (RnHull half-edges: next, twin, origin, face), wound counter-clockwise
+  about the outward plane as Hammer's faces are. A hull is its piece's convex hull and its
+  vertices are exactly the piece's welded corners (BrushHulls.Build keeps them), so a convex
+  piece comes back as drawn; a concave one comes back as its hull.
+- **Material**: exact, from the hull's `m_nToolMaterialHash` (MurmurHash2 of the fixed-up name,
+  `ResourceNames.ToolMaterialHash`) looked up over every .vmat in csgo and core pak01 and the
+  package (`BrushGeometry.GameMaterials`). A class with `auto_apply_material` (the triggers)
+  hashes the applied material, which is what it compiles with anyway.
+- **Placement**: the mesh stands at the entity's origin, unturned, as Hammer leaves a mesh drawn
+  under an entity. Each corner is chosen so the compile's two moves (`BrushHulls.PiecesWithCorners`:
+  the mesh's CTransform to the world, the entity's inverse back) land on the hull's vertex bit for
+  bit (`MapDecompiler.CornerFor`): a grid value (1 down to 1/1024) when one lands exactly, else
+  the inverse refined by Newton steps and searched on the world float grid.
+- **Hull order**: the model's part takes its shapes through `WorldCollision.PartOrder`, a CRT qsort
+  on shape type after every insert; with one type that is a fixed permutation of the input, so
+  the meshes are written in its inverse and the hulls come out in the model's order.
+- **Mesh shape**: Hammer's half-edge arrays and streams (`VmapBuilder.AddMesh`), the streams named
+  `<name>:0` as readers find them; texture axes Hammer's world alignment at scale 0.25 (texture
+  coordinates are not recovered).
+
+Measured through our forward (`MapDecompilerTests.BrushPhysics_CompilesAsTheSourceDoes`, our entity
+model builder on the decompile against it on the true source, PHYS block for block):
+
+| map | models | PHYS exact | same hull point sets | differ |
+|---|---|---|---|---|
+| probe01 | 5 | 5 | 0 | 0 |
+| probe_classes | 121 | 86 | 33 | 2 |
+| ze_hold_em_p | 32 | 31 | 1 | 0 |
+| ze_doom_p2_c_gameplay | 274 | 229 | 44 | 1 |
+
+And through Valve's: ze_hold_em_p decompiled and compiled `-world -fshallow` by resourcecompiler
+(38 compiled, 0 failed, where the true source fails 8 models on missing materials): **31 of its 32
+entity models have PHYS equal to Valve's compile of the true source**, the one left a same-point-set
+case. Its lump: every entity equal but the 8 brush entities whose models Valve's own compile failed
+(no geometry reached the package), the keys naming the map, and the light bounds the bake clips
+against world geometry (stage 3).
+
+What is left in stage 2:
+- **Vertex order within a hull** (the same-point-set rows: vertices identical, mass properties and
+  areas differ in the last bits). The compile collects a piece's points through a hash set keyed
+  on their numbering (`BrushHulls.GroupVertices`), the numbering the triangulated faces' first-meet
+  order, and the hull builder's output order follows its input's. Inverting that means choosing the
+  face and corner order that numbers the points into the hull's order.
+- Three models with a corner no searched point places exactly (listed in the test).
+- **Render meshes**: a brush entity with visible faces gets them back from its hulls with world
+  alignment; the render mesh's UVs and render-only faces are not read yet.
+- Triangle-mesh shapes (physicsType mesh), and brush entities whose model the compile failed.
+
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's
@@ -184,8 +237,8 @@ its members), each compiled -world and full.
 1. Done: `s2c decompile-map`, our own vmap 40 writer.
 2. Done for point entities, world layers and templates (stage 1 above); left: instances, paths
    and cables, prefabs.
-3. Brush entities from their entity models (PHYS hulls and render mesh), tool materials from the
-   collision attributes, as VRF does but with the vertex formats we already decode (`Vbib`).
+3. Brush entities from their entity models: hulls done (stage 2); left the hull vertex order,
+   render meshes (UVs, render-only faces) and triangle-mesh shapes.
 4. World meshes from the world node, split by whatever per-source-mesh identity the compile
    keeps, not by connectivity. Which ids survive (draw call / fragment indices, node ids) is not
    known yet: settle it from the decompile of the world builder before writing this step.

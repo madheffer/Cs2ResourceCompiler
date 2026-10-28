@@ -642,7 +642,7 @@ internal static class Commands
 
         var files = Maps.Decompile.MapDecompiler.ReadPackage(path);
         var map = Maps.Decompile.MapDecompiler.MapNameOf(files);
-        var result = Maps.Decompile.MapDecompiler.Decompile(files, map, schema);
+        var result = Maps.Decompile.MapDecompiler.Decompile(files, map, schema, Maps.Decompile.BrushGeometry.GameMaterials(game));
         File.WriteAllBytes(outPath, result.Vmap);
 
         Console.WriteLine($"{map}: {result.Entities.Count:n0} entities, {result.Placeholders:n0} placeholders");

@@ -123,6 +123,196 @@ public sealed class VmapBuilder
         return layer;
     }
 
+    /// <summary>
+    /// A CMapMesh under <paramref name="parent"/>: the polygons (corners in the node's space,
+    /// counter-clockwise from outside), each with an index into <paramref name="materials"/>.
+    /// Corners at the same position are one vertex. The node's fields are a Hammer save's for
+    /// a mesh nobody changed (probe_classes' brush meshes); the texture axes are Hammer's
+    /// world alignment, picked by the face normal's largest component, at scale 0.25 as those
+    /// meshes hold. Texture coordinates follow the axes at an assumed 512 texels: they are
+    /// not recovered.
+    /// </summary>
+    /// <param name="vertexOrder">The vertices' order, where it matters (a hull's, which the
+    /// compile's hull builder reads them in); the rest follow by first use.</param>
+    public DmxBinary.Element AddMesh(DmxBinary.Element parent, int nodeId, Vector3 origin, Vector3 angles,
+                                     IReadOnlyList<(Vector3[] Corners, int Material)> faces, IReadOnlyList<string> materials,
+                                     IReadOnlyList<Vector3>? vertexOrder = null)
+    {
+        // Vertices welded by exact position, in the order given, then first-use order.
+        var vertexOf = new Dictionary<Vector3, int>();
+        var positions = new List<Vector3>();
+        foreach (var v in vertexOrder ?? [])
+            if (vertexOf.TryAdd(v, positions.Count))
+                positions.Add(v);
+        var loops = faces.Select(f => f.Corners.Select(c =>
+        {
+            if (!vertexOf.TryGetValue(c, out var v))
+            {
+                vertexOf[c] = v = positions.Count;
+                positions.Add(c);
+            }
+            return v;
+        }).ToArray()).ToList();
+
+        // Half-edges in opposite pairs (2k, 2k + 1). An edge points TO a vertex, and a face's
+        // corners are its edges' targets along next (MapMeshes.LocalFaces).
+        var to = new List<int>();
+        var face = new List<int>();
+        var next = new List<int>();
+        var pairOf = new Dictionary<(int From, int To), int>();
+        var faceFirst = new int[loops.Count];
+        for (var f = 0; f < loops.Count; f++)
+        {
+            var loop = loops[f];
+            var ids = new int[loop.Length];
+            for (var i = 0; i < loop.Length; i++)
+            {
+                var (a, b) = (loop[(i + loop.Length - 1) % loop.Length], loop[i]);
+                if (!pairOf.TryGetValue((a, b), out var e))
+                {
+                    e = to.Count;
+                    to.Add(b); face.Add(-1); next.Add(-1);
+                    to.Add(a); face.Add(-1); next.Add(-1);
+                    pairOf[(a, b)] = e;
+                    pairOf[(b, a)] = e + 1;
+                }
+                face[e] = f;
+                ids[i] = e;
+            }
+            for (var i = 0; i < loop.Length; i++)
+                next[ids[i]] = ids[(i + 1) % loop.Length];
+            faceFirst[f] = ids[0];
+        }
+        // An edge with no face (an open mesh) runs round its boundary: its next is the
+        // faceless edge leaving its target.
+        for (var e = 0; e < to.Count; e++)
+            if (face[e] < 0)
+                next[e] = Enumerable.Range(0, to.Count).FirstOrDefault(x => face[x] < 0 && to[x ^ 1] == to[e], e);
+        var vertexEdge = new int[positions.Count];
+        for (var e = to.Count - 1; e >= 0; e--)
+            vertexEdge[to[e ^ 1]] = e;
+
+        var normals = faces.Select(f => Vector3.Normalize(Newell(f.Corners))).ToArray();
+        var axes = normals.Select(WorldAxes).ToArray();
+        var texcoords = new object?[to.Count];
+        var cornerNormals = new object?[to.Count];
+        var tangents = new object?[to.Count];
+        for (var e = 0; e < to.Count; e++)
+        {
+            var f = Math.Max(face[e], 0);
+            var (u, v) = axes[f];
+            var p = positions[to[e]];
+            texcoords[e] = new Vector2(Vector3.Dot(p, u) / (TextureScale * 512f), Vector3.Dot(p, v) / (TextureScale * 512f));
+            cornerNormals[e] = normals[f];
+            var sign = Vector3.Dot(Vector3.Cross(normals[f], u), v) < 0 ? -1f : 1f;
+            tangents[e] = new Vector4(u, sign);
+        }
+
+        static object?[] Ints(IEnumerable<int> xs) => xs.Select(x => (object?)x).ToArray();
+        var data = New("CDmePolygonMesh", "meshData")
+            .Set("vertexEdgeIndices", T.Array(T.Int), Ints(vertexEdge))
+            .Set("vertexDataIndices", T.Array(T.Int), Ints(Enumerable.Range(0, positions.Count)))
+            .Set("edgeVertexIndices", T.Array(T.Int), Ints(to))
+            .Set("edgeOppositeIndices", T.Array(T.Int), Ints(Enumerable.Range(0, to.Count).Select(e => e ^ 1)))
+            .Set("edgeNextIndices", T.Array(T.Int), Ints(next))
+            .Set("edgeFaceIndices", T.Array(T.Int), Ints(face))
+            .Set("edgeDataIndices", T.Array(T.Int), Ints(Enumerable.Range(0, to.Count).Select(e => e / 2)))
+            .Set("edgeVertexDataIndices", T.Array(T.Int), Ints(Enumerable.Range(0, to.Count)))
+            .Set("faceEdgeIndices", T.Array(T.Int), Ints(faceFirst))
+            .Set("faceDataIndices", T.Array(T.Int), Ints(Enumerable.Range(0, loops.Count)))
+            .Set("materials", T.Array(T.String), materials.Cast<object?>().ToArray())
+            .Set("vertexData", T.Element, DataArray(positions.Count,
+                Stream("position", 3, T.Vector3, positions.Cast<object?>().ToArray())))
+            .Set("faceVertexData", T.Element, DataArray(to.Count,
+                Stream("texcoord", 1, T.Vector2, texcoords),
+                Stream("normal", 1, T.Vector3, cornerNormals),
+                Stream("tangent", 1, T.Vector4, tangents)))
+            .Set("edgeData", T.Element, DataArray(to.Count / 2,
+                Stream("flags", 3, T.Int, Ints(new int[to.Count / 2]))))
+            .Set("faceData", T.Element, DataArray(loops.Count,
+                Stream("textureScale", 0, T.Vector2, loops.Select(_ => (object?)new Vector2(TextureScale, TextureScale)).ToArray()),
+                Stream("textureAxisU", 0, T.Vector4, axes.Select(a => (object?)new Vector4(a.U, 0)).ToArray()),
+                Stream("textureAxisV", 0, T.Vector4, axes.Select(a => (object?)new Vector4(a.V, 0)).ToArray()),
+                Stream("materialindex", 8, T.Int, Ints(faces.Select(f => f.Material))),
+                Stream("flags", 3, T.Int, Ints(new int[loops.Count])),
+                Stream("lightmapScaleBias", 1, T.Int, Ints(new int[loops.Count]))))
+            .Set("subdivisionData", T.Element, New("CDmePolygonMeshSubdivisionData")
+                .Set("subdivisionLevels", T.Array(T.Int), Ints(new int[to.Count]))
+                .Set("streams", T.Array(T.Element), Array.Empty<object?>()));
+
+        var mesh = New("CMapMesh");
+        Node(mesh, nodeId, ReferenceId(nodeId));
+        mesh.Set("cubeMapName", T.String, "")
+            .Set("lightGroup", T.String, "")
+            .Set("visexclude", T.Bool, false)
+            .Set("disablemerging", T.Bool, false)
+            .Set("renderwithdynamic", T.Bool, false)
+            .Set("disableHeightDisplacement", T.Bool, false)
+            .Set("fademindist", T.Float, -1f)
+            .Set("fademaxdist", T.Float, 0f)
+            .Set("bakelighting", T.Bool, true)
+            .Set("precomputelightprobes", T.Bool, true)
+            .Set("renderToCubemaps", T.Bool, true)
+            .Set("emissiveLightingEnabled", T.Bool, true)
+            .Set("emissiveLightingBoost", T.Float, 1f)
+            .Set("disableShadows", T.Int, 0)
+            .Set("lightingDummy", T.Bool, false)
+            .Set("smoothingAngle", T.Float, 40f)
+            .Set("tintColor", T.Color, new byte[] { 255, 255, 255, 255 })
+            .Set("renderAmt", T.Int, 255)
+            .Set("physicsType", T.String, "default")
+            .Set("physicsGroup", T.String, "")
+            .Set("physicsInteractsAs", T.String, "")
+            .Set("physicsInteractsWith", T.String, "")
+            .Set("physicsInteractsExclude", T.String, "")
+            .Set("meshData", T.Element, data)
+            .Set("physicsSimplificationOverride", T.Bool, false)
+            .Set("physicsSimplificationError", T.Float, 0f);
+        Placement(mesh, origin, angles, Vector3.One);
+        Flags(mesh);
+        AddChild(parent, mesh);
+        return mesh;
+    }
+
+    private const float TextureScale = 0.25f;
+
+    /// <summary>Hammer's world alignment: a face mostly facing z maps x and -y, one facing y
+    /// maps x and -z, one facing x maps y and -z (probe_classes' box brushes).</summary>
+    private static (Vector3 U, Vector3 V) WorldAxes(Vector3 n)
+    {
+        var a = Vector3.Abs(n);
+        return a.Z >= a.X && a.Z >= a.Y ? (Vector3.UnitX, -Vector3.UnitY)
+             : a.Y >= a.X ? (Vector3.UnitX, -Vector3.UnitZ)
+             : (Vector3.UnitY, -Vector3.UnitZ);
+    }
+
+    private static Vector3 Newell(Vector3[] loop)
+    {
+        var n = Vector3.Zero;
+        for (var i = 0; i < loop.Length; i++)
+        {
+            var (a, b) = (loop[i], loop[(i + 1) % loop.Length]);
+            n += new Vector3((a.Y - b.Y) * (a.Z + b.Z), (a.Z - b.Z) * (a.X + b.X), (a.X - b.X) * (a.Y + b.Y));
+        }
+        return n;
+    }
+
+    private DmxBinary.Element DataArray(int size, params DmxBinary.Element[] streams)
+        => New("CDmePolygonMeshDataArray").Set("size", T.Int, size).Set("streams", T.Array(T.Element), streams.Cast<object?>().ToArray());
+
+    /// <summary>A data stream as Hammer writes a standard one: the element named
+    /// "&lt;name&gt;:&lt;semantic index&gt;", which is how readers find it (MapMeshes.Stream); name,
+    /// semantic and state flags as probe_classes' meshes hold them.</summary>
+    private DmxBinary.Element Stream(string name, int stateFlags, byte scalar, object?[] data)
+        => New("CDmePolygonMeshDataStream", name + ":0")
+            .Set("standardAttributeName", T.String, name)
+            .Set("semanticName", T.String, name)
+            .Set("semanticIndex", T.Int, 0)
+            .Set("vertexBufferLocation", T.Int, 0)
+            .Set("dataStateFlags", T.Int, stateFlags)
+            .Set("subdivisionBinding", T.Element, null)
+            .Set("data", T.Array(scalar), data);
+
     /// <summary>The file: vmap 40, binary 9.</summary>
     public byte[] Write()
     {
@@ -177,7 +367,7 @@ public sealed class VmapBuilder
             .Set("delay", T.Float, c.Delay)
             .Set("timesToFire", T.Int, c.TimesToFire)).ToArray();
 
-    private DmxBinary.Element New(string type) => DmxBinary.NewElement(type, "", NextGuid());
+    private DmxBinary.Element New(string type, string name = "") => DmxBinary.NewElement(type, name, NextGuid());
 
     private Guid NextGuid()
     {

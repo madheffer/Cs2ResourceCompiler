@@ -33,7 +33,10 @@ public static class MapDecompiler
 
     /// <summary>Decompile the map in <paramref name="files"/> (path to bytes: a package's
     /// entries) named <paramref name="mapName"/>.</summary>
-    public static Result Decompile(IReadOnlyDictionary<string, byte[]> files, string mapName, FgdSchema schema)
+    /// <param name="materials">Tool material hash to name (<see cref="BrushGeometry.MaterialTable"/>) over the
+    /// game's materials; the package's own are added. Null: the package's only.</param>
+    public static Result Decompile(IReadOnlyDictionary<string, byte[]> files, string mapName, FgdSchema schema,
+                                   IReadOnlyDictionary<uint, string>? materials = null)
     {
         var notes = new List<string>();
         var lumps = files.Where(f => f.Key.EndsWith(".vents_c", StringComparison.OrdinalIgnoreCase)
@@ -68,14 +71,16 @@ public static class MapDecompiler
                 continue;
             if (source.IdPath.Contains(':'))
                 notes.Add($"{source.Entity.ClassName} {source.IdPath}: placed by a prefab; written as a node of the map");
-            if (source.BrushModel is not null)
-                notes.Add($"{source.Entity.ClassName} {source.IdPath}: brush geometry ({source.BrushModel}) not rebuilt");
             // A world layer ships as world_layer_<name> (EntityLumpSet).
             var lumpName = Path.GetFileNameWithoutExtension(lump);
             if (lumpName.StartsWith(LayerLumpPrefix, StringComparison.OrdinalIgnoreCase))
                 layerOf[source] = lumpName[LayerLumpPrefix.Length..];
             entities.Add(source);
         }
+
+        var table = new Dictionary<uint, string>(materials ?? new Dictionary<uint, string>());
+        foreach (var (hash, name) in BrushGeometry.MaterialTable(files.Keys.Where(k => k.EndsWith(".vmat_c", StringComparison.OrdinalIgnoreCase))))
+            table.TryAdd(hash, name);
 
         var world = entities.FirstOrDefault(e => e.Entity.IsWorld)
                     ?? throw new InvalidDataException("no worldspawn in the lumps");
@@ -108,14 +113,143 @@ public static class MapDecompiler
                 layerNode = builder.AddLayer(nextNode++, layer);
             openLayer = layer;
             var x = e.Entity;
-            builder.AddEntity(x.NodeId, x.Keys, x.Origin, x.Angles, x.Scales, x.Connections,
-                              parent: layer is null ? null : layerNode);
+            var node = builder.AddEntity(x.NodeId, x.Keys, x.Origin, x.Angles, x.Scales, x.Connections,
+                                         parent: layer is null ? null : layerNode);
+            if (e.BrushModel is { } model)
+                nextNode = AddBrushGeometry(builder, node, e, model, files, table, notes, nextNode);
             at = e.SourceId + 1;
         }
         if (placeholders > 0)
             notes.Add($"{placeholders} walk positions shipped nothing (hidden, editor-only or compile-only nodes); filled with editor-only {PlaceholderClass}");
 
         return new Result(builder.Write(), entities, placeholders, notes);
+    }
+
+    /// <summary>
+    /// A brush entity's meshes from its model (<see cref="BrushGeometry"/>): one mesh per hull,
+    /// placed where the entity is, its corners the hull's in the entity's space, so the
+    /// compile's move into the entity's space (BrushHulls.Pieces) is the identity. Returns the
+    /// next free node id.
+    /// </summary>
+    private static int AddBrushGeometry(VmapBuilder builder, DmxBinary.Element node, EntityLumpAuthor.SourceEntity e, string model,
+                                        IReadOnlyDictionary<string, byte[]> files, IReadOnlyDictionary<uint, string> table,
+                                        List<string> notes, int nextNode)
+    {
+        var label = $"{e.Entity.ClassName} {e.IdPath}";
+        if (!files.TryGetValue(model + "_c", out var bytes))
+        {
+            notes.Add($"{label}: its model {model} is not in the package (the compile failed it); no geometry");
+            return nextNode;
+        }
+        var geometry = BrushGeometry.Read(bytes, table);
+        // The mesh node stands at the entity's origin, unturned, as Hammer leaves a mesh drawn
+        // under an entity (probe_classes). Each corner is the point the compile's two moves
+        // (BrushHulls.PiecesWithCorners: the mesh's CTransform to the world, the entity's
+        // inverse back) take to the hull's vertex, bit for bit where one exists.
+        var meshNode = DmxBinary.NewElement("CMapMesh", "", Guid.Empty);
+        meshNode.Attributes["origin"] = e.Entity.Origin;
+        meshNode.Attributes["angles"] = Vector3.Zero;
+        var entityNode = DmxBinary.NewElement("CMapEntity", "", Guid.Empty);
+        entityNode.Attributes["origin"] = e.Entity.Origin;
+        // The entity's angles as the .vmap's reader will hold them (MapNodeAngles).
+        entityNode.Attributes["angles"] = SettleWorld.SetAngles(e.Entity.Angles);
+        var toWorld = CTransform.FromNode(meshNode).Matrix();
+        var toEntity = CTransform.FromNode(entityNode).Inverse().Matrix();
+        var fromEntity = CTransform.FromNode(entityNode).Matrix();
+        var fitted = new Dictionary<Vector3, Vector3>();
+        Vector3 Fit(Vector3 h)
+        {
+            if (!fitted.TryGetValue(h, out var v))
+                fitted[h] = v = CornerFor(h, e.Entity.Origin, toWorld, toEntity, fromEntity);
+            return v;
+        }
+        // The model's part takes its shapes through PartOrder, a CRT qsort on shape type after
+        // every insert: with one type that is a fixed permutation of the input, which the meshes
+        // are written in the inverse of, so the hulls come out in the model's order.
+        var count = geometry.Pieces.Count;
+        var placedAt = Physics.WorldCollision.PartOrder(Enumerable.Range(0, count), _ => 0);
+        var input = new BrushGeometry.Piece[count];
+        for (var k = 0; k < count; k++)
+            input[placedAt[k]] = geometry.Pieces[k];
+        foreach (var piece in input)
+            builder.AddMesh(node, nextNode++, e.Entity.Origin, Vector3.Zero,
+                            [.. piece.Faces.Select(f => (f.Select(Fit).ToArray(), 0))], [piece.Material],
+                            [.. piece.Vertices.Select(Fit)]);
+        if (geometry.HasRender)
+            notes.Add($"{label}: render mesh not read (texture alignment and render-only faces are not recovered)");
+        if (geometry.TriangleMeshes > 0)
+            notes.Add($"{label}: {geometry.TriangleMeshes} triangle-mesh shape(s) not read");
+        if (geometry.UnknownMaterials.Count > 0)
+            notes.Add($"{label}: {geometry.UnknownMaterials.Count} hull(s) with a material hash no known material has");
+        if (geometry.Pieces.Count == 0)
+            notes.Add($"{label}: its model has no hulls; no geometry");
+        return nextNode;
+    }
+
+    /// <summary>
+    /// The corner of an unturned mesh at <paramref name="meshOrigin"/> that the compile's two moves
+    /// (the mesh's CTransform to the world, the entity's inverse back; BrushHulls.PiecesWithCorners)
+    /// place exactly on <paramref name="target"/>. A grid value is tried first; else the world point
+    /// is refined from the inverse placement, then searched on the float grid round it, up to 4
+    /// steps a side: far from the origin that grid is
+    /// coarse, and the source's own corner went through it. The mesh's move is then a plain add
+    /// (its matrix is the identity and the origin), which the corner minus the origin undoes
+    /// exactly. With no exact point in reach, the nearest one found.
+    /// </summary>
+    internal static Vector3 CornerFor(Vector3 target, Vector3 meshOrigin, float[] toWorld, float[] toEntity, float[] fromEntity)
+    {
+        Vector3 Place(Vector3 v) => MapMeshes.Transform(toEntity, MapMeshes.Transform(toWorld, v));
+        static long Key(float f) { var i = BitConverter.SingleToInt32Bits(f); return i < 0 ? int.MinValue - (long)i : i; }
+        static long Ulps(Vector3 a, Vector3 b) => Math.Abs(Key(a.X) - Key(b.X)) + Math.Abs(Key(a.Y) - Key(b.Y)) + Math.Abs(Key(a.Z) - Key(b.Z));
+        static float Step(float f, int by)
+        {
+            for (; by > 0; by--) f = MathF.BitIncrement(f);
+            for (; by < 0; by++) f = MathF.BitDecrement(f);
+            return f;
+        }
+
+        // A corner drawn on Hammer's grid: the inverse placement rounded to a power-of-two grid,
+        // kept only where the compile places it exactly on the target, so nothing is assumed.
+        var world = MapMeshes.Transform(fromEntity, target);
+        for (var grid = 1f; grid >= 1f / 1024; grid /= 2)
+        {
+            var local = world - meshOrigin;
+            var snapped = new Vector3(MathF.Round(local.X / grid) * grid, MathF.Round(local.Y / grid) * grid, MathF.Round(local.Z / grid) * grid);
+            if (Place(snapped) == target)
+                return snapped;
+        }
+        // Else the nearest float: the two matrices are not exact inverses, and far from the origin
+        // the error grows past any small window, so a few Newton steps first, the residual taken
+        // back through the entity's rotation in double.
+        for (var i = 0; i < 8; i++)
+        {
+            var placed = Place(world - meshOrigin);
+            if (placed == target)
+                break;
+            double rx = (double)target.X - placed.X, ry = (double)target.Y - placed.Y, rz = (double)target.Z - placed.Z;
+            world = new Vector3(
+                (float)(world.X + (fromEntity[0] * rx) + (fromEntity[1] * ry) + (fromEntity[2] * rz)),
+                (float)(world.Y + (fromEntity[4] * rx) + (fromEntity[5] * ry) + (fromEntity[6] * rz)),
+                (float)(world.Z + (fromEntity[8] * rx) + (fromEntity[9] * ry) + (fromEntity[10] * rz)));
+        }
+        var best = world - meshOrigin;
+        var error = Ulps(Place(best), target);
+        for (var r = 0; r <= 4 && error > 0; r++)
+            for (var dx = -r; dx <= r; dx++)
+                for (var dy = -r; dy <= r; dy++)
+                    for (var dz = -r; dz <= r; dz++)
+                    {
+                        if (Math.Max(Math.Abs(dx), Math.Max(Math.Abs(dy), Math.Abs(dz))) != r)
+                            continue;
+                        var w = new Vector3(Step(world.X, dx), Step(world.Y, dy), Step(world.Z, dz));
+                        var v = w - meshOrigin;
+                        var e = Ulps(Place(v), target);
+                        if (e < error)
+                            (best, error) = (v, e);
+                        if (error == 0)
+                            return best;
+                    }
+        return best;
     }
 
     private static bool IsTemplateLump(string path) => Path.GetFileName(path).Contains('#');
