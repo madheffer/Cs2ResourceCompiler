@@ -77,6 +77,13 @@
   "evidence": "atixref ropes fail"
  },
  {
+  "module": "Entities",
+  "subtask": "Settled physics props (pose and Start asleep kept)",
+  "weight": 2,
+  "done": 1,
+  "evidence": "atixref 81 props exact with the settle on both sides"
+ },
+ {
   "module": "Brush entities",
   "subtask": "Hull geometry as convex meshes",
   "weight": 4,

@@ -55,10 +55,13 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         var decompiled = Maps.MapNodeAngles.Apply(DmxBinary.Read(result.Vmap));
         var truth = DmxBinary.ReadFile(source);
 
-        var ours = Lumps(decompiled, map, schema, source, result);
-        var expected = Lumps(truth, map, schema, source);
+        // Both sides settle as the compile does. A prop Valve's settle put to sleep ships with "Start
+        // asleep", which the settle skips (SettleWorld.IsEligible), so the decompile's settled pose
+        // stands; where the settle refuses the source, neither side settles.
+        var (expected, settled) = Lumps(truth, map, schema, source, settle: true);
+        var (ours, _) = Lumps(decompiled, map, schema, source, settled, result);
         output.WriteLine($"{map}: {result.Entities.Count} entities, {result.Placeholders} placeholders, {result.Notes.Count} notes, " +
-                         $"{result.Vmap.Length:n0} bytes");
+                         $"{result.Vmap.Length:n0} bytes{(settled ? "" : ", not settled")}");
         foreach (var note in result.Notes.GroupBy(n => Regex.Replace(n, @"^\S+ \S+: ", "")).Take(15))
             output.WriteLine($"  note x{note.Count()}: {note.Key}");
 
@@ -267,18 +270,23 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
 
     /// <summary>The lumps our author makes of a map, as EntityLumpAgainstValveTests builds them:
     /// prefabs attached from the addon's content and deformers applied, the document passed so
-    /// instances are collapsed.</summary>
-    private static Dictionary<string, byte[]> Lumps(DmxBinary.Document document, string map, FgdSchema schema, string source,
-                                                    MapDecompiler.Result? decompiled = null)
+    /// instances are collapsed, and settled when <paramref name="settle"/> and the settle takes the
+    /// map (whether it did is returned).</summary>
+    private static (Dictionary<string, byte[]> Lumps, bool Settled) Lumps(DmxBinary.Document document, string map, FgdSchema schema,
+                                                                       string source, bool settle, MapDecompiler.Result? decompiled = null)
     {
         Maps.MapPrefabs.Attach(document, decompiled is null
             ? Maps.MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!)
             : PrefabLoader(decompiled));
         Maps.MapDeformers.Apply(document, schema);
+        Dictionary<string, Maps.SettleWorld.Settlement>? settled = null;
+        if (settle)
+            try { settled = SettleLumpTests.Settle(document, source); }
+            catch (NotSupportedException) { }
         // With the smart props' locators, which take node ids before any instance copy
         // (EntityLumpAgainstValveTests passes them too): atixref's radiator moves every copy id by one.
-        return EntityLumpSet.Author(MapEntities.From(document), schema, map, MapEntities.FixupEntityNames(document), document,
-                                    MapFixtures.SmartPropLocators)
-                            .ToDictionary(l => l.Path, l => l.Bytes, StringComparer.OrdinalIgnoreCase);
+        return (EntityLumpSet.Author(MapEntities.From(document), schema, map, MapEntities.FixupEntityNames(document), document,
+                                     MapFixtures.SmartPropLocators, settled)
+                             .ToDictionary(l => l.Path, l => l.Bytes, StringComparer.OrdinalIgnoreCase), settled is not null);
     }
 }

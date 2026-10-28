@@ -372,10 +372,22 @@ atixref: 199 copies rebuilt as 143 instances of 13 groups and one nested group (
 631's, 4 second-round collapses, blocks 7881 to 7888), every group solved on its first frame
 candidate; every copy compiles as Valve's, ids and lump order included. (The first version's count
 of 197 was read off the test's first 40 lines; the test had 848 differences, most from the block
-order above.) Left on atixref, none of them instances: 81 prop_physics that Valve's package holds
-where the settle left them (the test settles neither side, so the authored placement is not
-recovered: settle inversion is open), 9 template-lump angles, the 4 rope paths and light 6478's
-precomputed bounds.
+order above.) Left on atixref, none of them instances: 9 template-lump angles (with prop 258's), the
+4 rope paths and light 6478's precomputed bounds.
+
+### Settled props
+
+The compile settles every prop that can move (docs/SETTLE.md) and writes its settled origin and
+angles back, and "Start asleep" when every body fell asleep. The authored pose is not in the
+package: the settle is a 30 s physics run, many poses to one, so it does not invert. But it does not
+need to: the settle skips a prop that has "Start asleep" (`SettleWorld.IsEligible`, from
+FUN_180f1e490's list), so the decompile writes the settled pose and flag as the package holds them,
+and the recompile keeps them. Hammer shows the props where they rest in game. The test settles both
+sides as the compile does (`SettleLumpTests.Settle`; neither side when the settle refuses the
+source): atixref's 81 settled props compile exactly as Valve's, and the atixref-based probes 3 and
+4 drop from 219 to 36 and 479 to 251 differences. Open: a prop that settles but does not fall
+asleep ships without the flag and would be settled again from its resting pose; none of atixref's 81 is
+one.
 
 ## Ground truth for the decompiler
 
