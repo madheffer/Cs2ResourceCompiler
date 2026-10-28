@@ -675,7 +675,7 @@ public static partial class SettleWorld
     /// the angle folded into [-90, 90] (sine) or [0, 180] (cosine), then the
     /// products in float.
     /// </summary>
-    private static float[] AngleMatrixDouble(Vector3 angles, Vector3 origin)
+    internal static float[] AngleMatrixDouble(Vector3 angles, Vector3 origin)
     {
         static double Fold(float degrees, bool cosine)
         {

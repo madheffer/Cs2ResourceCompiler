@@ -286,6 +286,18 @@ later block by one). Passing: s2c_prefabprobe5 and 7 (an instance in a prefab, a
 another), s2c_prefabinst, s2c_prefabprobe6. Ids the decompile makes up come from below the ones the
 compile shows, so none raises the highest id the blocks start past.
 
+Shared prefab maps (2026-10-28, partial): placements under one parent whose nodes carry the same
+inner ids and compile_source_ids are one map (`MapEntities.SourceIds`); the first in lump order is
+written, the others become CMapPrefab nodes naming its file, their transform worked out from one node
+(the rotation between the two placements' angles, the origin through `SettleWorld.AngleMatrixDouble`
+in double) and checked on every node through `SettleWorld.PrefabPlacement`. Unturned and integer
+placements land; turned ones miss in the last bits (s2c_prefabprobe11: 10 of 73 nodes at 90 degrees,
+34 of 73 at 45; probe 9 likewise). The cause is information the compile erases: a turned placement
+lands bit for bit only in the prefab map's own local frame (where the mapper's prefab origin was),
+and in exact arithmetic every frame shifted by a vector, with the prefab origins moved to match,
+gives the same placements, so only float rounding tells them apart. The same holds for the instance
+copies of a group copied more than once (their group's origin). Open: how that frame is chosen.
+
 Open, all the same gap, several collapses of one template: s2c_prefabprobe3, 4, 9, 11, 12 and atixref
 (nested instances, collapse rounds, and the instance transforms of every copy after the first, to be
 solved exactly through `BakedPlacement`), and instances of the map's own (s2c_prefabprobe8, s2c_pinst7:

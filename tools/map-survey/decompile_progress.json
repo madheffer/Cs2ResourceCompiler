@@ -1,51 +1,296 @@
 [
-  {"module": "Map file", "subtask": "Binary DMX writer, Hammer saves round-trip as graphs", "weight": 2, "done": 1, "evidence": "DmxBinaryWriterTests, 4 Hammer saves"},
-  {"module": "Map file", "subtask": "Element shapes (vmap 40) measured from Hammer saves", "weight": 2, "done": 1, "evidence": "VmapBuilder, vmap_schema.py"},
-  {"module": "Map file", "subtask": "Element shapes and defaults from Hammer's own map code", "weight": 3, "done": 0, "evidence": "resourcecompiler FUN_180fc0fa0 found, not read"},
-  {"module": "Map file", "subtask": "Hammer open and re-save check", "weight": 3, "done": 0, "evidence": "not started"},
-
-  {"module": "Entities", "subtask": "Key tables read back (BuildEntity inverted)", "weight": 4, "done": 1, "evidence": "EntityLumpAuthor.Unbuild, 4 maps exact"},
-  {"module": "Entities", "subtask": "Compile-added keys removed (defaults, light preprocess, bake)", "weight": 2, "done": 1, "evidence": "MapDecompilerTests"},
-  {"module": "Entities", "subtask": "Outputs and [PR#] name fixup", "weight": 2, "done": 1, "evidence": "ze_hold_em_p, 145 outputs"},
-  {"module": "Entities", "subtask": "Point templates and their removed members", "weight": 2, "done": 1, "evidence": "ze_doom_p2_c_gameplay"},
-  {"module": "Entities", "subtask": "World layers", "weight": 1, "done": 1, "evidence": "world_layer_ lumps to CMapWorldLayer"},
-  {"module": "Entities", "subtask": "Walk numbering (compile_source_id) with placeholders", "weight": 2, "done": 1, "evidence": "every passing map"},
-  {"module": "Entities", "subtask": "Paths, ropes and cables (CMapPath, CMapPathNode)", "weight": 3, "done": 0, "evidence": "atixref ropes fail"},
-
-  {"module": "Brush entities", "subtask": "Hull geometry as convex meshes", "weight": 4, "done": 1, "evidence": "351/432 brush models PHYS exact through ours"},
-  {"module": "Brush entities", "subtask": "Materials from the tool material hash", "weight": 2, "done": 1, "evidence": "ResourceNames.ToolMaterialHash inverted"},
-  {"module": "Brush entities", "subtask": "Hull order (PartOrder qsort inverted)", "weight": 1, "done": 1, "evidence": "ze_hold_em_p 31/32"},
-  {"module": "Brush entities", "subtask": "Bit-exact corner placement as an exact solve", "weight": 3, "done": 0.7, "evidence": "search-based today, 3 misses + 2 in prefabs"},
-  {"module": "Brush entities", "subtask": "Hull vertex order (exact solver)", "weight": 3, "done": 0, "evidence": "78 same-point-set models"},
-  {"module": "Brush entities", "subtask": "Render meshes: texture alignment and visible-only faces", "weight": 4, "done": 0, "evidence": "not started"},
-  {"module": "Brush entities", "subtask": "Triangle-mesh physics shapes", "weight": 2, "done": 0, "evidence": "not started"},
-
-  {"module": "Prefabs", "subtask": "Prefab nodes and prefab maps, one placement", "weight": 3, "done": 1, "evidence": "s2c_prefabprobe, 2"},
-  {"module": "Prefabs", "subtask": "Name fixup read back per prefab", "weight": 1, "done": 1, "evidence": "MapDecompiler.PrefabFixups"},
-  {"module": "Prefabs", "subtask": "One prefab map placed several times", "weight": 3, "done": 0, "evidence": "probes 9, 11, 12"},
-  {"module": "Prefabs", "subtask": "Prefabs loaded at runtime (own .vpk)", "weight": 2, "done": 0, "evidence": "not started"},
-
-  {"module": "Instances", "subtask": "Copies inside prefab maps rebuilt as instances", "weight": 3, "done": 1, "evidence": "probes 5, 6, 7, prefabinst"},
-  {"module": "Instances", "subtask": "Copy ids matched through the block allocation", "weight": 2, "done": 1, "evidence": "MapInstances.Expand on the rebuild"},
-  {"module": "Instances", "subtask": "The map's own instances (ids, lump place)", "weight": 3, "done": 0, "evidence": "probe8, s2c_pinst7"},
-  {"module": "Instances", "subtask": "Several collapses of one template, rounds, nesting", "weight": 4, "done": 0, "evidence": "probes 3, 4, 9, 11, 12, atixref"},
-  {"module": "Instances", "subtask": "Exact placement solve for each later instance", "weight": 3, "done": 0, "evidence": "not started"},
-
-  {"module": "World geometry", "subtask": "World meshes from the world node", "weight": 6, "done": 0, "evidence": "not started"},
-  {"module": "World geometry", "subtask": "World physics (world_physics.vmdl_c)", "weight": 3, "done": 0, "evidence": "not started"},
-  {"module": "World geometry", "subtask": "prop_static from scene objects", "weight": 3, "done": 0, "evidence": "not started"},
-  {"module": "World geometry", "subtask": "Overlays and decals", "weight": 2, "done": 0, "evidence": "not started"},
-  {"module": "World geometry", "subtask": "Smart props and clutter", "weight": 2, "done": 0, "evidence": "not started"},
-  {"module": "World geometry", "subtask": "Deformers (path, lattice, simple)", "weight": 2, "done": 0, "evidence": "not started"},
-
-  {"module": "Other map data", "subtask": "Nav settings and markup", "weight": 2, "done": 0, "evidence": "not started"},
-  {"module": "Other map data", "subtask": "Map variables", "weight": 1, "done": 0, "evidence": "not started"},
-  {"module": "Other map data", "subtask": "Scripts: does .vjs_c keep the source", "weight": 2, "done": 0, "evidence": "to check"},
-  {"module": "Other map data", "subtask": "Skybox and spawn-group map links", "weight": 1, "done": 0, "evidence": "not started"},
-
-  {"module": "Verification", "subtask": "Entity lump round trip test", "weight": 2, "done": 1, "evidence": "Entities_CompileAsTheSourceDoes, 13 of 21 maps"},
-  {"module": "Verification", "subtask": "Brush physics round trip test", "weight": 2, "done": 1, "evidence": "BrushPhysics_CompilesAsTheSourceDoes"},
-  {"module": "Verification", "subtask": "Valve resourcecompiler on the decompile", "weight": 2, "done": 0.5, "evidence": "ze_hold_em_p by hand; no harness"},
-  {"module": "Verification", "subtask": "Whole-package parity report per map", "weight": 3, "done": 0, "evidence": "not started"},
-  {"module": "Verification", "subtask": "Workshop corpus sweep", "weight": 2, "done": 0, "evidence": "not started"}
+ {
+  "module": "Map file",
+  "subtask": "Binary DMX writer, Hammer saves round-trip as graphs",
+  "weight": 2,
+  "done": 1,
+  "evidence": "DmxBinaryWriterTests, 4 Hammer saves"
+ },
+ {
+  "module": "Map file",
+  "subtask": "Element shapes (vmap 40) measured from Hammer saves",
+  "weight": 2,
+  "done": 1,
+  "evidence": "VmapBuilder, vmap_schema.py"
+ },
+ {
+  "module": "Map file",
+  "subtask": "Element shapes and defaults from Hammer's own map code",
+  "weight": 3,
+  "done": 0,
+  "evidence": "resourcecompiler FUN_180fc0fa0 found, not read"
+ },
+ {
+  "module": "Map file",
+  "subtask": "Hammer open and re-save check",
+  "weight": 3,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "Entities",
+  "subtask": "Key tables read back (BuildEntity inverted)",
+  "weight": 4,
+  "done": 1,
+  "evidence": "EntityLumpAuthor.Unbuild, 4 maps exact"
+ },
+ {
+  "module": "Entities",
+  "subtask": "Compile-added keys removed (defaults, light preprocess, bake)",
+  "weight": 2,
+  "done": 1,
+  "evidence": "MapDecompilerTests"
+ },
+ {
+  "module": "Entities",
+  "subtask": "Outputs and [PR#] name fixup",
+  "weight": 2,
+  "done": 1,
+  "evidence": "ze_hold_em_p, 145 outputs"
+ },
+ {
+  "module": "Entities",
+  "subtask": "Point templates and their removed members",
+  "weight": 2,
+  "done": 1,
+  "evidence": "ze_doom_p2_c_gameplay"
+ },
+ {
+  "module": "Entities",
+  "subtask": "World layers",
+  "weight": 1,
+  "done": 1,
+  "evidence": "world_layer_ lumps to CMapWorldLayer"
+ },
+ {
+  "module": "Entities",
+  "subtask": "Walk numbering (compile_source_id) with placeholders",
+  "weight": 2,
+  "done": 1,
+  "evidence": "every passing map"
+ },
+ {
+  "module": "Entities",
+  "subtask": "Paths, ropes and cables (CMapPath, CMapPathNode)",
+  "weight": 3,
+  "done": 0,
+  "evidence": "atixref ropes fail"
+ },
+ {
+  "module": "Brush entities",
+  "subtask": "Hull geometry as convex meshes",
+  "weight": 4,
+  "done": 1,
+  "evidence": "351/432 brush models PHYS exact through ours"
+ },
+ {
+  "module": "Brush entities",
+  "subtask": "Materials from the tool material hash",
+  "weight": 2,
+  "done": 1,
+  "evidence": "ResourceNames.ToolMaterialHash inverted"
+ },
+ {
+  "module": "Brush entities",
+  "subtask": "Hull order (PartOrder qsort inverted)",
+  "weight": 1,
+  "done": 1,
+  "evidence": "ze_hold_em_p 31/32"
+ },
+ {
+  "module": "Brush entities",
+  "subtask": "Bit-exact corner placement as an exact solve",
+  "weight": 3,
+  "done": 0.7,
+  "evidence": "search-based today, 3 misses + 2 in prefabs"
+ },
+ {
+  "module": "Brush entities",
+  "subtask": "Hull vertex order (exact solver)",
+  "weight": 3,
+  "done": 0,
+  "evidence": "78 same-point-set models"
+ },
+ {
+  "module": "Brush entities",
+  "subtask": "Render meshes: texture alignment and visible-only faces",
+  "weight": 4,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "Brush entities",
+  "subtask": "Triangle-mesh physics shapes",
+  "weight": 2,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "Prefabs",
+  "subtask": "Prefab nodes and prefab maps, one placement",
+  "weight": 3,
+  "done": 1,
+  "evidence": "s2c_prefabprobe, 2"
+ },
+ {
+  "module": "Prefabs",
+  "subtask": "Name fixup read back per prefab",
+  "weight": 1,
+  "done": 1,
+  "evidence": "MapDecompiler.PrefabFixups"
+ },
+ {
+  "module": "Prefabs",
+  "subtask": "One prefab map placed several times",
+  "weight": 3,
+  "done": 0.4,
+  "evidence": "one shared map + prefab nodes; turned placements miss bits (frame erased)"
+ },
+ {
+  "module": "Prefabs",
+  "subtask": "Prefabs loaded at runtime (own .vpk)",
+  "weight": 2,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "Instances",
+  "subtask": "Copies inside prefab maps rebuilt as instances",
+  "weight": 3,
+  "done": 1,
+  "evidence": "probes 5, 6, 7, prefabinst"
+ },
+ {
+  "module": "Instances",
+  "subtask": "Copy ids matched through the block allocation",
+  "weight": 2,
+  "done": 1,
+  "evidence": "MapInstances.Expand on the rebuild"
+ },
+ {
+  "module": "Instances",
+  "subtask": "The map's own instances (ids, lump place)",
+  "weight": 3,
+  "done": 0,
+  "evidence": "probe8, s2c_pinst7"
+ },
+ {
+  "module": "Instances",
+  "subtask": "Several collapses of one template, rounds, nesting",
+  "weight": 4,
+  "done": 0,
+  "evidence": "probes 3, 4, 9, 11, 12, atixref"
+ },
+ {
+  "module": "Instances",
+  "subtask": "Exact placement solve for each later instance",
+  "weight": 3,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "World geometry",
+  "subtask": "World meshes from the world node",
+  "weight": 6,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "World geometry",
+  "subtask": "World physics (world_physics.vmdl_c)",
+  "weight": 3,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "World geometry",
+  "subtask": "prop_static from scene objects",
+  "weight": 3,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "World geometry",
+  "subtask": "Overlays and decals",
+  "weight": 2,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "World geometry",
+  "subtask": "Smart props and clutter",
+  "weight": 2,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "World geometry",
+  "subtask": "Deformers (path, lattice, simple)",
+  "weight": 2,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "Other map data",
+  "subtask": "Nav settings and markup",
+  "weight": 2,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "Other map data",
+  "subtask": "Map variables",
+  "weight": 1,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "Other map data",
+  "subtask": "Scripts: does .vjs_c keep the source",
+  "weight": 2,
+  "done": 0,
+  "evidence": "to check"
+ },
+ {
+  "module": "Other map data",
+  "subtask": "Skybox and spawn-group map links",
+  "weight": 1,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "Verification",
+  "subtask": "Entity lump round trip test",
+  "weight": 2,
+  "done": 1,
+  "evidence": "Entities_CompileAsTheSourceDoes, 13 of 22 maps"
+ },
+ {
+  "module": "Verification",
+  "subtask": "Brush physics round trip test",
+  "weight": 2,
+  "done": 1,
+  "evidence": "BrushPhysics_CompilesAsTheSourceDoes"
+ },
+ {
+  "module": "Verification",
+  "subtask": "Valve resourcecompiler on the decompile",
+  "weight": 2,
+  "done": 0.5,
+  "evidence": "ze_hold_em_p by hand; no harness"
+ },
+ {
+  "module": "Verification",
+  "subtask": "Whole-package parity report per map",
+  "weight": 3,
+  "done": 0,
+  "evidence": "not started"
+ },
+ {
+  "module": "Verification",
+  "subtask": "Workshop corpus sweep",
+  "weight": 2,
+  "done": 0,
+  "evidence": "not started"
+ }
 ]

@@ -109,6 +109,23 @@ public static class MapDecompiler
         foreach (var e in entities.Where(e => !e.Entity.IsWorld))
             ScopeOf(ChainOf(e.IdPath)).Entities.Add(e);
 
+        // One prefab map placed several times is one source: every placement's nodes carry the
+        // first placement's compile_source_ids (MapEntities.SourceIds), so placements under one
+        // parent whose nodes have the same inner ids and indices are one map. The first in the
+        // walk (the first in lump order) is written; the others are prefab nodes naming its file.
+        int LumpIndex(Scope sc) => sc.Entities.Select(e => entities.IndexOf(e)).DefaultIfEmpty(int.MaxValue).Min();
+        string Signature(Scope sc) => string.Join(",", sc.Entities.Select(e => $"{e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..]}@{e.SourceId}").Order(StringComparer.Ordinal));
+        foreach (var family in scopes.Values.Where(sc => sc.Parent is not null && sc.Entities.Count > 0)
+                                     .GroupBy(sc => (sc.Parent, Signature(sc))).Where(g => g.Count() > 1))
+        {
+            var placements = family.OrderBy(LumpIndex).ToList();
+            foreach (var other in placements.Skip(1))
+            {
+                other.SameAs = placements[0];
+                other.Placement = SharedPlacement(placements[0], other, notes);
+            }
+        }
+
         // An instance's copy made inside a prefab's map ships with a plain id but carries its
         // template's walk index (MapInstances.Expand; EntityLumpSet.MainLump), which lies in the
         // prefab's block: the map's own nodes are all walked before its first prefab's world
@@ -120,7 +137,8 @@ public static class MapDecompiler
             foreach (var e in scopes[""].Entities.Where(e => e.SourceId >= blocks[0].Start).ToList())
             {
                 scopes[""].Entities.Remove(e);
-                blocks.Last(b => b.Start <= e.SourceId).Scope.Copies.Add(e);
+                var owner = blocks.Last(b => b.Start <= e.SourceId).Scope;
+                (owner.SameAs ?? owner).Copies.Add(e);
             }
 
         var main = scopes[""];
@@ -135,7 +153,7 @@ public static class MapDecompiler
         if (placeholders > 0)
             notes.Add($"{placeholders} walk positions shipped nothing (hidden, editor-only or compile-only nodes); filled with editor-only {PlaceholderClass}");
         MatchCopyIds();
-        var prefabFiles = scopes.Values.Where(sc => sc.Parent is not null && sc.Builder is not null)
+        var prefabFiles = scopes.Values.Where(sc => sc.Parent is not null && sc.Builder is not null && sc.SameAs is null)
                                 .ToDictionary(sc => sc.Path(mapName), sc => sc.Builder!.Write(), StringComparer.OrdinalIgnoreCase);
 
         // The compile numbers nodes in walk order (compile_source_id), the world 0
@@ -216,12 +234,19 @@ public static class MapDecompiler
                     AddBrushGeometry(builder, entityNode, e, model, files, table, notes, NewId);
                 at = Math.Max(at, e.SourceId + 1);
             }
-            foreach (var child in scope.Children.OrderBy(c => c.FirstSourceId))
+            foreach (var child in scope.Children.OrderBy(c => c.FirstSourceId).ThenBy(LumpIndex))
             {
+                var fix = prefabs.GetValueOrDefault(child.Chain);
+                if (child.SameAs is { } first)
+                {
+                    // Placed again: no new indices, its nodes are the first placement's.
+                    builder.AddPrefab(child.NodeId, first.Path(mapName), fix?.Own is not null, fix?.TargetName ?? "",
+                                      child.Placement.Origin, child.Placement.Angles);
+                    continue;
+                }
                 // The prefab map's world takes the index ahead of its first node.
                 FillTo(child.FirstSourceId - 1);
                 at++;
-                var fix = prefabs.GetValueOrDefault(child.Chain);
                 builder.AddPrefab(child.NodeId, child.Path(mapName), fix?.Own is not null, fix?.TargetName ?? "");
                 child.Builder = new VmapBuilder($"{mapName}/{child.Chain}");
                 child.Builder.SetWorld(1, [new("classname", "worldspawn")], [], false, "standard");
@@ -239,24 +264,42 @@ public static class MapDecompiler
         // The copies' ids: each collapse's block starts where the ones before it end, and a
         // prefab's block is its map's copy count plus one (MapInstances.Expand). The forward is
         // run on the rebuilt maps, and a collapse whose copies come out short of their ids has
-        // the prefab map before it padded by the difference: each node a map gains moves every
-        // later block by one, so one pass per collapse settles it.
+        // the prefab map before it padded: one node moves the copies by the measured step (one
+        // per block of that map before them), and the remainder comes from the map's highest
+        // node id, which moves every block by one.
         void MatchCopyIds()
         {
+            int Simulated(Scope scope) => SimulatedCopyIds(main, scopes.Values, mapName, schema)
+                .Where(c => c.Scope == scope).Select(c => c.Id).DefaultIfEmpty(int.MaxValue).Min();
             foreach (var scope in scopes.Values.Where(sc => sc.Instance is not null).OrderBy(sc => sc.Copies.Min(c => c.Entity.NodeId)))
             {
                 var target = scope.Copies.Min(c => c.Entity.NodeId);
-                var simulated = SimulatedCopyIds(main, scopes.Values, mapName, schema).Where(c => c.Scope == scope).Select(c => c.Id).DefaultIfEmpty(int.MaxValue).Min();
-                var short_ = target - simulated;
-                if (short_ < 0 || simulated == int.MaxValue)
+                var simulated = Simulated(scope);
+                if (simulated == target)
+                    continue;
+                if (simulated == int.MaxValue || simulated > target)
                 {
                     notes.Add($"prefab {scope.Chain}: its instance's copies come out at {simulated}, not {target}; not matched");
                     continue;
                 }
-                for (var i = 0; i < short_; i++)
-                    scope.Builder!.AddGroup(scope.NewId!());
+                // A node more in this map moves the copies by one for each block of it before them
+                // (one per placement); the rest comes from the map's highest node id, which moves
+                // every block by one.
+                scope.Builder!.AddGroup(scope.NewId!());
+                var step = Simulated(scope) - simulated;
+                var left = target - simulated - step;
+                if (step > 0 && left >= 0)
+                {
+                    for (var i = 0; i < left / step; i++)
+                        scope.Builder!.AddGroup(scope.NewId!());
+                    if (left % step > 0)
+                        main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + left % step);
+                }
+                if (Simulated(scope) != target)
+                    notes.Add($"prefab {scope.Chain}: its instance's copies come out at {Simulated(scope)}, not {target}; not matched");
             }
         }
+
         return new Result(main.Builder!.Write(), entities, placeholders, notes) { Prefabs = prefabFiles };
     }
 
@@ -398,6 +441,12 @@ public static class MapDecompiler
         /// <summary>Instance copies made inside this prefab's map (plain ids, template indices in its block).</summary>
         public List<EntityLumpAuthor.SourceEntity> Copies { get; } = [];
 
+        /// <summary>The first placement of the same prefab map, when this is a later one.</summary>
+        public Scope? SameAs { get; set; }
+
+        /// <summary>A later placement's prefab transform over the first's map.</summary>
+        public (Vector3 Origin, Vector3 Angles) Placement { get; set; }
+
         /// <summary>The rebuilt instance, when the map has copies.</summary>
         public DmxBinary.Element? Instance { get; set; }
 
@@ -429,14 +478,25 @@ public static class MapDecompiler
     {
         if (scope.Copies.Count == 0)
             return null;
-        var copies = scope.Copies.OrderBy(c => c.Entity.NodeId).ToList();
-        if (copies.Select(c => c.SourceId).Distinct().Count() != copies.Count
-            || !copies.Zip(copies.Skip(1)).All(p => p.First.SourceId < p.Second.SourceId))
+        // Collapses of one template group give the same indices in the same id pattern, block after
+        // block (one per placement of a shared prefab map): split by id where the index starts again.
+        var sorted = scope.Copies.OrderBy(c => c.Entity.NodeId).ToList();
+        var collapses = new List<List<EntityLumpAuthor.SourceEntity>> { new() };
+        foreach (var c in sorted)
         {
-            notes.Add($"prefab {scope.Chain}: {copies.Count} instance copies from more than one collapse; not rebuilt");
+            if (collapses[^1].Count > 0 && c.SourceId <= collapses[^1][^1].SourceId)
+                collapses.Add([]);
+            collapses[^1].Add(c);
+        }
+        var copies = collapses[0];
+        var pattern = copies.Select(c => (c.SourceId, c.Entity.NodeId - copies[0].Entity.NodeId)).ToList();
+        if (collapses.Any(k => !k.Select(c => (c.SourceId, c.Entity.NodeId - k[0].Entity.NodeId)).SequenceEqual(pattern)))
+        {
+            notes.Add($"prefab {scope.Chain}: {sorted.Count} instance copies from collapses of more than one template; not rebuilt");
             scope.Copies.Clear();
             return null;
         }
+        scope.Copies.RemoveAll(c => !copies.Contains(c));
         var slots = new List<TemplateSlot> { new(copies[0], true) };
         for (var i = 1; i < copies.Count; i++)
         {
@@ -457,6 +517,38 @@ public static class MapDecompiler
         // The walking placeholders are written by the walk itself (FillTo), so only the copies
         // and the non-walking slots are listed for the writer; their order is kept.
         return [.. slots.Where(sl => sl.Copy is not null || !sl.Walks)];
+    }
+
+    /// <summary>
+    /// A later placement's prefab transform, with the first placement's map written where the first
+    /// placement put its nodes (its prefab at the origin, unturned, so PrefabPlacement moves nothing):
+    /// the rotation that turns a node of the first into the same node of this one, and the origin
+    /// that then lands it (SettleWorld.PrefabPlacement: one matrix of the prefab's angles and origin).
+    /// Taken from the first node both hold, then checked on every node through PrefabPlacement
+    /// itself; a node it does not land bit for bit is noted.
+    /// </summary>
+    private static (Vector3 Origin, Vector3 Angles) SharedPlacement(Scope first, Scope other, List<string> notes)
+    {
+        var byId = first.Entities.ToDictionary(e => e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..]);
+        var pairs = other.Entities.Select(e => (Mine: e, Theirs: byId.GetValueOrDefault(e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..])))
+                                  .Where(p => p.Theirs is not null).ToList();
+        var (a, b) = (pairs[0].Theirs!.Entity, pairs[0].Mine.Entity);
+        var ra = TemplateTransform.AngleMatrix(Vector3.Zero, a.Angles);
+        var rb = TemplateTransform.AngleMatrix(Vector3.Zero, b.Angles);
+        var turn = TemplateTransform.MatrixAngles(TemplateTransform.Concat(rb, TemplateTransform.Invert(ra)));
+        // The origin that lands the node through the forward's own matrix of the angles
+        // (SettleWorld.AngleMatrixDouble), worked in double so the rotation's error stays out of it.
+        var r = SettleWorld.AngleMatrixDouble(turn, Vector3.Zero);
+        double Row(int i, Vector3 v) => ((double)r[i * 4] * v.X) + ((double)r[(i * 4) + 1] * v.Y) + ((double)r[(i * 4) + 2] * v.Z);
+        var origin = new Vector3((float)(b.Origin.X - Row(0, a.Origin)), (float)(b.Origin.Y - Row(1, a.Origin)), (float)(b.Origin.Z - Row(2, a.Origin)));
+        var prefab = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
+        prefab.Attributes["origin"] = origin;
+        prefab.Attributes["angles"] = turn;
+        var missed = pairs.Count(p => SettleWorld.PrefabPlacement(p.Theirs!.Entity.Origin, p.Theirs.Entity.Angles, [prefab])
+                                      != (p.Mine.Entity.Origin, p.Mine.Entity.Angles));
+        if (missed > 0)
+            notes.Add($"prefab {other.Chain}: placed again as prefab {first.Chain}'s map at {origin:R} turned {turn:R}, {missed} of {pairs.Count} nodes not landed bit for bit");
+        return (origin, turn);
     }
 
     /// <summary>The copies' ids the forward gives the rebuilt maps, and the scope each comes from:

@@ -318,7 +318,8 @@ public sealed class VmapBuilder
     /// placement), naming <paramref name="targetMapPath"/>. Shape: s2c_prefabprobe9's prefabs; loaded
     /// with the map (loadIfNested on, not at runtime), as a prefab that ships merged into its parent.
     /// </summary>
-    public DmxBinary.Element AddPrefab(int nodeId, string targetMapPath, bool fixupEntityNames, string targetName)
+    public DmxBinary.Element AddPrefab(int nodeId, string targetMapPath, bool fixupEntityNames, string targetName,
+                                       Vector3 origin = default, Vector3 angles = default)
     {
         var prefab = New("CMapPrefab");
         Node(prefab, nodeId, ReferenceId(nodeId));
@@ -327,7 +328,7 @@ public sealed class VmapBuilder
               .Set("target", T.Element, null)
               .Set("variableOverrideNames", T.Array(T.String), Array.Empty<object?>())
               .Set("variableOverrideValues", T.Array(T.String), Array.Empty<object?>());
-        Placement(prefab, Vector3.Zero, Vector3.Zero, Vector3.One);
+        Placement(prefab, origin, angles, Vector3.One);
         Flags(prefab);
         prefab.Set("customVisGroup", T.String, "")
               .Set("randomSeed", T.Int, 0)
