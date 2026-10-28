@@ -20,13 +20,21 @@ public static partial class EntityLumpAuthor
     /// <param name="BrushModel">The model the compile built for its geometry, when it had any.</param>
     /// <param name="Dropped">Keys the compile adds that were taken off, for the report.</param>
     public sealed record SourceEntity(MapEntities.Entity Entity, int SourceId, string IdPath, string? BrushModel,
-                                      IReadOnlyList<string> Dropped);
+                                      IReadOnlyList<string> Dropped)
+    {
+        /// <summary>The lump entity it was read from, for a second reading (an instance copy's).</summary>
+        public KVObject? Raw { get; init; }
+    }
 
     /// <summary>
     /// A lump entity (one element of <c>m_entityKeyValues</c>) back to its source.
     /// <paramref name="fixup"/> is the name prefix the map's fixup gave it ("[PR#]") or null.
     /// </summary>
-    public static SourceEntity Unbuild(KVObject lumpEntity, FgdSchema? schema, string? fixup)
+    /// <param name="instanced">The entity is an instance's copy, whose table is a new entity's
+    /// (<see cref="KeyTable"/>'s instanced branch: classname, targetname, the class's keys in its
+    /// finalized order with the template's values, then the template's undeclared keys reversed);
+    /// it is read back as its template's keys.</param>
+    public static SourceEntity Unbuild(KVObject lumpEntity, FgdSchema? schema, string? fixup, bool instanced = false)
     {
         var values = Child(Child(lumpEntity, "keyValues3Data"), "values")
                      ?? throw new InvalidDataException("lump entity without keyValues3Data.values");
@@ -79,7 +87,16 @@ public static partial class EntityLumpAuthor
         // whose remainder is exactly that fill is the source: a key the mapper set to
         // its default and one the compile filled in compile alike, and in this split
         // both land where the forward table puts them.
-        var split = DefaultsStart(className, table, schema);
+        // An instance's copy takes every declared key from its template, defaults filled, in the
+        // class's order, and the template's undeclared keys after them in reverse: the template's
+        // keys are the declared ones as they stand and the undeclared ones turned back.
+        if (instanced && schema is not null && schema.KeysOf(className).Count > 0)
+        {
+            var declared = table.Where(k => k.Key.EqualsAscii("classname") || k.Key.EqualsAscii("targetname") || schema.KeyOf(className, k.Key) is not null).ToList();
+            var undeclared = table.Where(k => !declared.Contains(k)).Reverse().ToList();
+            table = [.. declared, .. undeclared];
+        }
+        var split = instanced ? table.Count : DefaultsStart(className, table, schema);
         for (var i = split; i < table.Count; i++)
             dropped.Add(table[i].Key);
 
@@ -132,7 +149,7 @@ public static partial class EntityLumpAuthor
             UnbuildConnections(Child(lumpEntity, "m_connections"), fixup),
             HasGeometry: brushModel is not null)
         { BoneTransforms = boneTransforms };
-        return new SourceEntity(entity, sourceId, idPath, brushModel, dropped);
+        return new SourceEntity(entity, sourceId, idPath, brushModel, dropped) { Raw = lumpEntity };
     }
 
     /// <summary>Where the compile's default fill starts in a table in fill order.</summary>

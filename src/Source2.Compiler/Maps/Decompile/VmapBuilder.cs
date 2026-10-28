@@ -344,6 +344,52 @@ public sealed class VmapBuilder
         return prefab;
     }
 
+    /// <summary>A bare CMapGroup under <paramref name="parent"/> (the world when null), at the origin
+    /// unturned: s2c_instnest's groups, saved without the group fields.</summary>
+    public DmxBinary.Element AddGroup(int nodeId, DmxBinary.Element? parent = null)
+    {
+        var group = New("CMapGroup");
+        Node(group, nodeId, ReferenceId(nodeId));
+        Placement(group, Vector3.Zero, Vector3.Zero, Vector3.One);
+        Flags(group);
+        AddChild(parent ?? World, group);
+        return group;
+    }
+
+    /// <summary>A CMapInstance of <paramref name="target"/> under <paramref name="parent"/> (the world when
+    /// null). Shape: s2c_instnest's instances.</summary>
+    public DmxBinary.Element AddInstance(int nodeId, DmxBinary.Element target, Vector3 origin, Vector3 angles,
+                                         DmxBinary.Element? parent = null)
+    {
+        var instance = New("CMapInstance");
+        Node(instance, nodeId, ReferenceId(nodeId));
+        Placement(instance, origin, angles, Vector3.One);
+        Flags(instance);
+        instance.Set("relayPlugData", T.Element, PlugList())
+                .Set("connectionsData", T.Array(T.Element), Array.Empty<object?>())
+                .Set("target", T.Element, target);
+        AddChild(parent ?? World, instance);
+        return instance;
+    }
+
+    /// <summary>Every node id the map holds so far.</summary>
+    public IEnumerable<int> NodeIds()
+    {
+        var stack = new Stack<DmxBinary.Element>([Root]);
+        var seen = new HashSet<DmxBinary.Element>(ReferenceEqualityComparer.Instance);
+        while (stack.Count > 0)
+        {
+            var e = stack.Pop();
+            if (!seen.Add(e))
+                continue;
+            if (e.Attributes.TryGetValue("nodeID", out var id) && id is int i)
+                yield return i;
+            foreach (var v in e.Attributes.Values)
+                if (v is DmxBinary.Element c) stack.Push(c);
+                else if (v is object?[] a) foreach (var x in a.OfType<DmxBinary.Element>()) stack.Push(x);
+        }
+    }
+
     /// <summary>The file: vmap 40, binary 9.</summary>
     public byte[] Write()
     {

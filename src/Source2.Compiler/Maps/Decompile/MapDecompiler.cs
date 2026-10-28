@@ -109,6 +109,20 @@ public static class MapDecompiler
         foreach (var e in entities.Where(e => !e.Entity.IsWorld))
             ScopeOf(ChainOf(e.IdPath)).Entities.Add(e);
 
+        // An instance's copy made inside a prefab's map ships with a plain id but carries its
+        // template's walk index (MapInstances.Expand; EntityLumpSet.MainLump), which lies in the
+        // prefab's block: the map's own nodes are all walked before its first prefab's world
+        // (MapEntities.Walk), so a plain-id node numbered at or past that is such a copy. It
+        // belongs to the last prefab whose block starts at or before its index.
+        var blocks = scopes.Values.Where(sc => sc.Parent is not null).Select(sc => (Scope: sc, Start: sc.FirstSourceId - 1))
+                           .OrderBy(b => b.Start).ToList();
+        if (blocks.Count > 0)
+            foreach (var e in scopes[""].Entities.Where(e => e.SourceId >= blocks[0].Start).ToList())
+            {
+                scopes[""].Entities.Remove(e);
+                blocks.Last(b => b.Start <= e.SourceId).Scope.Copies.Add(e);
+            }
+
         var main = scopes[""];
         main.Builder = new VmapBuilder(mapName);
         // The lump's mapUsageType is the literal the compile writes for every map (BuildEntity),
@@ -116,11 +130,13 @@ public static class MapDecompiler
         main.Builder.SetWorld(world.Entity.NodeId, world.Entity.Keys, world.Entity.Connections, mapFixup, "standard");
 
         var placeholders = 0;
-        var prefabFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         var at = 1;
         Emit(main);
         if (placeholders > 0)
             notes.Add($"{placeholders} walk positions shipped nothing (hidden, editor-only or compile-only nodes); filled with editor-only {PlaceholderClass}");
+        MatchCopyIds();
+        var prefabFiles = scopes.Values.Where(sc => sc.Parent is not null && sc.Builder is not null)
+                                .ToDictionary(sc => sc.Path(mapName), sc => sc.Builder!.Write(), StringComparer.OrdinalIgnoreCase);
 
         // The compile numbers nodes in walk order (compile_source_id), the world 0
         // (MapEntities.Walk): a map's own children in tree order, then each prefab's map where
@@ -129,36 +145,75 @@ public static class MapDecompiler
         // position no lump holds is a node that walked and shipped nothing: a placeholder keeps
         // the count. A layer's entities sit in a layer node; a run of them broken by others
         // opens a second node of the same name, so the walk still meets them in order.
+        //
+        // Node ids the decompile makes up (placeholders, meshes, groups, instances) come from
+        // below the ids the compile shows, so none raises the map's highest id, which is where
+        // the instance copies' ids start (MapInstances.Expand).
         void Emit(Scope scope)
         {
             var builder = scope.Builder!;
-            var nextNode = Math.Max(scope.Entities.Select(e => e.Entity.NodeId).DefaultIfEmpty(1).Max(),
-                                    scope.Children.Select(c => c.NodeId).DefaultIfEmpty(1).Max()) + 1;
+            var used = new HashSet<int>(scope.Entities.Select(e => e.Entity.NodeId).Concat(scope.Children.Select(c => c.NodeId)));
             if (scope.Parent is null)
-                nextNode = Math.Max(nextNode, world.Entity.NodeId + 1);
+                used.Add(world.Entity.NodeId);
+            else
+                used.Add(1);
+            var pool = 2;
+            int NewId()
+            {
+                while (used.Contains(pool))
+                    pool++;
+                used.Add(pool);
+                return pool;
+            }
             string? openLayer = null;
             DmxBinary.Element? layerNode = null;
-            void FillTo(int sourceId)
+            void FillTo(int sourceId, DmxBinary.Element? parent = null)
             {
                 for (; at < sourceId; at++, placeholders++)
                 {
-                    builder.AddEntity(nextNode++, [new("classname", PlaceholderClass)], Vector3.Zero, Vector3.Zero, Vector3.One, [],
-                                      editorOnly: true);
+                    builder.AddEntity(NewId(), [new("classname", PlaceholderClass)], Vector3.Zero, Vector3.Zero, Vector3.One, [],
+                                      editorOnly: true, parent: parent);
                     openLayer = null;
                 }
             }
-            foreach (var e in scope.Entities.OrderBy(e => e.SourceId))
+
+            // The scope's own nodes, and its copies' template group where the walk meets it.
+            var templates = TemplatePlan(scope, notes);
+            var items = scope.Entities.Select(e => (e.SourceId, Entity: (EntityLumpAuthor.SourceEntity?)e, Template: (List<TemplateSlot>?)null)).ToList();
+            if (templates is not null)
+                items.Add((templates.First(t => t.Copy is not null).Copy!.SourceId, null, templates));
+            DmxBinary.Element? group = null;
+            foreach (var (sourceId, e, slots) in items.OrderBy(i => i.SourceId))
             {
-                FillTo(e.SourceId);
-                var layer = layerOf.GetValueOrDefault(e);
+                FillTo(sourceId);
+                if (slots is not null)
+                {
+                    group = builder.AddGroup(NewId());
+                    foreach (var slot in slots)
+                    {
+                        if (slot.Copy is { } copy)
+                        {
+                            FillTo(copy.SourceId, group);
+                            var t = EntityLumpAuthor.Unbuild(copy.Raw!, schema, FixupOf(scope.Chain + ":0"), instanced: true).Entity;
+                            var node = builder.AddEntity(NewId(), t.Keys, t.Origin, t.Angles, t.Scales, t.Connections, parent: group);
+                            if (copy.BrushModel is { } copyModel)
+                                AddBrushGeometry(builder, node, copy, copyModel, files, table, notes, NewId);
+                            at = copy.SourceId + 1;
+                        }
+                        else if (!slot.Walks)
+                            builder.AddGroup(NewId(), group);
+                    }
+                    continue;
+                }
+                var layer = layerOf.GetValueOrDefault(e!);
                 if (layer is not null && layer != openLayer)
-                    layerNode = builder.AddLayer(nextNode++, layer);
+                    layerNode = builder.AddLayer(NewId(), layer);
                 openLayer = layer;
-                var x = e.Entity;
-                var node = builder.AddEntity(x.NodeId, x.Keys, x.Origin, x.Angles, x.Scales, x.Connections,
-                                             parent: layer is null ? null : layerNode);
+                var x = e!.Entity;
+                var entityNode = builder.AddEntity(x.NodeId, x.Keys, x.Origin, x.Angles, x.Scales, x.Connections,
+                                                   parent: layer is null ? null : layerNode);
                 if (e.BrushModel is { } model)
-                    nextNode = AddBrushGeometry(builder, node, e, model, files, table, notes, nextNode);
+                    AddBrushGeometry(builder, entityNode, e, model, files, table, notes, NewId);
                 at = Math.Max(at, e.SourceId + 1);
             }
             foreach (var child in scope.Children.OrderBy(c => c.FirstSourceId))
@@ -166,17 +221,43 @@ public static class MapDecompiler
                 // The prefab map's world takes the index ahead of its first node.
                 FillTo(child.FirstSourceId - 1);
                 at++;
-                var path = $"maps/prefabs/{mapName}/prefab_{child.Chain.Replace(':', '_')}.vmap";
                 var fix = prefabs.GetValueOrDefault(child.Chain);
-                builder.AddPrefab(child.NodeId, path, fix?.Own is not null, fix?.TargetName ?? "");
+                builder.AddPrefab(child.NodeId, child.Path(mapName), fix?.Own is not null, fix?.TargetName ?? "");
                 child.Builder = new VmapBuilder($"{mapName}/{child.Chain}");
                 child.Builder.SetWorld(1, [new("classname", "worldspawn")], [], false, "standard");
                 Emit(child);
-                prefabFiles[path] = child.Builder.Write();
             }
+            // The instance, at the map's root after its nodes: its copies land where the map's
+            // walk ends (the parent's subtree end, MapInstances.EmitAt), and with its transform
+            // its group's (both the origin, unturned) the collapse moves nothing
+            // (SettleWorld.BakedPlacement), so each copy stands where its template does.
+            if (group is not null)
+                scope.Instance = builder.AddInstance(NewId(), group, Vector3.Zero, Vector3.Zero);
+            scope.NewId = NewId;
         }
 
-        return new Result(main.Builder.Write(), entities, placeholders, notes) { Prefabs = prefabFiles };
+        // The copies' ids: each collapse's block starts where the ones before it end, and a
+        // prefab's block is its map's copy count plus one (MapInstances.Expand). The forward is
+        // run on the rebuilt maps, and a collapse whose copies come out short of their ids has
+        // the prefab map before it padded by the difference: each node a map gains moves every
+        // later block by one, so one pass per collapse settles it.
+        void MatchCopyIds()
+        {
+            foreach (var scope in scopes.Values.Where(sc => sc.Instance is not null).OrderBy(sc => sc.Copies.Min(c => c.Entity.NodeId)))
+            {
+                var target = scope.Copies.Min(c => c.Entity.NodeId);
+                var simulated = SimulatedCopyIds(main, scopes.Values, mapName, schema).Where(c => c.Scope == scope).Select(c => c.Id).DefaultIfEmpty(int.MaxValue).Min();
+                var short_ = target - simulated;
+                if (short_ < 0 || simulated == int.MaxValue)
+                {
+                    notes.Add($"prefab {scope.Chain}: its instance's copies come out at {simulated}, not {target}; not matched");
+                    continue;
+                }
+                for (var i = 0; i < short_; i++)
+                    scope.Builder!.AddGroup(scope.NewId!());
+            }
+        }
+        return new Result(main.Builder!.Write(), entities, placeholders, notes) { Prefabs = prefabFiles };
     }
 
     /// <summary>
@@ -185,15 +266,15 @@ public static class MapDecompiler
     /// compile's move into the entity's space (BrushHulls.Pieces) is the identity. Returns the
     /// next free node id.
     /// </summary>
-    private static int AddBrushGeometry(VmapBuilder builder, DmxBinary.Element node, EntityLumpAuthor.SourceEntity e, string model,
-                                        IReadOnlyDictionary<string, byte[]> files, IReadOnlyDictionary<uint, string> table,
-                                        List<string> notes, int nextNode)
+    private static void AddBrushGeometry(VmapBuilder builder, DmxBinary.Element node, EntityLumpAuthor.SourceEntity e, string model,
+                                         IReadOnlyDictionary<string, byte[]> files, IReadOnlyDictionary<uint, string> table,
+                                         List<string> notes, Func<int> newId)
     {
         var label = $"{e.Entity.ClassName} {e.IdPath}";
         if (!files.TryGetValue(model + "_c", out var bytes))
         {
             notes.Add($"{label}: its model {model} is not in the package (the compile failed it); no geometry");
-            return nextNode;
+            return;
         }
         var geometry = BrushGeometry.Read(bytes, table);
         // The mesh node stands at the entity's origin, unturned, as Hammer leaves a mesh drawn
@@ -226,7 +307,7 @@ public static class MapDecompiler
         for (var k = 0; k < count; k++)
             input[placedAt[k]] = geometry.Pieces[k];
         foreach (var piece in input)
-            builder.AddMesh(node, nextNode++, e.Entity.Origin, Vector3.Zero,
+            builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero,
                             [.. piece.Faces.Select(f => (f.Select(Fit).ToArray(), 0))], [piece.Material],
                             [.. piece.Vertices.Select(Fit)]);
         if (geometry.HasRender)
@@ -237,7 +318,6 @@ public static class MapDecompiler
             notes.Add($"{label}: {geometry.UnknownMaterials.Count} hull(s) with a material hash no known material has");
         if (geometry.Pieces.Count == 0)
             notes.Add($"{label}: its model has no hulls; no geometry");
-        return nextNode;
     }
 
     /// <summary>
@@ -315,11 +395,90 @@ public static class MapDecompiler
         public List<Scope> Children { get; } = [];
         public VmapBuilder? Builder { get; set; }
 
+        /// <summary>Instance copies made inside this prefab's map (plain ids, template indices in its block).</summary>
+        public List<EntityLumpAuthor.SourceEntity> Copies { get; } = [];
+
+        /// <summary>The rebuilt instance, when the map has copies.</summary>
+        public DmxBinary.Element? Instance { get; set; }
+
+        /// <summary>The map's source of made-up node ids, once written.</summary>
+        public Func<int>? NewId { get; set; }
+
+        /// <summary>The prefab map's content path.</summary>
+        public string Path(string mapName) => $"maps/prefabs/{mapName}/prefab_{Chain.Replace(':', '_')}.vmap";
+
         /// <summary>The prefab node's own id: the last id of its chain.</summary>
         public int NodeId => int.Parse(Chain[(Chain.LastIndexOf(':') + 1)..], System.Globalization.CultureInfo.InvariantCulture);
 
         /// <summary>The first walk index of the prefab map's nodes, its own or its prefabs'.</summary>
         public int FirstSourceId => Entities.Select(e => e.SourceId).Concat(Children.Select(c => c.FirstSourceId)).Min();
+    }
+
+    /// <summary>One slot of a template group, in preorder: a copy's template, a node that walks and ships
+    /// nothing (an editor-only placeholder), or one that does not walk (an empty group).</summary>
+    private sealed record TemplateSlot(EntityLumpAuthor.SourceEntity? Copy, bool Walks);
+
+    /// <summary>
+    /// The template group a scope's copies come from, slot by slot. A copy's id is its collapse's
+    /// block start plus its node's slot in the group, every node counted (MapInstances.Emit), and its
+    /// compile_source_id its template's walk index; both run in preorder, so between two copies the
+    /// walk-index gap is nodes that walk and ship nothing and the rest of the id gap nodes that do not
+    /// walk. One collapse per scope (each template index once); more is noted and left out.
+    /// </summary>
+    private static List<TemplateSlot>? TemplatePlan(Scope scope, List<string> notes)
+    {
+        if (scope.Copies.Count == 0)
+            return null;
+        var copies = scope.Copies.OrderBy(c => c.Entity.NodeId).ToList();
+        if (copies.Select(c => c.SourceId).Distinct().Count() != copies.Count
+            || !copies.Zip(copies.Skip(1)).All(p => p.First.SourceId < p.Second.SourceId))
+        {
+            notes.Add($"prefab {scope.Chain}: {copies.Count} instance copies from more than one collapse; not rebuilt");
+            scope.Copies.Clear();
+            return null;
+        }
+        var slots = new List<TemplateSlot> { new(copies[0], true) };
+        for (var i = 1; i < copies.Count; i++)
+        {
+            var walkGap = copies[i].SourceId - copies[i - 1].SourceId - 1;
+            var idGap = copies[i].Entity.NodeId - copies[i - 1].Entity.NodeId - 1;
+            if (idGap < walkGap)
+            {
+                notes.Add($"prefab {scope.Chain}: copies {copies[i - 1].IdPath} and {copies[i].IdPath} leave fewer slots than walk indices; not rebuilt");
+                scope.Copies.Clear();
+                return null;
+            }
+            for (var k = 0; k < walkGap; k++)
+                slots.Add(new TemplateSlot(null, true));
+            for (var k = walkGap; k < idGap; k++)
+                slots.Add(new TemplateSlot(null, false));
+            slots.Add(new TemplateSlot(copies[i], true));
+        }
+        // The walking placeholders are written by the walk itself (FillTo), so only the copies
+        // and the non-walking slots are listed for the writer; their order is kept.
+        return [.. slots.Where(sl => sl.Copy is not null || !sl.Walks)];
+    }
+
+    /// <summary>The copies' ids the forward gives the rebuilt maps, and the scope each comes from:
+    /// MapInstances.Expand on the decompiled map with its prefab maps attached.</summary>
+    private static List<(Scope Scope, int Id)> SimulatedCopyIds(Scope main, IEnumerable<Scope> scopes, string mapName, FgdSchema schema)
+    {
+        var docs = scopes.Where(sc => sc.Parent is not null && sc.Builder is not null)
+                         .ToDictionary(sc => sc.Path(mapName), sc => (Scope: sc, Doc: MapNodeAngles.Apply(DmxBinary.Read(sc.Builder!.Write()))),
+                                       StringComparer.OrdinalIgnoreCase);
+        var doc = MapNodeAngles.Apply(DmxBinary.Read(main.Builder!.Write()));
+        MapPrefabs.Attach(doc, path => docs.TryGetValue(path.Replace('\\', '/'), out var d) ? d.Doc : null);
+        var walked = MapEntities.From(doc);
+        var (copies, _) = MapInstances.Expand(doc, walked, prefabs: true);
+        var result = new List<(Scope, int)>();
+        foreach (var copy in copies)
+        {
+            var owner = copy.Prefabs.Length == 0 ? null
+                : docs.Values.FirstOrDefault(d => d.Doc.OfType("CMapWorld").FirstOrDefault() is { } w && copy.Prefabs[^1].Get<DmxBinary.Element>(MapPrefabs.WorldKey) == w).Scope;
+            if (owner is not null)
+                result.Add((owner, copy.NodeId));
+        }
+        return result;
     }
 
     /// <summary>A prefab's entity-name fixup as its contents show it: <paramref name="Own"/> the

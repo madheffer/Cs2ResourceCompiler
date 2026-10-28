@@ -259,6 +259,25 @@ writes one copy of them:
   keys in finalized order, the template's undeclared keys reversed);
 - its placement is the instances' transforms over the template's.
 
+Done (2026-10-28): copies made inside a prefab's map. A plain-id node numbered at or past a
+prefab's block is such a copy (the map's own nodes are walked before its first prefab's world). Its
+prefab's map gets the template group at the copies' walk position (`MapDecompiler.TemplatePlan`: a
+walk-index gap between two copies is editor-only placeholders, which walk and whose copies ship
+nothing since a copy keeps its template's Hidden; the rest of the id gap is empty groups, which take a
+slot and do not walk), keys read back through the instanced key table
+(`EntityLumpAuthor.Unbuild(instanced: true)`), and an instance at the map's root with its group's
+transform, so the collapse moves nothing (`SettleWorld.BakedPlacement`: no delta when the two agree).
+The copies' ids are then matched by running `MapInstances.Expand` on the rebuilt maps and padding the
+prefab map ahead of the collapse by what the copies come out short (each node a map gains moves every
+later block by one). Passing: s2c_prefabprobe5 and 7 (an instance in a prefab, and that prefab inside
+another), s2c_prefabinst, s2c_prefabprobe6. Ids the decompile makes up come from below the ones the
+compile shows, so none raises the highest id the blocks start past.
+
+Open, all the same gap, several collapses of one template: s2c_prefabprobe3, 4, 9, 11, 12 and atixref
+(nested instances, collapse rounds, and the instance transforms of every copy after the first, to be
+solved exactly through `BakedPlacement`), and instances of the map's own (s2c_prefabprobe8, s2c_pinst7:
+their copies' ids and lump places).
+
 So the inverse rebuilds each instance as an instance: copies grouped by collapse (shared template
 indices, contiguous id blocks), one template group per distinct set, the instance nodes, and node ids
 and group sizes chosen so the allocation gives the copies' ids; single copies included, since a copy

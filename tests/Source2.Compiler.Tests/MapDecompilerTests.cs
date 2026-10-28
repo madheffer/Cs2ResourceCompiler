@@ -34,6 +34,15 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     [InlineData("s2c_rc_probe", "s2c_prefabprobe7")]
     [InlineData("s2c_rc_probe", "s2c_instnest")]
     [InlineData("s2c_rc_probe", "atixref")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe3")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe4")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe6")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe8")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe9")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe11")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe12")]
+    [InlineData("s2c_rc_probe", "s2c_pinst7")]
+    [InlineData("s2c_rc_probe", "s2c_prefabinst")]
     public void Entities_CompileAsTheSourceDoes(string addon, string map)
     {
         var source = MapFixtures.VmapSource(addon, map);
