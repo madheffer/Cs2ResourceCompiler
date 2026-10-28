@@ -222,6 +222,50 @@ What is left in stage 2:
   alignment; the render mesh's UVs and render-only faces are not read yet.
 - Triangle-mesh shapes (physicsType mesh), and brush entities whose model the compile failed.
 
+## Stage 3: prefabs and instances (2026-10-28, in progress)
+
+What has to be rebuilt, and why it is not optional: the compile treats a prefab's or an instance's
+contents differently from a node of the map, and the difference is in the lump, so only the same
+structure compiles to the same output.
+
+**Prefabs (single placements done).** A node a prefab's map holds ships with its id path
+(`hammerUniqueId` "108:3": prefab node 108, node 3 of its map; "108:5:3" nested;
+`MapEntities.Entity.IdPath`). The decompile writes one map per prefab chain
+(`maps/prefabs/<map>/prefab_<chain>.vmap`, the files `Result.Prefabs`) and a CMapPrefab node naming it
+(`VmapBuilder.AddPrefab`, at the origin unturned, its nodes at their compiled placement):
+- Numbering (`MapEntities.Walk`): a prefab's map is walked where its parent's children end, its world
+  one index ahead of its nodes, so each scope is written in compile_source_id order with its prefabs
+  after its own nodes, and a prefab's world at its block's first index.
+- Name fixup: a node of a prefab with fixupEntityNames ships its names as "[PR#]" + the outer prefix +
+  own + "_", own its node id, or its targetName with useTargetNameAsPrefix; one without keeps the outer
+  prefix (`MapEntities.Walk`, `EntityLumpAuthor.BuildEntity`). The decompile reads each prefab's from
+  its nodes' names (`MapDecompiler.PrefabFixups`) and takes it off before the inverse.
+- Passing (`Entities_CompileAsTheSourceDoes`): s2c_prefabprobe, s2c_prefabprobe2 (c2m2's gameplay map
+  as a prefab, its brush entities included).
+- Not yet: one map placed by several prefabs (one source: its nodes share compile_source_ids,
+  `MapEntities.SourceIds`, and every second placement ships its keys forwards, `KeysForward`;
+  s2c_prefabprobe9, 11, 12), and prefab maps that hold instances (s2c_prefabprobe5, 7).
+
+**Instances (the forward rules the inverse follows; `MapInstances.Expand`).** A CMapInstance names a
+CMapGroup (its target); the group's entities are walked and numbered but never ship; each collapse
+writes one copy of them:
+- the copy's `compile_source_id` is its template's walk index;
+- its id is its collapse's block start plus the template node's slot in the group, every node counted
+  (meshes and groups too); blocks are allocated in collapse order (rounds of the document tree, a
+  prefab taking a block of its map's copy count plus one in the first round) starting past the
+  highest node id of every element plus the nodes the loader creates (smart prop locators);
+- it lands in the lump where the instance's parent's subtree ends;
+- its key table is a new entity's (`KeyTable`'s Instanced branch: classname, targetname, the class's
+  keys in finalized order, the template's undeclared keys reversed);
+- its placement is the instances' transforms over the template's.
+
+So the inverse rebuilds each instance as an instance: copies grouped by collapse (shared template
+indices, contiguous id blocks), one template group per distinct set, the instance nodes, and node ids
+and group sizes chosen so the allocation gives the copies' ids; single copies included, since a copy
+written as a plain node keeps its large id and moves every later block. s2c_pinst and s2c_instnest
+already compile the same flattened (each template copied once, at the map's end), which is why they
+pass, but are not rebuilt as instances yet.
+
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's

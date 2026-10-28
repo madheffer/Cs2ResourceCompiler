@@ -313,6 +313,37 @@ public sealed class VmapBuilder
             .Set("subdivisionBinding", T.Element, null)
             .Set("data", T.Array(scalar), data);
 
+    /// <summary>
+    /// A CMapPrefab in the world, at the origin unturned (its map's nodes keep their compiled
+    /// placement), naming <paramref name="targetMapPath"/>. Shape: s2c_prefabprobe9's prefabs; loaded
+    /// with the map (loadIfNested on, not at runtime), as a prefab that ships merged into its parent.
+    /// </summary>
+    public DmxBinary.Element AddPrefab(int nodeId, string targetMapPath, bool fixupEntityNames, string targetName)
+    {
+        var prefab = New("CMapPrefab");
+        Node(prefab, nodeId, ReferenceId(nodeId));
+        prefab.Set("relayPlugData", T.Element, PlugList())
+              .Set("connectionsData", T.Array(T.Element), Array.Empty<object?>())
+              .Set("target", T.Element, null)
+              .Set("variableOverrideNames", T.Array(T.String), Array.Empty<object?>())
+              .Set("variableOverrideValues", T.Array(T.String), Array.Empty<object?>());
+        Placement(prefab, Vector3.Zero, Vector3.Zero, Vector3.One);
+        Flags(prefab);
+        prefab.Set("customVisGroup", T.String, "")
+              .Set("randomSeed", T.Int, 0)
+              .Set("tintColor", T.Color, new byte[] { 255, 255, 255, 255 })
+              .Set("visexclude", T.Bool, false)
+              .Set("targetMapPath", T.String, targetMapPath)
+              .Set("targetName", T.String, targetName)
+              .Set("fixupEntityNames", T.Bool, fixupEntityNames)
+              .Set("useTargetNameAsPrefix", T.Bool, targetName.Length > 0)
+              .Set("loadIfNested", T.Bool, true)
+              .Set("prefabRuntimeEntity", T.Bool, false)
+              .Set("loadAtRuntime", T.Bool, false);
+        AddChild(World, prefab);
+        return prefab;
+    }
+
     /// <summary>The file: vmap 40, binary 9.</summary>
     public byte[] Write()
     {

@@ -24,6 +24,16 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     [InlineData("s2c_rc_probe", "ze_hold_em_p")]
     [InlineData("s2c_rc_probe", "ze_doom_p2_c_gameplay")]
     [InlineData("s2c_rc_probe", "probe01")]
+    // Prefabs and instances (docs/DECOMPILE.md stage 3): a prefab (s2c_prefabprobe), one instance
+    // (s2c_pinst), an instance placed by a prefab (5), a prefab's prefab and instances (7),
+    // nested instances with paths and deformers (s2c_instnest), and atixref's 144 instances.
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe2")]
+    [InlineData("s2c_rc_probe", "s2c_pinst")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe5")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe7")]
+    [InlineData("s2c_rc_probe", "s2c_instnest")]
+    [InlineData("s2c_rc_probe", "atixref")]
     public void Entities_CompileAsTheSourceDoes(string addon, string map)
     {
         var source = MapFixtures.VmapSource(addon, map);
@@ -36,7 +46,7 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         var decompiled = Maps.MapNodeAngles.Apply(DmxBinary.Read(result.Vmap));
         var truth = DmxBinary.ReadFile(source);
 
-        var ours = Lumps(decompiled, map, schema, source);
+        var ours = Lumps(decompiled, map, schema, source, result);
         var expected = Lumps(truth, map, schema, source);
         output.WriteLine($"{map}: {result.Entities.Count} entities, {result.Placeholders} placeholders, {result.Notes.Count} notes, " +
                          $"{result.Vmap.Length:n0} bytes");
@@ -136,6 +146,8 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     [InlineData("s2c_rc_probe", "ze_hold_em_p")]
     [InlineData("s2c_rc_probe", "ze_doom_p2_c_gameplay")]
     [InlineData("s2c_rc_probe", "probe01")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe2")]
     public void BrushPhysics_CompilesAsTheSourceDoes(string addon, string map)
     {
         var source = MapFixtures.VmapSource(addon, map);
@@ -149,6 +161,8 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
 
         var result = MapDecompiler.Decompile(MapDecompiler.ReadPackage(package), map, schema, StockMaterials());
         var decompiled = Maps.MapNodeAngles.Apply(DmxBinary.Read(result.Vmap));
+        Maps.MapPrefabs.Attach(decompiled, PrefabLoader(result));
+        Maps.MapDeformers.Apply(decompiled, schema);
         var truth = DmxBinary.ReadFile(source);
         Maps.MapPrefabs.Attach(truth, Maps.MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!));
         Maps.MapDeformers.Apply(truth, schema);
@@ -215,6 +229,11 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         "maps/probe_classes/entities/probe_trigger_wind_2863.vmdl",
     ];
 
+    /// <summary>A decompile's prefab maps, as MapPrefabs.Attach loads them (by targetMapPath).</summary>
+    private static Func<string, DmxBinary.Document?> PrefabLoader(MapDecompiler.Result result)
+        => path => result.Prefabs.TryGetValue(path.Replace('\\', '/'), out var bytes)
+            ? Maps.MapNodeAngles.Apply(DmxBinary.Read(bytes)) : null;
+
     /// <summary>Each hull's vertices as a set, in shape order.</summary>
     private static List<HashSet<System.Numerics.Vector3>> HullPointSets(Physics.EntityPhysicsModels.Model model)
         => [.. model.Physics.AllShapes.Where(s => s.Hull is not null).Select(s => s.Hull!.VertexPositions.ToHashSet())];
@@ -239,9 +258,12 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     /// <summary>The lumps our author makes of a map, as EntityLumpAgainstValveTests builds them:
     /// prefabs attached from the addon's content and deformers applied, the document passed so
     /// instances are collapsed.</summary>
-    private static Dictionary<string, byte[]> Lumps(DmxBinary.Document document, string map, FgdSchema schema, string source)
+    private static Dictionary<string, byte[]> Lumps(DmxBinary.Document document, string map, FgdSchema schema, string source,
+                                                    MapDecompiler.Result? decompiled = null)
     {
-        Maps.MapPrefabs.Attach(document, Maps.MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!));
+        Maps.MapPrefabs.Attach(document, decompiled is null
+            ? Maps.MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!)
+            : PrefabLoader(decompiled));
         Maps.MapDeformers.Apply(document, schema);
         return EntityLumpSet.Author(MapEntities.From(document), schema, map, MapEntities.FixupEntityNames(document), document)
                             .ToDictionary(l => l.Path, l => l.Bytes, StringComparer.OrdinalIgnoreCase);

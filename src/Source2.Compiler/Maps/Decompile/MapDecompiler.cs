@@ -23,8 +23,13 @@ public static class MapDecompiler
     /// or compile-only node), each filled with an editor-only info_target so the walk numbers
     /// the rest as the compile did.</param>
     /// <param name="Notes">What is not brought back, one line each.</param>
+    /// <param name="Prefabs">The prefab maps the map's CMapPrefab nodes name, by content path
+    /// (targetMapPath, e.g. maps/prefabs/&lt;map&gt;/prefab_108.vmap).</param>
     public sealed record Result(byte[] Vmap, IReadOnlyList<EntityLumpAuthor.SourceEntity> Entities,
-                                int Placeholders, IReadOnlyList<string> Notes);
+                                int Placeholders, IReadOnlyList<string> Notes)
+    {
+        public IReadOnlyDictionary<string, byte[]> Prefabs { get; init; } = new Dictionary<string, byte[]>();
+    }
 
     private const string LayerLumpPrefix = "world_layer_";
 
@@ -53,15 +58,21 @@ public static class MapDecompiler
         foreach (var (path, bytes) in lumps.OrderBy(l => IsTemplateLump(l.Key) ? 1 : 0))
             foreach (var e in LumpEntities(bytes, path))
                 raw.Add((path, e));
-        var fixup = raw.Any(r => Name(r.Entity).StartsWith(EntityLumpAuthor.NameFixupPrefix, StringComparison.Ordinal))
-            ? EntityLumpAuthor.NameFixupPrefix : null;
+        var prefabs = PrefabFixups(raw.Select(r => (IdPath(r.Entity), Name(r.Entity))).ToList(), schema, out var mapFixup);
+        string? FixupOf(string idPath)
+        {
+            var chain = ChainOf(idPath);
+            return chain.Length > 0 && prefabs.TryGetValue(chain, out var p) && p.NamePrefix is { } own
+                ? EntityLumpAuthor.NameFixupPrefix + own
+                : mapFixup ? EntityLumpAuthor.NameFixupPrefix : null;
+        }
 
         var entities = new List<EntityLumpAuthor.SourceEntity>();
         var layerOf = new Dictionary<EntityLumpAuthor.SourceEntity, string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (lump, e) in raw)
         {
-            var source = EntityLumpAuthor.Unbuild(e, schema, fixup);
+            var source = EntityLumpAuthor.Unbuild(e, schema, FixupOf(IdPath(e)));
             if (IsTemplateLump(lump) && !seen.Contains(source.IdPath))
                 source = FromTemplateCopy(source, lump, entities, notes);
             // A template lump (<id>#entitylumpname) holds a copy of every entity a
@@ -69,8 +80,6 @@ public static class MapDecompiler
             // (EntityLumpSet): one source node.
             if (source.IdPath.Length > 0 && !seen.Add(source.IdPath))
                 continue;
-            if (source.IdPath.Contains(':'))
-                notes.Add($"{source.Entity.ClassName} {source.IdPath}: placed by a prefab; written as a node of the map");
             // A world layer ships as world_layer_<name> (EntityLumpSet).
             var lumpName = Path.GetFileNameWithoutExtension(lump);
             if (lumpName.StartsWith(LayerLumpPrefix, StringComparison.OrdinalIgnoreCase))
@@ -84,45 +93,90 @@ public static class MapDecompiler
 
         var world = entities.FirstOrDefault(e => e.Entity.IsWorld)
                     ?? throw new InvalidDataException("no worldspawn in the lumps");
-        var builder = new VmapBuilder(mapName);
+
+        // One map per scope: the map's own nodes, and each prefab's (its id path less the node's
+        // own id: 108:3 is node 3 of prefab 108's map, 108:5:3 node 3 of prefab 5 inside it).
+        var scopes = new Dictionary<string, Scope>(StringComparer.Ordinal) { [""] = new("", null) };
+        Scope ScopeOf(string chain)
+        {
+            if (scopes.TryGetValue(chain, out var scope))
+                return scope;
+            var parent = ScopeOf(chain.Contains(':') ? chain[..chain.LastIndexOf(':')] : "");
+            scope = scopes[chain] = new Scope(chain, parent);
+            parent.Children.Add(scope);
+            return scope;
+        }
+        foreach (var e in entities.Where(e => !e.Entity.IsWorld))
+            ScopeOf(ChainOf(e.IdPath)).Entities.Add(e);
+
+        var main = scopes[""];
+        main.Builder = new VmapBuilder(mapName);
         // The lump's mapUsageType is the literal the compile writes for every map (BuildEntity),
         // so it says nothing of the source's.
-        builder.SetWorld(world.Entity.NodeId, world.Entity.Keys, world.Entity.Connections, fixup is not null, "standard");
+        main.Builder.SetWorld(world.Entity.NodeId, world.Entity.Keys, world.Entity.Connections, mapFixup, "standard");
 
-        // The compile numbers nodes in walk order (compile_source_id), the world 0; writing
-        // them as world children in that order walks them the same way. A position no lump
-        // holds is a node that walked and shipped nothing: a placeholder keeps the count.
-        // A layer's entities sit in a layer node; a run of them broken by others opens a
-        // second node of the same name, so the walk still meets them in order.
-        var rest = entities.Where(e => !e.Entity.IsWorld).OrderBy(e => e.SourceId).ToList();
-        var nextNode = entities.Max(e => e.Entity.NodeId) + 1;
         var placeholders = 0;
+        var prefabFiles = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         var at = 1;
-        string? openLayer = null;
-        DmxBinary.Element? layerNode = null;
-        foreach (var e in rest)
-        {
-            for (; at < e.SourceId; at++, placeholders++)
-            {
-                builder.AddEntity(nextNode++, [new("classname", PlaceholderClass)], Vector3.Zero, Vector3.Zero, Vector3.One, [],
-                                  editorOnly: true);
-                openLayer = null;
-            }
-            var layer = layerOf.GetValueOrDefault(e);
-            if (layer is not null && layer != openLayer)
-                layerNode = builder.AddLayer(nextNode++, layer);
-            openLayer = layer;
-            var x = e.Entity;
-            var node = builder.AddEntity(x.NodeId, x.Keys, x.Origin, x.Angles, x.Scales, x.Connections,
-                                         parent: layer is null ? null : layerNode);
-            if (e.BrushModel is { } model)
-                nextNode = AddBrushGeometry(builder, node, e, model, files, table, notes, nextNode);
-            at = e.SourceId + 1;
-        }
+        Emit(main);
         if (placeholders > 0)
             notes.Add($"{placeholders} walk positions shipped nothing (hidden, editor-only or compile-only nodes); filled with editor-only {PlaceholderClass}");
 
-        return new Result(builder.Write(), entities, placeholders, notes);
+        // The compile numbers nodes in walk order (compile_source_id), the world 0
+        // (MapEntities.Walk): a map's own children in tree order, then each prefab's map where
+        // its parent's children end, the prefab map's world one index ahead of its nodes. Writing
+        // each scope's nodes in that order, its prefabs after them, walks them the same way. A
+        // position no lump holds is a node that walked and shipped nothing: a placeholder keeps
+        // the count. A layer's entities sit in a layer node; a run of them broken by others
+        // opens a second node of the same name, so the walk still meets them in order.
+        void Emit(Scope scope)
+        {
+            var builder = scope.Builder!;
+            var nextNode = Math.Max(scope.Entities.Select(e => e.Entity.NodeId).DefaultIfEmpty(1).Max(),
+                                    scope.Children.Select(c => c.NodeId).DefaultIfEmpty(1).Max()) + 1;
+            if (scope.Parent is null)
+                nextNode = Math.Max(nextNode, world.Entity.NodeId + 1);
+            string? openLayer = null;
+            DmxBinary.Element? layerNode = null;
+            void FillTo(int sourceId)
+            {
+                for (; at < sourceId; at++, placeholders++)
+                {
+                    builder.AddEntity(nextNode++, [new("classname", PlaceholderClass)], Vector3.Zero, Vector3.Zero, Vector3.One, [],
+                                      editorOnly: true);
+                    openLayer = null;
+                }
+            }
+            foreach (var e in scope.Entities.OrderBy(e => e.SourceId))
+            {
+                FillTo(e.SourceId);
+                var layer = layerOf.GetValueOrDefault(e);
+                if (layer is not null && layer != openLayer)
+                    layerNode = builder.AddLayer(nextNode++, layer);
+                openLayer = layer;
+                var x = e.Entity;
+                var node = builder.AddEntity(x.NodeId, x.Keys, x.Origin, x.Angles, x.Scales, x.Connections,
+                                             parent: layer is null ? null : layerNode);
+                if (e.BrushModel is { } model)
+                    nextNode = AddBrushGeometry(builder, node, e, model, files, table, notes, nextNode);
+                at = Math.Max(at, e.SourceId + 1);
+            }
+            foreach (var child in scope.Children.OrderBy(c => c.FirstSourceId))
+            {
+                // The prefab map's world takes the index ahead of its first node.
+                FillTo(child.FirstSourceId - 1);
+                at++;
+                var path = $"maps/prefabs/{mapName}/prefab_{child.Chain.Replace(':', '_')}.vmap";
+                var fix = prefabs.GetValueOrDefault(child.Chain);
+                builder.AddPrefab(child.NodeId, path, fix?.Own is not null, fix?.TargetName ?? "");
+                child.Builder = new VmapBuilder($"{mapName}/{child.Chain}");
+                child.Builder.SetWorld(1, [new("classname", "worldspawn")], [], false, "standard");
+                Emit(child);
+                prefabFiles[path] = child.Builder.Write();
+            }
+        }
+
+        return new Result(main.Builder.Write(), entities, placeholders, notes) { Prefabs = prefabFiles };
     }
 
     /// <summary>
@@ -250,6 +304,76 @@ public static class MapDecompiler
                             return best;
                     }
         return best;
+    }
+
+    /// <summary>One map the decompile writes: the map itself (chain "") or a prefab's.</summary>
+    private sealed class Scope(string chain, Scope? parent)
+    {
+        public string Chain { get; } = chain;
+        public Scope? Parent { get; } = parent;
+        public List<EntityLumpAuthor.SourceEntity> Entities { get; } = [];
+        public List<Scope> Children { get; } = [];
+        public VmapBuilder? Builder { get; set; }
+
+        /// <summary>The prefab node's own id: the last id of its chain.</summary>
+        public int NodeId => int.Parse(Chain[(Chain.LastIndexOf(':') + 1)..], System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>The first walk index of the prefab map's nodes, its own or its prefabs'.</summary>
+        public int FirstSourceId => Entities.Select(e => e.SourceId).Concat(Children.Select(c => c.FirstSourceId)).Min();
+    }
+
+    /// <summary>A prefab's entity-name fixup as its contents show it: <paramref name="Own"/> the
+    /// part it adds (its node id, or its targetName with useTargetNameAsPrefix), null with fixup off;
+    /// <paramref name="NamePrefix"/> the whole prefix its nodes take after "[PR#]" (MapEntities.Walk).</summary>
+    private sealed record PrefabFixup(string? Own, string? TargetName, string? NamePrefix);
+
+    /// <summary>
+    /// Each prefab's fixup, from its nodes' names. MapEntities.Walk: a prefab with
+    /// fixupEntityNames appends "&lt;own&gt;_" to its parent's prefix, own being its targetName
+    /// when useTargetNameAsPrefix is on and the name is not empty, else its node id; one without
+    /// keeps its parent's. A node's names then take "[PR#]" and the prefix, or "[PR#]" alone when
+    /// only the map fixes up (EntityLumpAuthor.BuildEntity). The map's own fixup shows on its own
+    /// named nodes. Names the fixup leaves alone (empty, a class name, one starting with !*?@;
+    /// EntityLumpAuthor.Fixup) say nothing.
+    /// </summary>
+    private static Dictionary<string, PrefabFixup> PrefabFixups(List<(string IdPath, string Name)> named, FgdSchema schema, out bool mapFixup)
+    {
+        bool Telling(string name) => name.Length > 0 && name[0] is not ('!' or '*' or '?' or '@') && !schema.HasClass(name);
+        var byChain = named.Where(n => Telling(n.Name)).GroupBy(n => ChainOf(n.IdPath)).ToDictionary(g => g.Key, g => g.Select(n => n.Name).ToList());
+        mapFixup = byChain.GetValueOrDefault("")?.Any(n => n.StartsWith(EntityLumpAuthor.NameFixupPrefix, StringComparison.Ordinal)) == true;
+        var result = new Dictionary<string, PrefabFixup>(StringComparer.Ordinal);
+        foreach (var chain in named.Select(n => ChainOf(n.IdPath)).Where(c => c.Length > 0).Distinct().OrderBy(c => c.Count(x => x == ':')))
+            Resolve(chain);
+        return result;
+
+        PrefabFixup Resolve(string chain)
+        {
+            if (result.TryGetValue(chain, out var known))
+                return known;
+            var outer = chain.Contains(':') ? Resolve(chain[..chain.LastIndexOf(':')]).NamePrefix : null;
+            var id = chain[(chain.LastIndexOf(':') + 1)..];
+            var names = byChain.GetValueOrDefault(chain) ?? [];
+            var lead = EntityLumpAuthor.NameFixupPrefix + (outer ?? "");
+            string? own = null, target = null;
+            if (names.Count > 0 && names.All(n => n.StartsWith(lead, StringComparison.Ordinal) && n.IndexOf('_', lead.Length) > lead.Length))
+            {
+                var tokens = names.Select(n => n[lead.Length..n.IndexOf('_', lead.Length)]).Distinct().ToList();
+                // A node id is the prefab's own unless every name shares another token: the targetName.
+                if (tokens.Count == 1)
+                    (own, target) = tokens[0] == id ? (id, null) : (tokens[0], tokens[0]);
+            }
+            return result[chain] = new PrefabFixup(own, target, own is null ? outer : (outer ?? "") + own + "_");
+        }
+    }
+
+    /// <summary>A node's prefab chain: its id path less its own id ("" for the map's own nodes).</summary>
+    private static string ChainOf(string idPath) => idPath.Contains(':') ? idPath[..idPath.LastIndexOf(':')] : "";
+
+    private static string IdPath(KVObject entity)
+    {
+        if (!entity.TryGetValue("keyValues3Data", out var kv) || !kv.TryGetValue("values", out var values))
+            return "";
+        return values.TryGetValue("hammerUniqueId", out var id) ? EntityLumpAuthor.Plain(id) : "";
     }
 
     private static bool IsTemplateLump(string path) => Path.GetFileName(path).Contains('#');
