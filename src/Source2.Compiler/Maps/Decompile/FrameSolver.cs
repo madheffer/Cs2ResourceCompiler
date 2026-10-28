@@ -29,12 +29,14 @@ public static class FrameSolver
     /// <summary>A solution: the first placement's origin, each node's local placement, each
     /// later placement's transform, and the candidates tried.</summary>
     public sealed record Solution(Vector3 FirstOrigin, (Vector3 Origin, Vector3 Angles)[] Local,
-                                  (Vector3 Origin, Vector3 Angles)[] Later, long Tried);
+                                  (Vector3 Origin, Vector3 Angles)[] Later, long Tried, long Work);
 
     /// <param name="placed">Each placement's nodes as the lump holds them, node for node; the first
     /// is the one written.</param>
     /// <param name="radius">How far the first placement's origin is searched, in units.</param>
     /// <param name="budget">How many frames are tried at most.</param>
+    /// <param name="workBudget">How many landings are tested at most (a frame costs from one to thousands,
+    /// by how many preimages and turns its nodes take): the search ends on whichever runs out first.</param>
     /// <param name="why">Why no solution was found, when none is.</param>
     /// <param name="quarter">The first placement's yaw in right angles (0 to 3): AngleMatrixDouble of
     /// 90, 180 or 270 is a signed swap of x and y (its cosine of 90 is 6e-17, which the float sums
@@ -42,7 +44,7 @@ public static class FrameSolver
     /// still checked through the forward. A prefab turned 90 over a map's instances turns every
     /// collapse (s2c_prefabprobe4).</param>
     public static Solution? Solve(IReadOnlyList<(Vector3 Origin, Vector3 Angles)[]> placed, int radius, long budget, out string why,
-                                  int quarter = 0)
+                                  int quarter = 0, long workBudget = long.MaxValue)
     {
         var first = placed[0];
         var turns = new Vector3[placed.Count];
@@ -64,14 +66,18 @@ public static class FrameSolver
                 turns[k] = turns[k] with { Y = yaw > 180f ? yaw - 360f : yaw };
             }
         }
+        for (var k = 0; k < placed.Count; k++)
+            turns[k] = SettleWorld.SetAngles(turns[k]);
         var derived = (Vector3[])turns.Clone();
         var matrices = turns.Select(t => SettleWorld.AngleMatrixDouble(t, Vector3.Zero)).ToArray();
 
         // Positions: x and y through the yaw, z unchanged (rows of a yaw-only matrix).
         long tried = 0;
+        long work = 0;
         var later = new Vector3[placed.Count];
         bool Lands(int k, Vector3 origin, Vector3 local, Vector3 want)
         {
+            work++;
             var m = matrices[k];
             var x = (((m[0] * local.X) + (m[1] * local.Y)) + (m[2] * local.Z)) + origin.X;
             var y = (((m[4] * local.X) + (m[5] * local.Y)) + (m[6] * local.Z)) + origin.Y;
@@ -220,7 +226,7 @@ public static class FrameSolver
                         firstPrefab.Attributes["origin"] = shift;
                         firstPrefab.Attributes["angles"] = turns[0];
                         every = AngleCandidates(Unturned(first[r].Angles, turns[0])).Take(2197).Any(a =>
-                            SettleWorld.PrefabPlacement(l, a, [firstPrefab]).Angles == first[r].Angles
+                            ++work > 0 && SettleWorld.PrefabPlacement(l, a, [firstPrefab]).Angles == first[r].Angles
                             && SettleWorld.PrefabPlacement(l, a, [here]).Angles == placed[k][r].Angles);
                         if (debug && !every && turn == derived[k])
                             miss = $"turn {turn:R} origin {o2:R}: reference node angles {first[r].Angles:R} -> {placed[k][r].Angles:R} land from no local angles";
@@ -310,9 +316,9 @@ public static class FrameSolver
         {
             if (shift == Vector3.Zero)
                 continue;
-            if (++tried > budget)
+            if (++tried > budget || work > workBudget)
             {
-                why = $"no frame found in {budget:n0} tried";
+                why = tried > budget ? $"no frame found in {budget:n0} tried ({work:n0} landings)" : $"no frame found in {workBudget:n0} landings tested ({tried:n0} frames)";
                 return null;
             }
             if (Check(shift, later) is { } locals)
@@ -330,7 +336,7 @@ public static class FrameSolver
         }
         if (found is not { } frame)
         {
-            why = $"no integer frame within {radius} units lands every node ({tried:n0} tried)";
+            why = $"no integer frame within {radius} units lands every node ({tried:n0} tried, {work:n0} landings)";
             return null;
         }
 
@@ -362,7 +368,7 @@ public static class FrameSolver
             local[j] = (origin, angles.Value);
         }
         why = "";
-        return new Solution(frame, local, [.. Enumerable.Range(0, placed.Count).Select(k => (k == 0 ? frame : later[k], turns[k]))], tried);
+        return new Solution(frame, local, [.. Enumerable.Range(0, placed.Count).Select(k => (k == 0 ? frame : later[k], turns[k]))], tried, work);
     }
 
     /// <summary>
@@ -453,27 +459,38 @@ public static class FrameSolver
     }
 
     /// <summary>A later placement's yaw as derived, then up to 8 floats either side, nearest first, then
-    /// each of those 360 off.</summary>
+    /// the same about the nearest whole degree (a turn of 0 under a first placement turned 90 derives
+    /// as 5.3e-5, whose floats either side never reach 0: s2c_prefabprobe4's group 745), then each of
+    /// those 360 off, each as the setter holds it and once.</summary>
     private static IEnumerable<Vector3> TurnCandidates(Vector3 t)
     {
-        var near = new List<Vector3> { t };
-        for (var d = 1; d <= 8; d++)
-            foreach (var by in (int[])[d, -d])
-                near.Add(t with { Y = Step(t.Y, by) });
-        foreach (var c in near)
-            yield return c;
-        foreach (var c in near)
-            foreach (var turn in (float[])[360f, -360f])
-                yield return c with { Y = c.Y + turn };
+        var near = new List<Vector3>();
+        foreach (var about in new[] { t.Y, MathF.Round(t.Y) }.Distinct())
+        {
+            near.Add(t with { Y = about });
+            for (var d = 1; d <= 8; d++)
+                foreach (var by in (int[])[d, -d])
+                    near.Add(t with { Y = Step(about, by) });
+        }
+        // As the instance will hold them: the load sets every node's angles through the setter
+        // (MapNodeAngles: a negative yaw gains 360, -0 and anything under 0.001 is 0), whose
+        // AngleMatrixDouble differs in the last bits (s2c_prefabprobe4's lights 8379 and 8381 landed
+        // a float off at a yaw of -89.99995 written).
+        var seen = new HashSet<Vector3>();
+        foreach (var c in near.Concat(near.SelectMany(c => (Vector3[])[c with { Y = c.Y + 360f }, c with { Y = c.Y - 360f }])))
+            if (SettleWorld.SetAngles(c) is var held && seen.Add(held))
+                yield return held;
     }
 
     /// <summary>A placed node's angles with the first placement's yaw taken off: where its local angles
     /// are searched (a template at yaw 0 is placed at 90 under a first placement turned 90).</summary>
     private static Vector3 Unturned(Vector3 placed, Vector3 turn) => turn.Y == 0f ? placed : placed with { Y = placed.Y - turn.Y };
 
-    /// <summary>The stored angles first, then every combination of up to 6 floats either side on
-    /// each component, nearest first, then each of those with a component 360 off.</summary>
-    private static IEnumerable<Vector3> AngleCandidates(Vector3 a)
+    /// <summary>Every offset of up to 6 floats either side on each component, nearest first (a stable
+    /// sort, so in the order the loops make them); built once, as each frame checked asks for it.</summary>
+    private static readonly (int X, int Y, int Z)[] NearOffsets = BuildNearOffsets();
+
+    private static (int X, int Y, int Z)[] BuildNearOffsets()
     {
         const int Reach = 6;
         var offsets = new List<(int X, int Y, int Z)>();
@@ -481,11 +498,17 @@ public static class FrameSolver
             for (var y = -Reach; y <= Reach; y++)
                 for (var z = -Reach; z <= Reach; z++)
                     offsets.Add((x, y, z));
-        var near = offsets.OrderBy(o => Math.Abs(o.X) + Math.Abs(o.Y) + Math.Abs(o.Z))
-                          .Select(o => new Vector3(Step(a.X, o.X), Step(a.Y, o.Y), Step(a.Z, o.Z))).ToList();
-        foreach (var c in near)
-            yield return c;
-        foreach (var c in near)
+        return [.. offsets.OrderBy(o => Math.Abs(o.X) + Math.Abs(o.Y) + Math.Abs(o.Z))];
+    }
+
+    /// <summary>The stored angles first, then every combination of up to 6 floats either side on
+    /// each component, nearest first, then each of those with a component 360 off.</summary>
+    internal static IEnumerable<Vector3> AngleCandidates(Vector3 a)
+    {
+        Vector3 Near((int X, int Y, int Z) o) => new(Step(a.X, o.X), Step(a.Y, o.Y), Step(a.Z, o.Z));
+        foreach (var o in NearOffsets)
+            yield return Near(o);
+        foreach (var c in NearOffsets.Select(Near))
             for (var axis = 0; axis < 3; axis++)
                 foreach (var turn in (float[])[360f, -360f])
                 {
@@ -495,7 +518,7 @@ public static class FrameSolver
                 }
     }
 
-    private static float Step(float f, int by)
+    internal static float Step(float f, int by)
     {
         for (; by > 0; by--) f = MathF.BitIncrement(f);
         for (; by < 0; by++) f = MathF.BitDecrement(f);

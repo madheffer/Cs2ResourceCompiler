@@ -311,7 +311,7 @@ public static class MapDecompiler
                 {
                     if (fillers-- <= 0)
                         notes.Add($"instances: group of {g.SourceIds[0]} has no free slot for the instance of {inner.SourceIds[0]}");
-                    targets.Add((builder.AddInstance(NewId(), builder.World, Vector3.Zero, Vector3.Zero, element), inner));
+                    targets.Add((builder.AddInstance(NewId(), builder.World, inner.InstanceAt.Origin, inner.InstanceAt.Angles, element), inner));
                 }
             }
             var plannedAt = new Queue<(int At, int Kind, InstancePlan.Group? Group)>(planItems.OrderBy(i => i.At).ThenBy(i => i.Kind));
@@ -327,7 +327,7 @@ public static class MapDecompiler
                         continue;
                     }
                     FillTo(g!.SourceIds[0]);
-                    var element = builder.AddGroup(NewId());
+                    var element = builder.AddGroup(NewId(), at: g.GroupAt);
                     planGroups[g] = element;
                     for (var slot = 0; slot < g.Slots[0]; slot++)
                         builder.AddGroup(NewId(), element);

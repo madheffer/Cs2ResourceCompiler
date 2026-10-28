@@ -23,7 +23,9 @@ namespace Source2.Compiler.Maps.Decompile;
 /// copies land inside their outer copy (the EmitAt they inherit, in the copy's preorder). Its group is
 /// written at the origin and its instance there in the outer template, so with an unturned outer
 /// collapse the second step moves by the first one's matrix (SettleWorld.BakedPlacement); the inner
-/// templates are solved with the outer group's own and every copy checked through both steps.</item>
+/// templates are solved with the outer group's own and every copy checked through both steps. Under
+/// turned outer collapses that one step does not land them, and the inner instance and group are
+/// placed (<see cref="NestedSolve"/>).</item>
 /// </list>
 /// Maps whose prefabs also take blocks are not planned yet.
 /// </summary>
@@ -43,6 +45,11 @@ internal sealed class InstancePlan
         /// its templates come before the instance node.</summary>
         public Group? Outer { get; set; }
         public int OuterBefore { get; set; }
+
+        /// <summary>For a nested group: its instance's placement in the outer template, and its own
+        /// placement (both the origin unturned unless <see cref="NestedSolve"/> placed them).</summary>
+        public (Vector3 Origin, Vector3 Angles) InstanceAt { get; set; }
+        public (Vector3 Origin, Vector3 Angles) GroupAt { get; set; }
     }
 
     public sealed class Collapse
@@ -246,6 +253,11 @@ internal sealed class InstancePlan
         plan.Next0 = head.MinId - 1 - head.Group.Slots[0];
 
         // Placements. A nested group's templates are solved as the outer group's last members.
+        // The yaw most collapses' first copies show, across every group: a prefab turned over the map
+        // turns them all (s2c_prefabprobe4's atixref at 90), which a group whose own template is
+        // turned against it does not show (its copies at 0, group 745).
+        static float Yaw360(float y) => ((y % 360f) + 360f) % 360f;
+        var scopeYaw = plan.Groups.SelectMany(x => x.Collapses).GroupBy(c => MathF.Round(Yaw360(c[0].Entity.Angles.Y))).MaxBy(x => x.Count())!.Key;
         foreach (var g in plan.Groups.Where(g => g.Outer is null))
         {
             var mine = plan.Collapses.Where(c => c.Group == g).OrderBy(c => c.Index).ToList();
@@ -270,70 +282,249 @@ internal sealed class InstancePlan
                     return null;
                 continue;
             }
-            FrameSolver.Solution? solution = null;
-            var rep = -1;
             var why = "";
             // The first placement has to be an instance unturned or turned a right angle (a prefab
             // turned 90 over the map turns every collapse: s2c_prefabprobe4): collapses are tried in
             // order of how near their first copy's yaw is to the most common one among them (the
             // template's own, in a group mostly placed unturned), each first unturned and then turned by
-            // the right angle nearest that yaw (each try is a whole frame search, up to minutes: a turned
-            // try on one group ran 53 minutes, so unturned goes first and the other right
-            // angles are not tried); the solver accepts only an exact landing.
+            // the right angle nearest that yaw, then the one nearest the scope's (each try is a whole
+            // frame search, up to minutes, so unturned goes first and the other right angles are not
+            // tried); the solver accepts only an exact landing.
             float Yaw(int k) => ((g.Collapses[k][0].Entity.Angles.Y % 360f) + 360f) % 360f;
             var common = Enumerable.Range(0, g.Collapses.Count).GroupBy(k => MathF.Round(Yaw(k))).MaxBy(x => x.Count())!.Key;
             var reps = Enumerable.Range(0, g.Collapses.Count).OrderBy(k => Math.Abs(Yaw(k) - common)).Take(4).ToList();
             static float Apart(float a, float b) => Math.Min(Math.Abs(a - b), 360f - Math.Abs(a - b));
-            var quarters = new[] { 0, new[] { 0, 1, 2, 3 }.MinBy(q => Apart(q * 90f, common)) }.Distinct().ToList();
-            foreach (var (r, quarter) in quarters.SelectMany(q => reps.Select(r => (r, q))))
+            int Quarter(float yaw) => new[] { 0, 1, 2, 3 }.MinBy(q => Apart(q * 90f, yaw));
+            var quarters = new[] { 0, Quarter(common), Quarter(scopeYaw) }.Distinct().ToList();
+            // Each frame found is kept only if accepted: a frame that fits the outer group's own
+            // members may still not be the one its nested copies need (a one-template group fits
+            // unturned and turned alike), so the search goes on to the next one.
+            var tries = new List<string>();
+            bool Search(Func<int, List<EntityLumpAuthor.SourceEntity>> members, int nested, Func<FrameSolver.Solution, bool> accept)
             {
-                if (solution is not null)
-                    break;
-                var order = new[] { r }.Concat(Enumerable.Range(0, g.Collapses.Count).Where(k => k != r)).ToList();
-                var placed = order.Select(k => Members(k).Select(x => (x.Entity.Origin, x.Entity.Angles)).ToArray()).ToList();
-                var watch = System.Diagnostics.Stopwatch.StartNew();
-                solution = FrameSolver.Solve(placed, 32768, 2_000_000, out why, quarter);
-                if (Environment.GetEnvironmentVariable("DECOMPILE_FRAME_LOG") == "1")
-                    Console.Error.WriteLine($"frame: group {g.SourceIds[0]} ({g.SourceIds.Count} own, {innerGroups.Sum(i => i.SourceIds.Count)} nested) rep {r} quarter {quarter}: {(solution is null ? why : "solved")} in {watch.Elapsed.TotalSeconds:F1}s");
-                if (solution is not null)
+                foreach (var (r, quarter) in quarters.SelectMany(q => reps.Select(r => (r, q))))
                 {
-                    rep = r;
-                    for (var i = 0; i < order.Count; i++)
-                        mine.First(c => c.Index == order[i]).Transform = solution.Later[i];
-                    g.Local = solution.Local;
+                    var order = new[] { r }.Concat(Enumerable.Range(0, g.Collapses.Count).Where(k => k != r)).ToList();
+                    var placed = order.Select(k => members(k).Select(x => (x.Entity.Origin, x.Entity.Angles)).ToArray()).ToList();
+                    var watch = System.Diagnostics.Stopwatch.StartNew();
+                    if (Environment.GetEnvironmentVariable("DECOMPILE_FRAME_LOG") == "1")
+                        Console.Error.WriteLine($"frame: group {g.SourceIds[0]} rep {r} quarter {quarter}: trying, first node at {placed[0][0].Origin:R} {placed[0][0].Angles:R}");
+                    // 50M landings: 50 times the most a solved frame has taken (atixref group 674, 1.08M).
+                    var solution = FrameSolver.Solve(placed, 32768, 2_000_000, out why, quarter, 50_000_000);
+                    var work = solution?.Work;
+                    var at = solution?.FirstOrigin;
+                    if (solution is not null)
+                    {
+                        for (var i = 0; i < order.Count; i++)
+                            mine.First(c => c.Index == order[i]).Transform = solution.Later[i];
+                        tries.Clear();
+                        if (!accept(solution))
+                        {
+                            why = tries.LastOrDefault() ?? "not accepted";
+                            solution = null;
+                        }
+                    }
+                    if (Environment.GetEnvironmentVariable("DECOMPILE_FRAME_LOG") == "1")
+                        Console.Error.WriteLine($"frame: group {g.SourceIds[0]} ({g.SourceIds.Count} own, {nested} nested) rep {r} quarter {quarter}: {(solution is null ? why : $"solved at {at} ({work:n0} landings)")} in {watch.Elapsed.TotalSeconds:F1}s");
+                    if (solution is not null)
+                        return true;
                 }
+                return false;
             }
-            if (solution is null)
-            {
-                notes.Add($"instances: group of templates {string.Join(",", g.SourceIds)} ({g.Collapses.Count} collapses): no exact frame ({why}); not rebuilt");
-                return null;
-            }
-            Split();
-            if (!NestedExact(g, innerGroups, mine, notes))
-                return null;
+            // The nested groups' templates first as the outer group's last members, one step from
+            // the outer collapse (the inner instance and group at the origin unturned).
+            if (Search(Members, innerGroups.Sum(i => i.SourceIds.Count), s =>
+                {
+                    g.Local = s.Local;
+                    Split();
+                    return NestedExact(g, innerGroups, mine, tries);
+                }))
+                continue;
+            // Else the outer group on its own members, and each nested group placed through both
+            // steps (NestedSolve): under a turned outer collapse a nested copy rounds by where its
+            // own group stands, which one step does not reach (s2c_prefabprobe4's group 6203).
+            if (innerGroups.Count > 0 && Search(k => g.Collapses[k], 0, s =>
+                {
+                    g.Local = s.Local;
+                    return innerGroups.All(i => NestedSolve(g, i, mine, tries)) && NestedExact(g, innerGroups, mine, tries);
+                }))
+                continue;
+            notes.Add($"instances: group of templates {string.Join(",", g.SourceIds)} ({g.Collapses.Count} collapses): no exact frame ({why}); not rebuilt");
+            return null;
         }
         return plan;
     }
 
+    private static DmxBinary.Element Node(string type, Vector3 origin, Vector3 angles, DmxBinary.Element? target = null)
+    {
+        var e = DmxBinary.NewElement(type, "", Guid.Empty)
+            .Set("origin", DmxBinary.AttrType.Vector3, origin).Set("angles", DmxBinary.AttrType.QAngle, angles);
+        if (target is not null)
+            e.Set("target", DmxBinary.AttrType.Element, target);
+        return e;
+    }
+
+    /// <summary>
+    /// A nested group placed through both steps as the forward makes them (SettleWorld.BakedPlacement
+    /// over the outer collapse, then the inner instance, moved by it, against its group), in the shape
+    /// atixref's source has (instance 6207, group 6203, template 6201): the instance, the group and the
+    /// first template share their angles, and the first template stands at the group's origin. Under
+    /// collapses turned right angles each world axis of a copy comes from one axis of the instance and
+    /// group origins, so those are searched axis by axis: the instance origin within floats of the one
+    /// step back from the first copy, the group origin over integers then finer grids, the pair that
+    /// lands that axis of every copy. Later templates are searched the same way around the one step
+    /// back. The caller checks every copy whole (NestedExact).
+    /// </summary>
+    private static bool NestedSolve(Group outer, Group inner, List<Collapse> collapses, List<string> notes)
+    {
+        var outers = collapses.Select(c => Node("CMapInstance", c.Transform.Origin, c.Transform.Angles, Node("CMapGroup", Vector3.Zero, Vector3.Zero))).ToList();
+        var target = Node("CMapGroup", Vector3.Zero, Vector3.Zero);
+        var instance = Node("CMapInstance", Vector3.Zero, Vector3.Zero, target);
+        (Vector3 Origin, Vector3 Angles) Through(int k, Vector3 io, Vector3 go, Vector3 a, Vector3 lo, Vector3 la)
+        {
+            instance.Attributes["origin"] = io;
+            instance.Attributes["angles"] = a;
+            target.Attributes["origin"] = go;
+            target.Attributes["angles"] = a;
+            return Maps.SettleWorld.BakedPlacement(lo, la, [outers[k], instance]);
+        }
+        var copies = collapses.Select(c => inner.Collapses[c.Index].Select(x => x.Entity).ToList()).ToList();
+        bool Fail(string why)
+        {
+            notes.Add($"instances: nested group of {inner.SourceIds[0]} in {outer.SourceIds[0]}: {why}; not rebuilt");
+            return false;
+        }
+
+        // Each world axis d from one local axis e, the same under every collapse.
+        var turns = collapses.Select(c => Maps.SettleWorld.AngleMatrixDouble(c.Transform.Angles, c.Transform.Origin)).ToList();
+        var axisOf = new int[3];
+        for (var d = 0; d < 3; d++)
+        {
+            var row = d * 4;
+            var e = Enumerable.Range(0, 3).MaxBy(e => Math.Abs(turns[0][row + e]));
+            if (turns.Any(m => Math.Abs(m[row + e]) < 0.999f))
+                return Fail("its collapses are not turned right angles alike");
+            axisOf[d] = e;
+        }
+        // The one step back from collapse 0, in double.
+        Vector3 Back(Vector3 world)
+        {
+            var m = turns[0];
+            var v = new double[3];
+            for (var e = 0; e < 3; e++)
+                for (var d = 0; d < 3; d++)
+                    v[e] += m[(d * 4) + e] * ((double)world[d] - m[(d * 4) + 3]);
+            return new Vector3((float)v[0], (float)v[1], (float)v[2]);
+        }
+
+        // The shared angles: the first copy's with the first collapse's yaw taken off, whole degrees
+        // first.
+        var head = copies[0][0];
+        var unturned = head.Angles with { Y = head.Angles.Y - collapses[0].Transform.Angles.Y };
+        var whole = new Vector3(MathF.Round(unturned.X), MathF.Round(unturned.Y), MathF.Round(unturned.Z));
+        Vector3? shared = null;
+        // Each as the instance and group will hold it (MapNodeAngles).
+        foreach (var a in new[] { whole }.Concat(FrameSolver.AngleCandidates(unturned).Take(4000)).Select(Maps.SettleWorld.SetAngles).Distinct())
+            if (Enumerable.Range(0, copies.Count).All(k => Through(k, Vector3.Zero, Vector3.Zero, a, Vector3.Zero, a).Angles == copies[k][0].Angles))
+            {
+                shared = a;
+                break;
+            }
+        if (shared is not { } angles)
+            return Fail($"no shared angles near {unturned} land every copy's");
+
+        // Group origins: integers nearest 0 first, then each finer grid down to 2^-16 sampled across
+        // the same span (golden-ratio steps, 4096 a grid): a copy rounds by the group origin's last
+        // bits (atixref's group 6203 at x -456.4531 turns 55.66162 into 55.66165, one 2^-15 step).
+        static IEnumerable<float> Origins()
+        {
+            yield return 0f;
+            for (var i = 1; i <= 4096; i++)
+            {
+                yield return i;
+                yield return -i;
+            }
+            for (var p = 1; p <= 16; p++)
+                for (var t = 1; t <= 4096; t++)
+                {
+                    var u = (t * 0.6180339887498949) % 1.0;
+                    yield return (float)(Math.Round(((u * 8192.0) - 4096.0) * (1 << p)) / (1 << p));
+                }
+        }
+        static float Near(float f, int step) => FrameSolver.Step(f, (step & 1) == 0 ? step / 2 : -((step + 1) / 2));
+        var io = Back(head.Origin);
+        var go = Vector3.Zero;
+        for (var d = 0; d < 3; d++)
+        {
+            var e = axisOf[d];
+            var guess = io[e];
+            var hit = false;
+            foreach (var g in Origins())
+            {
+                for (var step = 0; step <= 16 && !hit; step++)
+                {
+                    var (tryIo, tryGo) = (io, go);
+                    tryIo[e] = Near(guess, step);
+                    tryGo[e] = g;
+                    if (Enumerable.Range(0, copies.Count).All(k => Through(k, tryIo, tryGo, angles, tryGo, angles).Origin[d] == copies[k][0].Origin[d]))
+                        (io, go, hit) = (tryIo, tryGo, true);
+                }
+                if (hit)
+                    break;
+            }
+            if (!hit)
+                return Fail($"no instance and group {"xyz"[e]} land every copy's {"xyz"[d]}");
+        }
+        var local = new (Vector3 Origin, Vector3 Angles)[inner.SourceIds.Count];
+        local[0] = (go, angles);
+        for (var j = 1; j < local.Length; j++)
+        {
+            var copy = copies[0][j];
+            Vector3? turned = null;
+            foreach (var a in FrameSolver.AngleCandidates(copy.Angles with { Y = copy.Angles.Y - collapses[0].Transform.Angles.Y }).Take(4000))
+                if (Enumerable.Range(0, copies.Count).All(k => Through(k, io, go, angles, Vector3.Zero, a).Angles == copies[k][j].Angles))
+                {
+                    turned = a;
+                    break;
+                }
+            if (turned is not { } la)
+                return Fail($"template {inner.SourceIds[j]}: no angles land every copy's");
+            var lo = go + (Back(copy.Origin) - Back(head.Origin));
+            for (var d = 0; d < 3; d++)
+            {
+                var e = axisOf[d];
+                var guess = lo[e];
+                var hit = false;
+                for (var step = 0; step <= 64 && !hit; step++)
+                {
+                    var tryLo = lo;
+                    tryLo[e] = Near(guess, step);
+                    if (Enumerable.Range(0, copies.Count).All(k => Through(k, io, go, angles, tryLo, la).Origin[d] == copies[k][j].Origin[d]))
+                        (lo, hit) = (tryLo, true);
+                }
+                if (!hit)
+                    return Fail($"template {inner.SourceIds[j]}: no local {"xyz"[e]} lands every copy's {"xyz"[d]}");
+            }
+            local[j] = (lo, la);
+        }
+        inner.InstanceAt = (io, angles);
+        inner.GroupAt = (go, angles);
+        inner.Local = local;
+        return true;
+    }
+
     /// <summary>
     /// Every nested copy through both steps as the forward makes it (SettleWorld.BakedPlacement over
-    /// the outer collapse, then the inner instance at the outer template's origin, both groups at the
-    /// origin): the one-step solve stands only where the second step moves exactly as the first.
+    /// the outer collapse, then the inner instance in the outer template against its group): the
+    /// one-step solve stands only where the second step moves exactly as the first.
     /// </summary>
     private static bool NestedExact(Group outer, List<Group> inners, List<Collapse> collapses, List<string> notes)
     {
-        static DmxBinary.Element Node(string type, Vector3 origin, Vector3 angles, DmxBinary.Element? target = null)
-        {
-            var e = DmxBinary.NewElement(type, "", Guid.Empty)
-                .Set("origin", DmxBinary.AttrType.Vector3, origin).Set("angles", DmxBinary.AttrType.QAngle, angles);
-            if (target is not null)
-                e.Set("target", DmxBinary.AttrType.Element, target);
-            return e;
-        }
         var outerGroup = Node("CMapGroup", Vector3.Zero, Vector3.Zero);
         foreach (var inner in inners)
         {
-            var innerInstance = Node("CMapInstance", Vector3.Zero, Vector3.Zero, Node("CMapGroup", Vector3.Zero, Vector3.Zero));
+            var innerInstance = Node("CMapInstance", inner.InstanceAt.Origin, inner.InstanceAt.Angles,
+                                     Node("CMapGroup", inner.GroupAt.Origin, inner.GroupAt.Angles));
             foreach (var c in collapses)
             {
                 var outerInstance = Node("CMapInstance", c.Transform.Origin, c.Transform.Angles, outerGroup);

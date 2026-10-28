@@ -389,12 +389,13 @@ public sealed class VmapBuilder
     }
 
     /// <summary>A bare CMapGroup under <paramref name="parent"/> (the world when null), at the origin
-    /// unturned: s2c_instnest's groups, saved without the group fields.</summary>
-    public DmxBinary.Element AddGroup(int nodeId, DmxBinary.Element? parent = null)
+    /// unturned unless placed (a nested template group: atixref's group 6203): s2c_instnest's groups,
+    /// saved without the group fields.</summary>
+    public DmxBinary.Element AddGroup(int nodeId, DmxBinary.Element? parent = null, (Vector3 Origin, Vector3 Angles) at = default)
     {
         var group = New("CMapGroup");
         Node(group, nodeId, ReferenceId(nodeId));
-        Placement(group, Vector3.Zero, Vector3.Zero, Vector3.One);
+        Placement(group, at.Origin, at.Angles, Vector3.One);
         Flags(group);
         AddChild(parent ?? World, group);
         return group;

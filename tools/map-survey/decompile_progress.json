@@ -192,15 +192,15 @@
   "module": "Instances",
   "subtask": "Several collapses of one template, rounds, nesting",
   "weight": 4,
-  "done": 0.85,
-  "evidence": "atixref 13 groups incl. nested 630 in 631 exact; a prefab map's own collapses (probe3: 12 copies, 4 instances) exact; turned prefab (probe4) and shared families open"
+  "done": 0.9,
+  "evidence": "atixref 13 groups incl. nested 630 in 631 exact; a prefab map's own collapses (probe3) exact; atixref as a prefab turned 90 (probe4) exact incl. its nested group under turned collapses; shared families open"
  },
  {
   "module": "Instances",
   "subtask": "Exact placement solve for each later instance",
   "weight": 3,
-  "done": 0.85,
-  "evidence": "FrameSolver over collapses: every atixref group solved; nested copies checked through both steps"
+  "done": 0.95,
+  "evidence": "FrameSolver over collapses (unturned or right-angle first placement, landing cap): every atixref and probe4 group solved; nested groups through both steps (NestedSolve)"
  },
  {
   "module": "World geometry",
