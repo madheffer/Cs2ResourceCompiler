@@ -402,8 +402,8 @@ its members), each compiled -world and full.
 ## Plan
 
 1. Done: `s2c decompile-map`, our own vmap 40 writer.
-2. Done for point entities, world layers and templates (stage 1 above); left: instances, paths
-   and cables, prefabs.
+2. Done for point entities, world layers, templates, prefabs, instances (multi-copy and nested)
+   and settled props (stages 1 and 3 above); left: paths and cables, shared prefab families.
 3. Brush entities from their entity models: hulls done (stage 2); left the hull vertex order,
    render meshes (UVs, render-only faces) and triangle-mesh shapes.
 4. World meshes from the world node, split by whatever per-source-mesh identity the compile
@@ -416,3 +416,41 @@ its members), each compiled -world and full.
    node's own. Instances leave no id path: their copies are new entities.
 6. A round-trip test per map: decompile, compile with ours, `map-diff` against the shipped
    package; the parity matrix's maps first, then the workshop corpus.
+
+## Handoff (2026-10-28)
+
+Branch research/vmap-decompile, worktree `D:\_cursor projects\source2-compiler-wt-decompile`,
+last commit 01d1dd1, nothing pushed. Tracker 48.9% (18 of 44 subtasks done).
+
+The check is `MapDecompilerTests.Entities_CompileAsTheSourceDoes` (20 maps, about 4 minutes;
+`DECOMPILE_ALL=1` prints every difference, `DECOMPILE_LUMP=<file>` lists both sides of a lump).
+Count the `unexplained difference(s)` from the summary blocks (`Failed ... Error Message`), not
+from the interleaved test output, which pairs maps with the wrong counts.
+
+| Map | Unexplained differences | What is left |
+|---|---|---|
+| 12 maps (probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, prefabprobe 1/2/5/6/7, pinst, instnest, prefabinst) | 0 | passing |
+| atixref | 33 | 4 rope paths (20 lines), 9 template-lump angles plus prop 258's (one ulp-scale turn), light 6478's precomputed bounds |
+| s2c_prefabprobe3 | 36 | not itemised yet (atixref-based) |
+| s2c_prefabprobe4 | 251 | not itemised yet (atixref-based) |
+| s2c_prefabprobe9 | 883 | shared prefab families nested |
+| s2c_prefabprobe11 | 28 | brush model taken from a later placement |
+| s2c_prefabprobe12 | 28 | shared prefab copies inside turned prefabs |
+| s2c_prefabprobe8 | 7 | the main map's own instances |
+| s2c_pinst7 | 1 | the main map's own instances |
+
+Next, in the order the user is likely to pick:
+1. atixref's rope paths (`path_particle_rope_clientside`, rebuild CMapPath / CMapPathNode).
+2. Template-lump angles: 236# and 257# angles one float step off (89.99999237 vs 89.9999771):
+   find the forward's angle path for template members (MapInstances / point_template) in the
+   decompile, then solve exactly; no fitting.
+3. Light 6478's precomputed bounds and obb.
+4. Itemise prefabprobe3 and 4 with `DECOMPILE_ALL=1`.
+5. Shared prefab families (9, 11, 12), the main map's own instances (8, pinst7), turned outer
+   collapses and deeper nesting.
+6. Brush geometry: hull vertex order as an exact solve (GroupVertices hash-slot order), corner
+   placement as an exact solve, render meshes and UVs, world meshes (plan 3 and 4).
+7. Hammer: element defaults from Hammer's own map code, and an open-and-re-save check.
+
+After each milestone: update `tools/map-survey/decompile_progress.json`, upload it as an asset of
+the tracker and point `datasets/subtasks` at it (Progress tracker above).
