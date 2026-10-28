@@ -273,19 +273,28 @@ internal sealed class InstancePlan
             FrameSolver.Solution? solution = null;
             var rep = -1;
             var why = "";
-            // The first placement has to be an unturned instance: collapses are tried in order of how
-            // near their first copy's yaw is to the most common one among them (the template's own, in
-            // a group mostly placed unturned); the solver accepts only an exact landing.
+            // The first placement has to be an instance unturned or turned a right angle (a prefab
+            // turned 90 over the map turns every collapse: s2c_prefabprobe4): collapses are tried in
+            // order of how near their first copy's yaw is to the most common one among them (the
+            // template's own, in a group mostly placed unturned), each first unturned and then turned by
+            // the right angle nearest that yaw (each try is a whole frame search, up to minutes: a turned
+            // try on one group ran 53 minutes, so unturned goes first and the other right
+            // angles are not tried); the solver accepts only an exact landing.
             float Yaw(int k) => ((g.Collapses[k][0].Entity.Angles.Y % 360f) + 360f) % 360f;
             var common = Enumerable.Range(0, g.Collapses.Count).GroupBy(k => MathF.Round(Yaw(k))).MaxBy(x => x.Count())!.Key;
             var reps = Enumerable.Range(0, g.Collapses.Count).OrderBy(k => Math.Abs(Yaw(k) - common)).Take(4).ToList();
-            foreach (var r in reps)
+            static float Apart(float a, float b) => Math.Min(Math.Abs(a - b), 360f - Math.Abs(a - b));
+            var quarters = new[] { 0, new[] { 0, 1, 2, 3 }.MinBy(q => Apart(q * 90f, common)) }.Distinct().ToList();
+            foreach (var (r, quarter) in quarters.SelectMany(q => reps.Select(r => (r, q))))
             {
                 if (solution is not null)
                     break;
                 var order = new[] { r }.Concat(Enumerable.Range(0, g.Collapses.Count).Where(k => k != r)).ToList();
                 var placed = order.Select(k => Members(k).Select(x => (x.Entity.Origin, x.Entity.Angles)).ToArray()).ToList();
-                solution = FrameSolver.Solve(placed, 32768, 2_000_000, out why);
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                solution = FrameSolver.Solve(placed, 32768, 2_000_000, out why, quarter);
+                if (Environment.GetEnvironmentVariable("DECOMPILE_FRAME_LOG") == "1")
+                    Console.Error.WriteLine($"frame: group {g.SourceIds[0]} ({g.SourceIds.Count} own, {innerGroups.Sum(i => i.SourceIds.Count)} nested) rep {r} quarter {quarter}: {(solution is null ? why : "solved")} in {watch.Elapsed.TotalSeconds:F1}s");
                 if (solution is not null)
                 {
                     rep = r;

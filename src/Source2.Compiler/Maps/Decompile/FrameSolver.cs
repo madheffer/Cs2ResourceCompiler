@@ -35,10 +35,18 @@ public static class FrameSolver
     /// is the one written.</param>
     /// <param name="radius">How far the first placement's origin is searched, in units.</param>
     /// <param name="budget">How many frames are tried at most.</param>
-    public static Solution? Solve(IReadOnlyList<(Vector3 Origin, Vector3 Angles)[]> placed, int radius, long budget, out string why)
+    /// <param name="why">Why no solution was found, when none is.</param>
+    /// <param name="quarter">The first placement's yaw in right angles (0 to 3): AngleMatrixDouble of
+    /// 90, 180 or 270 is a signed swap of x and y (its cosine of 90 is 6e-17, which the float sums
+    /// lose), so its preimages are the unturned ones swapped (<see cref="Plane"/>). Every landing is
+    /// still checked through the forward. A prefab turned 90 over a map's instances turns every
+    /// collapse (s2c_prefabprobe4).</param>
+    public static Solution? Solve(IReadOnlyList<(Vector3 Origin, Vector3 Angles)[]> placed, int radius, long budget, out string why,
+                                  int quarter = 0)
     {
         var first = placed[0];
         var turns = new Vector3[placed.Count];
+        turns[0] = new Vector3(0f, quarter * 90f, 0f);
         for (var k = 1; k < placed.Count; k++)
         {
             var ra = TemplateTransform.AngleMatrix(Vector3.Zero, first[0].Angles);
@@ -48,6 +56,12 @@ public static class FrameSolver
             {
                 why = $"placement {k} turns about more than the vertical ({turns[k]})";
                 return null;
+            }
+            // The turn between the two placements, after the first's own.
+            if (quarter != 0)
+            {
+                var yaw = turns[k].Y + turns[0].Y;
+                turns[k] = turns[k] with { Y = yaw > 180f ? yaw - 360f : yaw };
             }
         }
         var derived = (Vector3[])turns.Clone();
@@ -64,24 +78,6 @@ public static class FrameSolver
             var z = (((m[8] * local.X) + (m[9] * local.Y)) + (m[10] * local.Z)) + origin.Z;
             return x == want.X && y == want.Y && z == want.Z;
         }
-        // A node's local coordinate on one axis: every float that the first placement's
-        // translation rounds back to what the lump holds (fl(l + shift) == stored); usually one,
-        // more where the local value is finer than the placed one's grid (s2c_prefabprobe11's
-        // node at -447.81329 placed at -6591.8135).
-        static List<float> Preimages(float stored, float shift)
-        {
-            var list = new List<float>();
-            var l0 = stored - shift;
-            if (l0 + shift != stored)
-                return list;
-            list.Add(l0);
-            for (var l = MathF.BitIncrement(l0); l + shift == stored && list.Count < 256; l = MathF.BitIncrement(l))
-                list.Add(l);
-            for (var l = MathF.BitDecrement(l0); l + shift == stored && list.Count < 512; l = MathF.BitDecrement(l))
-                list.Add(l);
-            return list;
-        }
-
         // z first, on its own: a yaw-only matrix leaves it to the translation (fl(local z + origin z)),
         // which no x or y reaches. The frame's z is searched over the values that put a node's local z
         // at 0, then over the grid; each node's local z among its preimages and each later placement's
@@ -156,7 +152,8 @@ public static class FrameSolver
             var sets = new (List<float> X, List<float> Y, List<float> Z)[first.Length];
             for (var j = 0; j < first.Length; j++)
             {
-                sets[j] = (Preimages(first[j].Origin.X, shift.X), Preimages(first[j].Origin.Y, shift.Y), [zLocal[j]]);
+                var (px, py) = Plane(first[j].Origin, shift, quarter);
+                sets[j] = (px, py, [zLocal[j]]);
                 if (sets[j].X.Count == 0 || sets[j].Y.Count == 0 || sets[j].Z.Count == 0)
                 {
                     if (debug)
@@ -205,7 +202,11 @@ public static class FrameSolver
                         continue;
                     var every = true;
                     for (var j = 0; j < first.Length && every; j++)
+                    {
                         every = sets[j].X.Any(lx => sets[j].Y.Any(ly => sets[j].Z.Any(lz => Lands(k, o2, new Vector3(lx, ly, lz), placed[k][j].Origin))));
+                        if (debug && !every && turn == derived[k])
+                            miss = $"turn {turn:R} origin {o2:R}: node {j} {first[j].Origin:R} -> {placed[k][j].Origin:R} lands no local {sets[j].X[0]:R},{sets[j].Y[0]:R},{sets[j].Z[0]:R}";
+                    }
                     // The turn has to land the reference node's angles too, from some local angles that
                     // the first placement also lands: a node where its prefab or group stands lands its
                     // position under any turn (atixref's lights at their group's origin).
@@ -217,10 +218,12 @@ public static class FrameSolver
                         here.Attributes["angles"] = turn;
                         var firstPrefab = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
                         firstPrefab.Attributes["origin"] = shift;
-                        firstPrefab.Attributes["angles"] = Vector3.Zero;
-                        every = AngleCandidates(first[r].Angles).Take(2197).Any(a =>
+                        firstPrefab.Attributes["angles"] = turns[0];
+                        every = AngleCandidates(Unturned(first[r].Angles, turns[0])).Take(2197).Any(a =>
                             SettleWorld.PrefabPlacement(l, a, [firstPrefab]).Angles == first[r].Angles
                             && SettleWorld.PrefabPlacement(l, a, [here]).Angles == placed[k][r].Angles);
+                        if (debug && !every && turn == derived[k])
+                            miss = $"turn {turn:R} origin {o2:R}: reference node angles {first[r].Angles:R} -> {placed[k][r].Angles:R} land from no local angles";
                     }
                     if (every)
                     {
@@ -247,7 +250,7 @@ public static class FrameSolver
                         foreach (var lz in sets[j].Z)
                         {
                             var l = new Vector3(lx, ly, lz);
-                            var all = true;
+                            var all = quarter == 0 || Lands(0, shift, l, first[j].Origin);
                             for (var k = 1; k < placed.Count && all; k++)
                                 all = Lands(k, origins[k], l, placed[k][j].Origin);
                             if (all) { hit = l; break; }
@@ -345,7 +348,7 @@ public static class FrameSolver
         {
             var origin = positions[j];
             Vector3? angles = null;
-            foreach (var candidate in AngleCandidates(first[j].Angles))
+            foreach (var candidate in AngleCandidates(Unturned(first[j].Angles, turns[0])))
                 if (Enumerable.Range(0, placed.Count).All(k => SettleWorld.PrefabPlacement(origin, candidate, [prefabs[k]]) == placed[k][j]))
                 {
                     angles = candidate;
@@ -391,35 +394,62 @@ public static class FrameSolver
         (Vector3, Vector3) Place(Vector3 origin, Vector3 angles, int k)
             => copies ? SettleWorld.NestedPlacement(origin, angles, [instance], [prefabs[k]])
                       : SettleWorld.PrefabPlacement(origin, angles, [prefabs[k]]);
-        static List<float> Pre(float stored, float shift)
-        {
-            var list = new List<float>();
-            var l0 = stored - shift;
-            if (l0 + shift != stored)
-                return list;
-            list.Add(l0);
-            for (var l = MathF.BitIncrement(l0); l + shift == stored && list.Count < 256; l = MathF.BitIncrement(l))
-                list.Add(l);
-            for (var l = MathF.BitDecrement(l0); l + shift == stored && list.Count < 512; l = MathF.BitDecrement(l))
-                list.Add(l);
-            return list;
-        }
         var w = wants[0].Origin;
         var f = solution.FirstOrigin;
         if (copies)
             // The first placement's step for a copy: the prefab's translation (its turn is 0) as the
             // instance moved by it, so the preimages are still under the frame's translation.
             f = SettleWorld.PrefabPlacement(Vector3.Zero, Vector3.Zero, [prefabs[0]]).Origin;
-        foreach (var x in Pre(w.X, f.X))
-            foreach (var y in Pre(w.Y, f.Y))
-                foreach (var z in Pre(w.Z, f.Z))
+        var quarter = (int)MathF.Round(solution.Later[0].Angles.Y / 90f) & 3;
+        var (xs, ys) = Plane(w, f, quarter);
+        foreach (var x in xs)
+            foreach (var y in ys)
+                foreach (var z in Preimages(w.Z, f.Z))
                 {
                     var origin = new Vector3(x, y, z);
-                    foreach (var angles in AngleCandidates(wants[0].Angles).Take(4000))
+                    foreach (var angles in AngleCandidates(Unturned(wants[0].Angles, solution.Later[0].Angles)).Take(4000))
                         if (Enumerable.Range(0, prefabs.Length).All(k => Place(origin, angles, k) == wants[k]))
                             return (origin, angles);
                 }
         return null;
+    }
+
+    /// <summary>
+    /// A node's local coordinate on one axis: every float that the first placement's translation
+    /// rounds back to what the lump holds (fl(l + shift) == stored); usually one, more where the local
+    /// value is finer than the placed one's grid (s2c_prefabprobe11's node at -447.81329 placed at
+    /// -6591.8135).
+    /// </summary>
+    private static List<float> Preimages(float stored, float shift)
+    {
+        var list = new List<float>();
+        var l0 = stored - shift;
+        if (l0 + shift != stored)
+            return list;
+        list.Add(l0);
+        for (var l = MathF.BitIncrement(l0); l + shift == stored && list.Count < 256; l = MathF.BitIncrement(l))
+            list.Add(l);
+        for (var l = MathF.BitDecrement(l0); l + shift == stored && list.Count < 512; l = MathF.BitDecrement(l))
+            list.Add(l);
+        return list;
+    }
+
+    /// <summary>
+    /// A node's local x and y candidates under a first placement at <paramref name="shift"/> turned
+    /// <paramref name="quarter"/> right angles: AngleMatrixDouble's rows are then (0, -1), (1, 0) at
+    /// 90, (-1, 0), (0, -1) at 180 (sine folds to 0, exactly) and (0, 1), (-1, 0) at 270, up to the
+    /// cosine of 90's 6e-17, so world x is fl(±l + shift) of one local axis and world y of the other.
+    /// </summary>
+    private static (List<float> X, List<float> Y) Plane(Vector3 world, Vector3 shift, int quarter)
+    {
+        static List<float> Neg(List<float> l) => [.. l.Select(v => -v)];
+        return quarter switch
+        {
+            1 => (Preimages(world.Y, shift.Y), Neg(Preimages(world.X, shift.X))),
+            2 => (Neg(Preimages(world.X, shift.X)), Neg(Preimages(world.Y, shift.Y))),
+            3 => (Neg(Preimages(world.Y, shift.Y)), Preimages(world.X, shift.X)),
+            _ => (Preimages(world.X, shift.X), Preimages(world.Y, shift.Y)),
+        };
     }
 
     /// <summary>A later placement's yaw as derived, then up to 8 floats either side, nearest first, then
@@ -436,6 +466,10 @@ public static class FrameSolver
             foreach (var turn in (float[])[360f, -360f])
                 yield return c with { Y = c.Y + turn };
     }
+
+    /// <summary>A placed node's angles with the first placement's yaw taken off: where its local angles
+    /// are searched (a template at yaw 0 is placed at 90 under a first placement turned 90).</summary>
+    private static Vector3 Unturned(Vector3 placed, Vector3 turn) => turn.Y == 0f ? placed : placed with { Y = placed.Y - turn.Y };
 
     /// <summary>The stored angles first, then every combination of up to 6 floats either side on
     /// each component, nearest first, then each of those with a component 360 off.</summary>

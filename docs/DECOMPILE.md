@@ -480,12 +480,12 @@ its members), each compiled -world and full.
 6. A round-trip test per map: decompile, compile with ours, `map-diff` against the shipped
    package; the parity matrix's maps first, then the workshop corpus.
 
-## Handoff (2026-10-28, evening)
+## Handoff (2026-10-29)
 
 Branch research/vmap-decompile, worktree `D:\_cursor projects\source2-compiler-wt-decompile`,
 nothing pushed. Tracker 50.8% (18 of 44 subtasks done).
 
-The check is `MapDecompilerTests.Entities_CompileAsTheSourceDoes` (20 maps, about 2 minutes;
+The check is `MapDecompilerTests.Entities_CompileAsTheSourceDoes` (20 maps, about 9 minutes, most of it probe4 and probe9 frame searches;
 `DECOMPILE_ALL=1` prints every difference, `DECOMPILE_LUMP=<file>` lists both sides of a lump).
 Count the `unexplained difference(s)` from the summary blocks (`Failed ... Error Message`), not
 from the interleaved test output, which pairs maps with the wrong counts.
@@ -496,7 +496,7 @@ of stage 2's 3 differing hulls, carousel_door01_108_27).
 |---|---|---|
 | 13 maps (probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, atixref, prefabprobe 1/2/5/6/7, pinst, instnest, prefabinst) | 0 | passing |
 | s2c_prefabprobe3 | 2 | prop 2140:2239 still falling when Valve's settle ends (no Start asleep), settled again by ours |
-| s2c_prefabprobe4 | 201 | atixref as a prefab turned 90: 199 copies not rebuilt (FrameSolver wants an unturned first placement) |
+| s2c_prefabprobe4 | 201 | atixref as a prefab turned 90: group 702's frame now solves turned (see below), but its nested group 701 (pitched 90,90,0) does not, so InstancePlan stops and 199 copies are not rebuilt |
 | s2c_prefabprobe9 | 883 | shared prefab families nested |
 | s2c_prefabprobe11 | 22 | 9 light copies inside the turned shared prefab (origin and angles), 2 func_brush models taken from a later placement |
 | s2c_prefabprobe12 | 22 | as 11: 9 copies in turned prefabs, 2 func_brush |
@@ -508,9 +508,21 @@ members' placement as an exact solve, light-step keys (test checks them against 
 directlight 1 with desiredstationary inverted to 3), a prefab map's own multi-collapse instances.
 
 Next, in the order the user is likely to pick:
-1. Turned prefabs with instances (probe4, then the copies in 11 and 12): either let `FrameSolver`
-   take a right-angle first placement, or write a single prefab's map in its own frame with the
-   prefab node turned and solve that placement exactly (the stronger fix: it is what the source has).
+1. Turned prefabs with instances (probe4, then the copies in 11 and 12). Done 10-29: `FrameSolver`
+   takes a right-angle first placement (`quarter`; local x/y preimages through the turn, angle
+   candidates searched unturned), and `InstancePlan` tries each collapse unturned first, then turned
+   by the right angle nearest the collapses' common yaw (`DECOMPILE_FRAME_LOG=1` prints each try and
+   its time; a failed try is ~30 s, one turned try on atixref ran 53 min, so unturned stays first).
+   With `DECOMPILE_FRAME_AT=1024,512` probe4's group 702 lands its own placements. Left: the nested
+   group 701 (atixref group 6203 at (-456.4531, 403.6272, -254), angles (90, 90, 0), template 6201
+   at its origin, reached through instance 6207). Under a turned outer collapse the nested copy's
+   rounding depends on the inner group's position (the Concat translation rounds at the moved
+   instance's magnitude), so the bundled single-matrix solve cannot land it: no float lx gives both
+   fl(lx+512)=1428.6616 and fl(lx-861)=55.66165. Writing the inner instance and group at the origin
+   unturned only worked in atixref because nothing there is turned. Next: a nested solve that
+   searches the inner group's origin and angles, the inner instance origin as a preimage under each
+   outer step (forward: `SettleWorld.NestedPlacement`). The other path still stands: write a single
+   prefab's map in its own frame with the prefab node turned, as the source has it.
 2. The main map's own instances (probe8, pinst7): itemise with `DECOMPILE_LUMP`.
 3. Shared prefab families (9; 11 and 12's func_brush model from a later placement).
 4. Cables: rebuild cable_dynamic as CMapCable (nodes from pathNodes as for paths, tint from
