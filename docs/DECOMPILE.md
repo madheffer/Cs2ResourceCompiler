@@ -8,6 +8,19 @@ testing our compiler (decompile, compile with ours, compare with the shipped pac
 This file is the 2026-10-28 measurement of VRF's decompiler (`MapExtract`) against maps whose
 Hammer source we have, and what is missing for the goal above. Branch `research/vmap-decompile`.
 
+## Progress tracker
+
+Live page: https://claude.ai/artifact/8gxTQS9dAE7SEe2es6unz7 ("Map decompiler progress"). It lists
+every module of the decompiler, each module's subtasks with a weight and how much is done (0 to 1),
+and the test or map that checks it; the module and overall percentages are worked out on the page
+from those rows (done weighted by weight).
+
+Rule (user, 2026-10-28): **update it after every milestone.** A subtask counts as done only when it
+is checked: the decompiled map compiled by our compiler or Valve's resourcecompiler and compared with
+Valve's compile of the true Hammer source. To update: edit the rows in
+`tools/map-survey/decompile_progress.json`, upload the file to the page as an asset, and point the
+page's `subtasks` source at the new upload with `updated` set.
+
 ## How it was measured
 
 - VRF: vpkstuff's vendored copy (`vpkstuff/ValveResource/ValveResourceFormat-master`, 2026-10-27),
