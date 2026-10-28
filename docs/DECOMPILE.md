@@ -331,6 +331,33 @@ written as a plain node keeps its large id and moves every later block. s2c_pins
 already compile the same flattened (each template copied once, at the map's end), which is why they
 pass, but are not rebuilt as instances yet.
 
+### The map's own instances (2026-10-28)
+
+`Maps/Decompile/InstancePlan.cs`, from the forward's rules:
+- copies: a node of the map whose id is at or past the lowest id carrying a repeated
+  compile_source_id (copies' ids start past every node, MapInstances.Expand);
+- groups: two template indices are one group's when they have as many copies, the k-th of each a
+  constant id apart, and that offset less than the spacing between either's collapses (a block holds
+  one copy of each template; equal patterns farther apart are two groups placed alike: atixref's
+  templates 631 and 655, 164 apart);
+- widths: each group's width is its least gap between consecutive blocks; a wider gap holds
+  collapses that ship no copy (groups of prop_statics and meshes, whose copies bake into the world:
+  atixref's 6755 and 6762), rebuilt as a stand-in group of empty nodes instanced once;
+- landing: a collapse's copies land before the first shipped node of the map after them, so its
+  instance goes in a group placed at that walk index (its subtree ends there), or at the root;
+- placement: with the group unturned its inverse only translates, so the group is written at the
+  origin and `FrameSolver` places the instances, collapses for placements; the z axis is solved on
+  its own (a yaw-only matrix leaves z to the translation, fl(local z + instance z), and only some
+  splits land), frames are searched over two lattices (the origin on the grid, and the origin that
+  puts the first node on its own grid: atixref's templates stand at their group's origin while their
+  instances are off the grid), and a turn must land the reference node's angles as well as positions
+  (a node at its group's origin lands its position under any turn).
+
+atixref: 199 copies rebuilt as 143 instances of 13 groups, every group solved on its first frame
+candidate; 197 copies compile as Valve's. Open: the nested instance (group 6485 holds an instance,
+whose copies collapse in round two after every top-level block and land with their outer copy; to
+be rebuilt inside the outer template), the 4 rope paths, one light's precomputed bounds.
+
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's

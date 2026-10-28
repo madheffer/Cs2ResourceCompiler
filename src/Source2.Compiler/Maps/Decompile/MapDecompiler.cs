@@ -145,6 +145,30 @@ public static class MapDecompiler
         foreach (var placements in families)
             SolveFrame(placements, notes);
 
+        // The map's own instance copies: their template indices repeat (each template walks once, every
+        // collapse carries its index), and their ids start past every node of the map
+        // (MapInstances.Expand), so from the lowest id that carries a repeated index on, every node of
+        // the map's own is a copy.
+        InstancePlan? instancePlan = null;
+        {
+            var own = scopes[""].Entities;
+            var repeated = own.GroupBy(e => e.SourceId).Where(g => g.Count() > 1).SelectMany(g => g).ToList();
+            if (repeated.Count > 0)
+            {
+                var start = repeated.Min(e => e.Entity.NodeId);
+                var copyList = own.Where(e => e.Entity.NodeId >= start).ToList();
+                var walkedList = own.Where(e => e.Entity.NodeId < start).ToList();
+                instancePlan = InstancePlan.Build([.. copyList.Select(c => (c, entities.IndexOf(c)))],
+                                                  [.. walkedList.Select(w => (w, entities.IndexOf(w)))], notes);
+                if (instancePlan is not null)
+                {
+                    foreach (var c in copyList)
+                        own.Remove(c);
+                    notes.Add($"instances: {copyList.Count} copies rebuilt as {instancePlan.Collapses.Count} instances of {instancePlan.Groups.Count} groups");
+                }
+            }
+        }
+
         var main = scopes[""];
         main.Builder = new VmapBuilder(mapName);
         // The lump's mapUsageType is the literal the compile writes for every map (BuildEntity),
@@ -205,8 +229,64 @@ public static class MapDecompiler
             if (templates is not null)
                 items.Add((templates.First(t => t.Copy is not null).Copy!.SourceId, null, templates));
             DmxBinary.Element? group = null;
+
+            // The map's own instances (InstancePlan): each template group where the walk meets its
+            // first template, and a group holding the instances whose copies land before walk index i
+            // placed at i, its subtree ending there (MapInstances.EmitAt).
+            var plan = scope.Parent is null ? instancePlan : null;
+            var planGroups = new Dictionary<InstancePlan.Group, DmxBinary.Element>();
+            var wrappers = new Dictionary<int, DmxBinary.Element>();
+            var planItems = new List<(int At, int Kind, InstancePlan.Group? Group)>();
+            if (plan is not null)
+            {
+                planItems.AddRange(plan.Groups.Select(g => (g.SourceIds[0], 1, (InstancePlan.Group?)g)));
+                planItems.AddRange(plan.Collapses.Where(c => c.EmitAt != int.MaxValue).Select(c => c.EmitAt).Distinct()
+                                       .Select(at => (at, 0, (InstancePlan.Group?)null)));
+            }
+            var plannedAt = new Queue<(int At, int Kind, InstancePlan.Group? Group)>(planItems.OrderBy(i => i.At).ThenBy(i => i.Kind));
+            void PlanUpTo(int sourceId, bool inclusive)
+            {
+                while (plannedAt.Count > 0 && (plannedAt.Peek().At < sourceId || (inclusive && plannedAt.Peek().At == sourceId)))
+                {
+                    var (where, kind, g) = plannedAt.Dequeue();
+                    if (kind == 0)
+                    {
+                        FillTo(where);
+                        wrappers[where] = builder.AddGroup(NewId());
+                        continue;
+                    }
+                    FillTo(g!.SourceIds[0]);
+                    var element = builder.AddGroup(NewId());
+                    planGroups[g] = element;
+                    for (var slot = 0; slot < g.Slots[0]; slot++)
+                        builder.AddGroup(NewId(), element);
+                    for (var i = 0; i < g.SourceIds.Count; i++)
+                    {
+                        if (i > 0)
+                        {
+                            var walkGap = g.SourceIds[i] - g.SourceIds[i - 1] - 1;
+                            var slotGap = g.Slots[i] - g.Slots[i - 1] - 1;
+                            for (var k = walkGap; k < slotGap; k++)
+                                builder.AddGroup(NewId(), element);
+                            if (slotGap < walkGap)
+                                notes.Add($"instances: group of {g.SourceIds[0]} has fewer slots than walk indices between {g.SourceIds[i - 1]} and {g.SourceIds[i]}");
+                        }
+                        FillTo(g.SourceIds[i], element);
+                        var copy = g.Collapses[0][i];
+                        var t = EntityLumpAuthor.Unbuild(copy.Raw!, schema, FixupOf(":0"), instanced: true).Entity;
+                        var node = builder.AddEntity(NewId(), t.Keys, g.Local[i].Origin, g.Local[i].Angles, t.Scales, t.Connections, parent: element);
+                        if (copy.BrushModel is { } copyModel)
+                            AddBrushGeometry(builder, node, copy with { Entity = copy.Entity with { Origin = g.Local[i].Origin, Angles = g.Local[i].Angles } },
+                                             copyModel, files, table, notes, NewId);
+                        at = g.SourceIds[i] + 1;
+                    }
+                    for (var slot = g.Slots[^1] + 1; slot < g.Count; slot++)
+                        builder.AddGroup(NewId(), element);
+                }
+            }
             foreach (var (sourceId, e, slots) in items.OrderBy(i => i.SourceId))
             {
+                PlanUpTo(sourceId, inclusive: true);
                 FillTo(sourceId);
                 if (slots is not null)
                 {
@@ -238,6 +318,7 @@ public static class MapDecompiler
                     AddBrushGeometry(builder, entityNode, e, model, files, table, notes, NewId);
                 at = Math.Max(at, e.SourceId + 1);
             }
+            PlanUpTo(int.MaxValue, inclusive: false);
             foreach (var child in scope.Children.OrderBy(c => c.FirstSourceId).ThenBy(LumpIndex))
             {
                 var fix = prefabs.GetValueOrDefault(child.Chain);
@@ -263,6 +344,31 @@ public static class MapDecompiler
             // (SettleWorld.BakedPlacement), so each copy stands where its template does.
             if (group is not null)
                 scope.Instance = builder.AddInstance(NewId(), group, Vector3.Zero, Vector3.Zero);
+            if (plan is not null)
+            {
+                // The instances, in block order (the collapses walk the tree in order): under their
+                // landing group, or at the root where their copies land at the walk's end. Then the
+                // map's highest node id is the first block's start less one.
+                foreach (var c in plan.Collapses)
+                {
+                    var parent = c.EmitAt == int.MaxValue ? null : wrappers[c.EmitAt];
+                    builder.AddInstance(NewId(), planGroups[c.Group], c.Transform.Origin, c.Transform.Angles, parent);
+                    if (c.HiddenAfter > 0)
+                    {
+                        // A stand-in for the collapses that ship nothing here: a group of empty nodes,
+                        // as wide as their blocks, instanced once just after.
+                        var standIn = builder.AddGroup(NewId());
+                        for (var k = 0; k < c.HiddenAfter - 1; k++)
+                            builder.AddGroup(NewId(), standIn);
+                        builder.AddInstance(NewId(), standIn, Vector3.Zero, Vector3.Zero, parent);
+                    }
+                }
+                var highest = builder.NodeIds().Max();
+                if (highest < plan.Next0 - 1)
+                    builder.AddGroup(plan.Next0 - 1);
+                else if (highest > plan.Next0 - 1)
+                    notes.Add($"instances: the map's nodes reach id {highest}, past the first block's start {plan.Next0}");
+            }
             scope.NewId = NewId;
         }
 

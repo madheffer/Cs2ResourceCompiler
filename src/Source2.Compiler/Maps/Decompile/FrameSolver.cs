@@ -12,8 +12,9 @@ namespace Source2.Compiler.Maps.Decompile;
 /// had is not stored. The solver looks for one that does, and accepts nothing it has not run
 /// through the forward bit for bit:
 /// <list type="bullet">
-/// <item>the first placement unturned at an origin searched over integer points within a radius,
-/// by grid level (multiples of 4096 first, down to 1; within a budget), not the origin itself ( an unturned prefab there moves nothing, and a
+/// <item>the first placement unturned at an origin searched by grid level (multiples of 4096 first,
+/// down to 1, within a radius and a budget) over two lattices, the origin on the grid and the origin
+/// that puts the first node on the grid of its own map; not the origin itself ( an unturned prefab there moves nothing, and a
 /// translated one rebuilds its nodes' angles through Moved, which the lump shows);</item>
 /// <item>each later placement's turn the rotation between its nodes' angles and the first's, or up
 /// to 8 floats either side of its yaw, or 360 off; its origin the one that lands the node with the
@@ -81,16 +82,81 @@ public static class FrameSolver
             return list;
         }
 
+        // z first, on its own: a yaw-only matrix leaves it to the translation (fl(local z + origin z)),
+        // which no x or y reaches. The frame's z is searched over the values that put a node's local z
+        // at 0, then over the grid; each node's local z among its preimages and each later placement's
+        // origin z such that every placement lands every node.
+        var zLocal = new float[first.Length];
+        var zOrigin = new float[placed.Count];
+        float? zFrame = null;
+        IEnumerable<float> ZFrames()
+        {
+            foreach (var n in first)
+                yield return n.Origin.Z;
+            for (var grid = 4096; grid >= 1; grid /= 2)
+                for (var i = -radius / grid; i <= radius / grid; i++)
+                    if (grid == 4096 || i % 2 != 0)
+                        yield return i * grid;
+        }
+        foreach (var zf in ZFrames())
+        {
+            var pre = first.Select(n => Preimages(n.Origin.Z, zf)).ToArray();
+            if (pre.Any(p => p.Count == 0))
+                continue;
+            var allowed = pre.Select(p => new HashSet<float>(p)).ToArray();
+            var ok = true;
+            for (var k = 1; k < placed.Count && ok; k++)
+            {
+                var r0 = Enumerable.Range(0, first.Length).MinBy(j => pre[j].Count);
+                float? oz = null;
+                foreach (var lz in pre[r0])
+                {
+                    var guess = (float)((double)placed[k][r0].Origin.Z - lz);
+                    foreach (var d in (int[])[0, 1, -1, 2, -2, 3, -3])
+                    {
+                        var o = Step(guess, d);
+                        if (lz + o != placed[k][r0].Origin.Z)
+                            continue;
+                        // Every node keeps the local z values that land here too.
+                        var keep = allowed.Select((a, j) => a.Where(l => l + o == placed[k][j].Origin.Z).ToHashSet()).ToArray();
+                        if (keep.All(a => a.Count > 0))
+                        {
+                            oz = o;
+                            allowed = keep;
+                            break;
+                        }
+                    }
+                    if (oz is not null)
+                        break;
+                }
+                if (oz is not { } zFound)
+                    ok = false;
+                else
+                    zOrigin[k] = zFound;
+            }
+            if (!ok)
+                continue;
+            zFrame = zf;
+            for (var j = 0; j < first.Length; j++)
+                zLocal[j] = pre[j].First(allowed[j].Contains);
+            break;
+        }
+        if (zFrame is not { } frameZ)
+        {
+            why = "no z frame lands every node";
+            return null;
+        }
+
         // The frame tested: each node's local placement among its preimages, and each later
         // placement's origin, such that every placement lands every node; null when none does.
         string miss = "";
-        var debug = Environment.GetEnvironmentVariable("DECOMPILE_FRAME_AT") is { Length: > 0 };
+        var debug = Environment.GetEnvironmentVariable("DECOMPILE_FRAME_AT") is { Length: > 0 } || Environment.GetEnvironmentVariable("DECOMPILE_FRAME_FIRST") == "1";
         Vector3[]? Check(Vector3 shift, Vector3[] origins)
         {
             var sets = new (List<float> X, List<float> Y, List<float> Z)[first.Length];
             for (var j = 0; j < first.Length; j++)
             {
-                sets[j] = (Preimages(first[j].Origin.X, shift.X), Preimages(first[j].Origin.Y, shift.Y), Preimages(first[j].Origin.Z, shift.Z));
+                sets[j] = (Preimages(first[j].Origin.X, shift.X), Preimages(first[j].Origin.Y, shift.Y), [zLocal[j]]);
                 if (sets[j].X.Count == 0 || sets[j].Y.Count == 0 || sets[j].Z.Count == 0)
                 {
                     if (debug)
@@ -117,10 +183,10 @@ public static class FrameSolver
                     {
                         var l0 = new Vector3(lx, ly, lz);
                         double Row(int i) => ((double)m[i * 4] * l0.X) + ((double)m[(i * 4) + 1] * l0.Y) + ((double)m[(i * 4) + 2] * l0.Z);
-                        var guess = new Vector3((float)(w0.X - Row(0)), (float)(w0.Y - Row(1)), (float)(w0.Z - Row(2)));
+                        var guess = new Vector3((float)(w0.X - Row(0)), (float)(w0.Y - Row(1)), zOrigin[k]);
                         foreach (var dx in (int[])[0, 1, -1, 2, -2])
                             foreach (var dy in (int[])[0, 1, -1, 2, -2])
-                                foreach (var dz in (int[])[0, 1, -1])
+                                foreach (var dz in (int[])[0])
                                 {
                                     var o = new Vector3(Step(guess.X, dx), Step(guess.Y, dy), Step(guess.Z, dz));
                                     if (fit is null && Lands(k, o, l0, w0))
@@ -129,11 +195,33 @@ public static class FrameSolver
                         if (fit is not null)
                             break;
                     }
+                    if (debug && fit is null && turn == derived[k])
+                    {
+                        var l0 = new Vector3(sets[r].X[0], sets[r].Y[0], sets[r].Z[0]);
+                        var m0 = matrices[k];
+                        miss = $"trace placement {k}: l0 {l0:R}, m {string.Join(" ", m0.Select(v => v.ToString("R")))}";
+                    }
                     if (fit is not { } o2)
                         continue;
                     var every = true;
                     for (var j = 0; j < first.Length && every; j++)
                         every = sets[j].X.Any(lx => sets[j].Y.Any(ly => sets[j].Z.Any(lz => Lands(k, o2, new Vector3(lx, ly, lz), placed[k][j].Origin))));
+                    // The turn has to land the reference node's angles too, from some local angles that
+                    // the first placement also lands: a node where its prefab or group stands lands its
+                    // position under any turn (atixref's lights at their group's origin).
+                    if (every)
+                    {
+                        var l = new Vector3(sets[r].X[0], sets[r].Y[0], sets[r].Z[0]);
+                        var here = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
+                        here.Attributes["origin"] = o2;
+                        here.Attributes["angles"] = turn;
+                        var firstPrefab = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
+                        firstPrefab.Attributes["origin"] = shift;
+                        firstPrefab.Attributes["angles"] = Vector3.Zero;
+                        every = AngleCandidates(first[r].Angles).Take(2197).Any(a =>
+                            SettleWorld.PrefabPlacement(l, a, [firstPrefab]).Angles == first[r].Angles
+                            && SettleWorld.PrefabPlacement(l, a, [here]).Angles == placed[k][r].Angles);
+                    }
                     if (every)
                     {
                         turns[k] = turn;
@@ -144,7 +232,7 @@ public static class FrameSolver
                 if (fit is not { } found)
                 {
                     if (debug)
-                        miss = $"placement {k}: no turn near {derived[k]} lands every node";
+                        miss += $" | placement {k}: no turn near {derived[k]} lands every node (first {first[r].Origin:R} {first[r].Angles:R}, this {placed[k][r].Origin:R} {placed[k][r].Angles:R}, local candidates {sets[r].X.Count}x{sets[r].Y.Count}x{sets[r].Z.Count})";
                     return null;
                 }
                 origins[k] = found;
@@ -184,36 +272,58 @@ public static class FrameSolver
         {
             var parts = at.Split(',').Select(float.Parse).ToArray();
             var origins = new Vector3[placed.Count];
-            why = Check(new Vector3(parts[0], parts[1], 0), origins) is null ? $"frame {at} does not land every node: {miss}" : $"frame {at} lands every node";
+            why = Check(new Vector3(parts[0], parts[1], frameZ), origins) is null ? $"frame {at} does not land every node: {miss}" : $"frame {at} lands every node";
             return null;
         }
 
-        // Frames by grid level: every multiple of 4096 within the radius, then of 2048 (that is not
-        // one of 4096), down to every integer; each level covers the whole square, so within the
-        // radius every integer frame is tried, and the order only decides which comes first.
+        // Frames by grid level, from two lattices: the first placement's origin on the grid (a prefab
+        // placed on it), and the origin that puts the first node at a grid point of its own map (a
+        // template at its group's origin, an instance off the grid: atixref's lights). Each level
+        // covers the whole square of both; within the radius every integer frame and every frame of
+        // an integer first node is tried, and the order only decides which comes first.
         Vector3? found = null;
         Vector3[] positions = [];
-        for (var grid = 4096; grid >= 1 && found is null; grid /= 2)
+        var w0 = first[0].Origin;
+        IEnumerable<Vector3> Frames()
         {
-            var steps = radius / grid;
-            for (var ix = -steps; ix <= steps && found is null; ix++)
-                for (var iy = -steps; iy <= steps && found is null; iy++)
-                {
-                    var (x, y) = (ix * grid, iy * grid);
-                    if ((x == 0 && y == 0) || (grid < 4096 && x % (grid * 2) == 0 && y % (grid * 2) == 0))
-                        continue;
-                    if (++tried > budget)
-                    {
-                        why = $"no frame found in {budget:n0} tried (grid {grid} of {radius})";
-                        return null;
-                    }
-                    var shift = new Vector3(x, y, 0);
-                    if (Check(shift, later) is { } locals)
-                    {
-                        found = shift;
-                        positions = locals;
-                    }
-                }
+            yield return new Vector3(w0.X, w0.Y, frameZ);
+            for (var grid = 4096; grid >= 1; grid /= 2)
+            {
+                var steps = radius / grid;
+                foreach (var lattice in (int[])[0, 1])
+                    for (var ix = -steps; ix <= steps; ix++)
+                        for (var iy = -steps; iy <= steps; iy++)
+                        {
+                            var (x, y) = (ix * grid, iy * grid);
+                            if (grid < 4096 && x % (grid * 2) == 0 && y % (grid * 2) == 0)
+                                continue;
+                            if (lattice == 0 && x == 0 && y == 0)
+                                continue;
+                            yield return lattice == 0 ? new Vector3(x, y, frameZ) : new Vector3(w0.X - x, w0.Y - y, frameZ);
+                        }
+            }
+        }
+        foreach (var shift in Frames())
+        {
+            if (shift == Vector3.Zero)
+                continue;
+            if (++tried > budget)
+            {
+                why = $"no frame found in {budget:n0} tried";
+                return null;
+            }
+            if (Check(shift, later) is { } locals)
+            {
+                found = shift;
+                positions = locals;
+                break;
+            }
+            // DECOMPILE_FRAME_FIRST=1: stop at the first candidate and say why it missed.
+            if (Environment.GetEnvironmentVariable("DECOMPILE_FRAME_FIRST") == "1")
+            {
+                why = $"first frame {shift:R}: {miss}";
+                return null;
+            }
         }
         if (found is not { } frame)
         {

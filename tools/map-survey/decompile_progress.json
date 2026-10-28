@@ -178,22 +178,22 @@
   "module": "Instances",
   "subtask": "The map's own instances (ids, lump place)",
   "weight": 3,
-  "done": 0,
-  "evidence": "probe8, s2c_pinst7"
+  "done": 0.8,
+  "evidence": "atixref: 197 of 199 copies exact (block chain, stand-ins, landing groups)"
  },
  {
   "module": "Instances",
   "subtask": "Several collapses of one template, rounds, nesting",
   "weight": 4,
-  "done": 0,
-  "evidence": "probes 3, 4, 9, 11, 12, atixref"
+  "done": 0.6,
+  "evidence": "atixref 13 groups, up to 50 collapses; nested round-2 copies open"
  },
  {
   "module": "Instances",
   "subtask": "Exact placement solve for each later instance",
   "weight": 3,
-  "done": 0,
-  "evidence": "not started"
+  "done": 0.8,
+  "evidence": "FrameSolver over collapses: every atixref group solved"
  },
  {
   "module": "World geometry",

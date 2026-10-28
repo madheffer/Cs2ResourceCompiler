@@ -274,7 +274,10 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
             ? Maps.MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!)
             : PrefabLoader(decompiled));
         Maps.MapDeformers.Apply(document, schema);
-        return EntityLumpSet.Author(MapEntities.From(document), schema, map, MapEntities.FixupEntityNames(document), document)
+        // With the smart props' locators, which take node ids before any instance copy
+        // (EntityLumpAgainstValveTests passes them too): atixref's radiator moves every copy id by one.
+        return EntityLumpSet.Author(MapEntities.From(document), schema, map, MapEntities.FixupEntityNames(document), document,
+                                    MapFixtures.SmartPropLocators)
                             .ToDictionary(l => l.Path, l => l.Bytes, StringComparer.OrdinalIgnoreCase);
     }
 }
