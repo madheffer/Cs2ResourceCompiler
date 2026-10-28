@@ -143,8 +143,8 @@
   "module": "Prefabs",
   "subtask": "One prefab map placed several times",
   "weight": 3,
-  "done": 0.4,
-  "evidence": "one shared map + prefab nodes; turned placements miss bits (frame erased)"
+  "done": 0.6,
+  "evidence": "exact frame solver: probe11 + probe9 top families exact; nested families and copies inside open"
  },
  {
   "module": "Prefabs",
@@ -152,6 +152,13 @@
   "weight": 2,
   "done": 0,
   "evidence": "not started"
+ },
+ {
+  "module": "Prefabs",
+  "subtask": "Prefab file names from the .vmap_c RED2 inputs",
+  "weight": 1,
+  "done": 0,
+  "evidence": "found: RED2 lists maps/<prefab>.vmap with its CRC"
  },
  {
   "module": "Instances",

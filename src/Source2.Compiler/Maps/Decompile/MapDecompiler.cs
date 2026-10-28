@@ -113,17 +113,18 @@ public static class MapDecompiler
         // first placement's compile_source_ids (MapEntities.SourceIds), so placements under one
         // parent whose nodes have the same inner ids and indices are one map. The first in the
         // walk (the first in lump order) is written; the others are prefab nodes naming its file.
-        int LumpIndex(Scope sc) => sc.Entities.Select(e => entities.IndexOf(e)).DefaultIfEmpty(int.MaxValue).Min();
+        foreach (var sc in scopes.Values)
+            sc.Lump = sc.Entities.Select(e => entities.IndexOf(e)).DefaultIfEmpty(int.MaxValue).Min();
+        int LumpIndex(Scope sc) => sc.Lump;
+        var families = new List<List<Scope>>();
         string Signature(Scope sc) => string.Join(",", sc.Entities.Select(e => $"{e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..]}@{e.SourceId}").Order(StringComparer.Ordinal));
         foreach (var family in scopes.Values.Where(sc => sc.Parent is not null && sc.Entities.Count > 0)
                                      .GroupBy(sc => (sc.Parent, Signature(sc))).Where(g => g.Count() > 1))
         {
             var placements = family.OrderBy(LumpIndex).ToList();
             foreach (var other in placements.Skip(1))
-            {
                 other.SameAs = placements[0];
-                other.Placement = SharedPlacement(placements[0], other, notes);
-            }
+            families.Add(placements);
         }
 
         // An instance's copy made inside a prefab's map ships with a plain id but carries its
@@ -140,6 +141,9 @@ public static class MapDecompiler
                 var owner = blocks.Last(b => b.Start <= e.SourceId).Scope;
                 (owner.SameAs ?? owner).Copies.Add(e);
             }
+
+        foreach (var placements in families)
+            SolveFrame(placements, notes);
 
         var main = scopes[""];
         main.Builder = new VmapBuilder(mapName);
@@ -247,7 +251,8 @@ public static class MapDecompiler
                 // The prefab map's world takes the index ahead of its first node.
                 FillTo(child.FirstSourceId - 1);
                 at++;
-                builder.AddPrefab(child.NodeId, child.Path(mapName), fix?.Own is not null, fix?.TargetName ?? "");
+                builder.AddPrefab(child.NodeId, child.Path(mapName), fix?.Own is not null, fix?.TargetName ?? "",
+                                  child.Placement.Origin, child.Placement.Angles);
                 child.Builder = new VmapBuilder($"{mapName}/{child.Chain}");
                 child.Builder.SetWorld(1, [new("classname", "worldspawn")], [], false, "standard");
                 Emit(child);
@@ -441,6 +446,9 @@ public static class MapDecompiler
         /// <summary>Instance copies made inside this prefab's map (plain ids, template indices in its block).</summary>
         public List<EntityLumpAuthor.SourceEntity> Copies { get; } = [];
 
+        /// <summary>The scope's first place in lump order.</summary>
+        public int Lump { get; set; }
+
         /// <summary>The first placement of the same prefab map, when this is a later one.</summary>
         public Scope? SameAs { get; set; }
 
@@ -520,6 +528,59 @@ public static class MapDecompiler
     }
 
     /// <summary>
+    /// A shared prefab map's frame (<see cref="FrameSolver"/>): every placement's nodes, its own and
+    /// its instance copies (collapse k is placement k's: the collapses run in the prefabs' tree
+    /// order), node for node; the solution's local placements are written into the map and the
+    /// prefab nodes take its transforms. With no solution, the first placement stands where it is
+    /// and the later ones take <see cref="SharedPlacement"/>, noted.
+    /// </summary>
+    private static void SolveFrame(List<Scope> placements, List<string> notes)
+    {
+        string Inner(EntityLumpAuthor.SourceEntity e) => e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..];
+        var first = placements[0];
+        var nodes = first.Entities.Where(e => placements.Skip(1).All(p => p.Entities.Any(x => Inner(x) == Inner(e)))).ToList();
+        var copies = first.Copies.OrderBy(c => c.Entity.NodeId).ToList();
+        var perCollapse = copies.Count / placements.Count;
+        var placed = placements.Select((p, k) =>
+            nodes.Select(e => p.Entities.First(x => Inner(x) == Inner(e)).Entity)
+                 .Select(x => (x.Origin, x.Angles)).ToArray()).ToList();
+        var solution = FrameSolver.Solve(placed, 32768, 20_000_000, out var why);
+        if (solution is null)
+        {
+            notes.Add($"prefab {first.Chain}: no exact frame for its {placements.Count} placements ({why}); later placements solved from the first");
+            foreach (var other in placements.Skip(1))
+                other.Placement = SharedPlacement(first, other, notes);
+            return;
+        }
+        notes.Add($"prefab {first.Chain}: frame solved for {placements.Count} placements, its prefab at {solution.FirstOrigin} ({solution.Tried:n0} frames tried)");
+        first.Placement = (solution.FirstOrigin, Vector3.Zero);
+        for (var k = 1; k < placements.Count; k++)
+            placements[k].Placement = solution.Later[k];
+        EntityLumpAuthor.SourceEntity Moved(EntityLumpAuthor.SourceEntity e, int j)
+            => e with { Entity = e.Entity with { Origin = solution.Local[j].Origin, Angles = solution.Local[j].Angles } };
+        for (var j = 0; j < nodes.Count; j++)
+            first.Entities[first.Entities.IndexOf(nodes[j])] = Moved(nodes[j], j);
+        // An instance's copies inside the map: the template rebuilt with its instance at its group's
+        // transform, so each collapse moves nothing and the copy is the template as its prefab
+        // places it; collapse k is placement k's. Each template's local placement is the one every
+        // placement then lands on its copy.
+        if (perCollapse > 0 && copies.Count == perCollapse * placements.Count)
+        {
+            var missed = 0;
+            for (var c = 0; c < perCollapse; c++)
+            {
+                var wants = Enumerable.Range(0, placements.Count).Select(k => (copies[(k * perCollapse) + c].Entity.Origin, copies[(k * perCollapse) + c].Entity.Angles)).ToList();
+                if (FrameSolver.Locate(solution, wants, copies: true) is { } at)
+                    first.Copies[first.Copies.IndexOf(copies[c])] = copies[c] with { Entity = copies[c].Entity with { Origin = at.Origin, Angles = at.Angles } };
+                else
+                    missed++;
+            }
+            if (missed > 0)
+                notes.Add($"prefab {first.Chain}: {missed} of {perCollapse} instance templates have no local placement that lands every copy");
+        }
+    }
+
+    /// <summary>
     /// A later placement's prefab transform, with the first placement's map written where the first
     /// placement put its nodes (its prefab at the origin, unturned, so PrefabPlacement moves nothing):
     /// the rotation that turns a node of the first into the same node of this one, and the origin
@@ -544,8 +605,12 @@ public static class MapDecompiler
         var prefab = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
         prefab.Attributes["origin"] = origin;
         prefab.Attributes["angles"] = turn;
-        var missed = pairs.Count(p => SettleWorld.PrefabPlacement(p.Theirs!.Entity.Origin, p.Theirs.Entity.Angles, [prefab])
-                                      != (p.Mine.Entity.Origin, p.Mine.Entity.Angles));
+        var misses = pairs.Where(p => SettleWorld.PrefabPlacement(p.Theirs!.Entity.Origin, p.Theirs.Entity.Angles, [prefab])
+                                      != (p.Mine.Entity.Origin, p.Mine.Entity.Angles)).ToList();
+        var missed = misses.Count;
+        if (Environment.GetEnvironmentVariable("DECOMPILE_MISSES") == "1")
+            foreach (var m in misses.Take(4))
+                notes.Add($"  miss {m.Mine.IdPath} {m.Mine.Entity.ClassName}: from {m.Theirs!.Entity.Origin:R} {m.Theirs.Entity.Angles:R} lands {SettleWorld.PrefabPlacement(m.Theirs.Entity.Origin, m.Theirs.Entity.Angles, [prefab]):R}, wants {(m.Mine.Entity.Origin, m.Mine.Entity.Angles):R}");
         if (missed > 0)
             notes.Add($"prefab {other.Chain}: placed again as prefab {first.Chain}'s map at {origin:R} turned {turn:R}, {missed} of {pairs.Count} nodes not landed bit for bit");
         return (origin, turn);
@@ -595,6 +660,10 @@ public static class MapDecompiler
         var result = new Dictionary<string, PrefabFixup>(StringComparer.Ordinal);
         foreach (var chain in named.Select(n => ChainOf(n.IdPath)).Where(c => c.Length > 0).Distinct().OrderBy(c => c.Count(x => x == ':')))
             Resolve(chain);
+        // A node of a prefab with no fixup of its own and no outer prefix takes "[PR#]" alone only
+        // from the map's fixup (EntityLumpAuthor.BuildEntity), so its names show the map's too.
+        mapFixup |= result.Where(r => r.Value.NamePrefix is null)
+                          .Any(r => byChain.GetValueOrDefault(r.Key)?.Any(n => n.StartsWith(EntityLumpAuthor.NameFixupPrefix, StringComparison.Ordinal)) == true);
         return result;
 
         PrefabFixup Resolve(string chain)

@@ -296,7 +296,28 @@ placements land; turned ones miss in the last bits (s2c_prefabprobe11: 10 of 73 
 lands bit for bit only in the prefab map's own local frame (where the mapper's prefab origin was),
 and in exact arithmetic every frame shifted by a vector, with the prefab origins moved to match,
 gives the same placements, so only float rounding tells them apart. The same holds for the instance
-copies of a group copied more than once (their group's origin). Open: how that frame is chosen.
+copies of a group copied more than once (their group's origin).
+
+The frame is solved exactly (user, 2026-10-28: an exact solver over frames; `Maps/Decompile/FrameSolver.cs`).
+Measured first (`MapDecompilerFrameProbe`, the true sources): right-angle turns land in any frame,
+a 45 degree turn only in the true one (s2c_prefabprobe11's prefab 110: 78/78 at the true frame, 55
+shifted one unit, 74 at (16, 16)). The solver: the first placement unturned at an integer origin,
+searched by grid level (multiples of 4096 first, down to 1, within 32768 units and 20 million
+frames); each node's local coordinate among the floats the first placement's translation rounds back
+to the stored one (a node at -447.81329 is placed at -6591.8135, so stored minus frame is not it);
+each later placement's turn from the nodes' angles and its origin from the node with the fewest
+preimages; each node's own angles among the stored ones and up to 6 floats either side on each
+component (a translated prefab rebuilds its nodes' angles through `Moved`: a local yaw of 180 is
+placed at 179.99995); nothing kept that `SettleWorld.PrefabPlacement` does not land bit for bit on
+every node of every placement. s2c_prefabprobe11: the frame found is the source's own, prefab 108 at
+(-6144, 0, 0), after 615 frames.
+
+Not yet: an instance's copies inside a turned shared prefab map (s2c_prefabprobe11's 9 lights). A
+copy's matrix there is the instance moved by the prefab against its group's placement
+(`SettleWorld.Step`), whose translation rounds with the group's offset from the instance (1376 units
+in the source): a second frame. In the map's own instances with an unturned group the copy's matrix
+is the instance's own angles and a translation, so a group rebuilt at the origin and instances at
+those translations reproduce it, the same problem `FrameSolver` solves: next.
 
 Open, all the same gap, several collapses of one template: s2c_prefabprobe3, 4, 9, 11, 12 and atixref
 (nested instances, collapse rounds, and the instance transforms of every copy after the first, to be
