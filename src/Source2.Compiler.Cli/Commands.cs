@@ -631,6 +631,29 @@ internal static class Commands
         }
     }
 
+    /// <summary>A compiled map package back to a .vmap (Maps.Decompile.MapDecompiler).</summary>
+    public static int DecompileMap(string[] a)
+    {
+        var path = Positional(a, "map .vpk");
+        var outPath = Require(Opt(a, "-o"), "-o <out.vmap>");
+        var cs2 = Require(Opt(a, "--cs2") ?? Environment.GetEnvironmentVariable("CS2_DIR"), "--cs2 <CS2 install dir> (or CS2_DIR)");
+        var game = Path.Combine(cs2, "game");
+        var schema = FgdSchema.Load(Path.Combine(game, "csgo", "csgo.fgd"), [Path.Combine(game, "core"), Path.Combine(game, "csgo")]);
+
+        var files = Maps.Decompile.MapDecompiler.ReadPackage(path);
+        var map = Maps.Decompile.MapDecompiler.MapNameOf(files);
+        var result = Maps.Decompile.MapDecompiler.Decompile(files, map, schema);
+        File.WriteAllBytes(outPath, result.Vmap);
+
+        Console.WriteLine($"{map}: {result.Entities.Count:n0} entities, {result.Placeholders:n0} placeholders");
+        Console.WriteLine($"  wrote {outPath}  ({result.Vmap.Length:n0} bytes)");
+        // The notes grouped by what they say, with an example each.
+        foreach (var group in result.Notes.GroupBy(n => System.Text.RegularExpressions.Regex.Replace(n, @"^\S+ \S+: |\([^)]*\)", "").Trim())
+                                          .OrderByDescending(g => g.Count()))
+            Console.WriteLine($"  {group.Count(),5} x {group.Key}   (e.g. {group.First()})");
+        return 0;
+    }
+
     public static int Entities(string[] a)
     {
         var input = Positional(a, "compiled entity lump");

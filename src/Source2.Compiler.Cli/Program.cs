@@ -35,6 +35,7 @@ try
         "map-validate" => Commands.MapValidate(args[1..]),
         "entitylump" => Commands.Entitylump(args[1..]),
         "reauthor" => Commands.Reauthor(args[1..]),
+        "decompile-map" => Commands.DecompileMap(args[1..]),
         "selftest" => SelfTest.Run(args[1..]),
         _ => Unknown(args[0]),
     };
@@ -104,6 +105,13 @@ static void Usage()
                     does. The lighting bake, nav and Steam Audio are refused by
                     name; --skip-unported runs the rest and leaves those as the
                     package has them.
+
+      s2c decompile-map <maps/<map>.vpk> -o <out.vmap> [--cs2 <CS2 install dir>]
+                    A compiled map package back to a Hammer .vmap (vmap 40). This
+                    stage brings back the entities, their keys as the source held
+                    them and their outputs, in the compile's walk order; geometry,
+                    prefabs, instances and paths are not rebuilt yet, and each
+                    one left out is listed (docs/DECOMPILE.md).
 
       s2c id        <resource/path.vtex>
                     Print the 64-bit RERL id the engine looks that path up by.

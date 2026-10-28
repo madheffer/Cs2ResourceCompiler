@@ -28,6 +28,9 @@ public static partial class EntityLumpAuthor
     /// </summary>
     private const string NameFixup = "[PR#]";
 
+    /// <summary>The prefix the map's entity-name fixup gives every name ("[PR#]").</summary>
+    internal const string NameFixupPrefix = NameFixup;
+
     /// <summary>Build the lump's DATA tree, with no template pass: every entity
     /// the walk (or <paramref name="emit"/>) ships, in order.</summary>
     /// <param name="entities">Entities in the order they should appear.</param>
