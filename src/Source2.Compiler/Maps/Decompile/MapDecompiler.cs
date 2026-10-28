@@ -69,6 +69,7 @@ public static class MapDecompiler
 
         var entities = new List<EntityLumpAuthor.SourceEntity>();
         var layerOf = new Dictionary<EntityLumpAuthor.SourceEntity, string>();
+        var fileOf = new Dictionary<EntityLumpAuthor.SourceEntity, string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (lump, e) in raw)
         {
@@ -85,6 +86,7 @@ public static class MapDecompiler
             if (lumpName.StartsWith(LayerLumpPrefix, StringComparison.OrdinalIgnoreCase))
                 layerOf[source] = lumpName[LayerLumpPrefix.Length..];
             entities.Add(source);
+            fileOf[source] = lump;
         }
 
         var table = new Dictionary<uint, string>(materials ?? new Dictionary<uint, string>());
@@ -158,8 +160,8 @@ public static class MapDecompiler
                 var start = repeated.Min(e => e.Entity.NodeId);
                 var copyList = own.Where(e => e.Entity.NodeId >= start).ToList();
                 var walkedList = own.Where(e => e.Entity.NodeId < start).ToList();
-                instancePlan = InstancePlan.Build([.. copyList.Select(c => (c, entities.IndexOf(c)))],
-                                                  [.. walkedList.Select(w => (w, entities.IndexOf(w)))], notes);
+                instancePlan = InstancePlan.Build([.. copyList.Select(c => (c, entities.IndexOf(c), fileOf[c]))],
+                                                  [.. walkedList.Select(w => (w, entities.IndexOf(w), fileOf[w]))], notes);
                 if (instancePlan is not null)
                 {
                     foreach (var c in copyList)
@@ -231,17 +233,63 @@ public static class MapDecompiler
             DmxBinary.Element? group = null;
 
             // The map's own instances (InstancePlan): each template group where the walk meets its
-            // first template, and a group holding the instances whose copies land before walk index i
-            // placed at i, its subtree ending there (MapInstances.EmitAt).
+            // first template; the instances in block order (the bake collapses them in tree order),
+            // those whose copies land before walk index i in a group placed at i, its subtree ending
+            // there (MapInstances.EmitAt), and those whose copies land at the walk's end at the root,
+            // where they stand between. A nested group's instance sits in its outer template.
             var plan = scope.Parent is null ? instancePlan : null;
             var planGroups = new Dictionary<InstancePlan.Group, DmxBinary.Element>();
-            var wrappers = new Dictionary<int, DmxBinary.Element>();
             var planItems = new List<(int At, int Kind, InstancePlan.Group? Group)>();
+            var pending = new Queue<InstancePlan.Collapse>();
             if (plan is not null)
             {
                 planItems.AddRange(plan.Groups.Select(g => (g.SourceIds[0], 1, (InstancePlan.Group?)g)));
-                planItems.AddRange(plan.Collapses.Where(c => c.EmitAt != int.MaxValue).Select(c => c.EmitAt).Distinct()
+                planItems.AddRange(plan.Collapses.Where(c => c.Group.Outer is null && c.EmitAt != int.MaxValue).Select(c => c.EmitAt).Distinct()
                                        .Select(at => (at, 0, (InstancePlan.Group?)null)));
+                foreach (var c in plan.Collapses.Where(c => c.Group.Outer is null))
+                    pending.Enqueue(c);
+            }
+            // An instance's group may be written after it: the targets are set once all are.
+            var targets = new List<(DmxBinary.Element Instance, InstancePlan.Group Group)>();
+            DmxBinary.Element? wrapper = null;
+            var wrapperAt = -1;
+            void PlaceInstance(InstancePlan.Collapse c, DmxBinary.Element? parent)
+            {
+                targets.Add((builder.AddInstance(NewId(), builder.World, c.Transform.Origin, c.Transform.Angles, parent), c.Group));
+                if (c.HiddenAfter > 0)
+                {
+                    // A stand-in for the collapses that ship nothing here: a group of empty nodes,
+                    // as wide as their blocks, instanced once just after.
+                    var standIn = builder.AddGroup(NewId());
+                    for (var k = 0; k < c.HiddenAfter - 1; k++)
+                        builder.AddGroup(NewId(), standIn);
+                    builder.AddInstance(NewId(), standIn, Vector3.Zero, Vector3.Zero, parent);
+                }
+            }
+            void LandAt(int where)
+            {
+                while (pending.Any(c => c.EmitAt == where))
+                {
+                    var c = pending.Dequeue();
+                    if (c.EmitAt == int.MaxValue)
+                    {
+                        PlaceInstance(c, null);
+                        wrapper = null;
+                        continue;
+                    }
+                    if (wrapper is null || wrapperAt != where)
+                        (wrapper, wrapperAt) = (builder.AddGroup(NewId()), where);
+                    PlaceInstance(c, wrapper);
+                }
+            }
+            void Nested(InstancePlan.Group g, int before, DmxBinary.Element element, ref int fillers)
+            {
+                foreach (var inner in plan!.Groups.Where(i => i.Outer == g && i.OuterBefore == before))
+                {
+                    if (fillers-- <= 0)
+                        notes.Add($"instances: group of {g.SourceIds[0]} has no free slot for the instance of {inner.SourceIds[0]}");
+                    targets.Add((builder.AddInstance(NewId(), builder.World, Vector3.Zero, Vector3.Zero, element), inner));
+                }
             }
             var plannedAt = new Queue<(int At, int Kind, InstancePlan.Group? Group)>(planItems.OrderBy(i => i.At).ThenBy(i => i.Kind));
             void PlanUpTo(int sourceId, bool inclusive)
@@ -252,7 +300,7 @@ public static class MapDecompiler
                     if (kind == 0)
                     {
                         FillTo(where);
-                        wrappers[where] = builder.AddGroup(NewId());
+                        LandAt(where);
                         continue;
                     }
                     FillTo(g!.SourceIds[0]);
@@ -266,7 +314,9 @@ public static class MapDecompiler
                         {
                             var walkGap = g.SourceIds[i] - g.SourceIds[i - 1] - 1;
                             var slotGap = g.Slots[i] - g.Slots[i - 1] - 1;
-                            for (var k = walkGap; k < slotGap; k++)
+                            var fillers = slotGap - walkGap;
+                            Nested(g, i, element, ref fillers);
+                            for (var k = 0; k < fillers; k++)
                                 builder.AddGroup(NewId(), element);
                             if (slotGap < walkGap)
                                 notes.Add($"instances: group of {g.SourceIds[0]} has fewer slots than walk indices between {g.SourceIds[i - 1]} and {g.SourceIds[i]}");
@@ -280,7 +330,9 @@ public static class MapDecompiler
                                              copyModel, files, table, notes, NewId);
                         at = g.SourceIds[i] + 1;
                     }
-                    for (var slot = g.Slots[^1] + 1; slot < g.Count; slot++)
+                    var trailing = g.Count - g.Slots[^1] - 1;
+                    Nested(g, g.SourceIds.Count, element, ref trailing);
+                    for (var k = 0; k < trailing; k++)
                         builder.AddGroup(NewId(), element);
                 }
             }
@@ -346,23 +398,17 @@ public static class MapDecompiler
                 scope.Instance = builder.AddInstance(NewId(), group, Vector3.Zero, Vector3.Zero);
             if (plan is not null)
             {
-                // The instances, in block order (the collapses walk the tree in order): under their
-                // landing group, or at the root where their copies land at the walk's end. Then the
-                // map's highest node id is the first block's start less one.
-                foreach (var c in plan.Collapses)
+                // The instances left land at the walk's end, at the root. Then the map's highest
+                // node id is the first block's start less one.
+                while (pending.Count > 0)
                 {
-                    var parent = c.EmitAt == int.MaxValue ? null : wrappers[c.EmitAt];
-                    builder.AddInstance(NewId(), planGroups[c.Group], c.Transform.Origin, c.Transform.Angles, parent);
-                    if (c.HiddenAfter > 0)
-                    {
-                        // A stand-in for the collapses that ship nothing here: a group of empty nodes,
-                        // as wide as their blocks, instanced once just after.
-                        var standIn = builder.AddGroup(NewId());
-                        for (var k = 0; k < c.HiddenAfter - 1; k++)
-                            builder.AddGroup(NewId(), standIn);
-                        builder.AddInstance(NewId(), standIn, Vector3.Zero, Vector3.Zero, parent);
-                    }
+                    var c = pending.Dequeue();
+                    if (c.EmitAt != int.MaxValue)
+                        notes.Add($"instances: collapse at id {c.MinId} found no place to land at walk index {c.EmitAt}");
+                    PlaceInstance(c, null);
                 }
+                foreach (var (instance, g) in targets)
+                    instance.Set("target", DmxBinary.AttrType.Element, planGroups[g]);
                 var highest = builder.NodeIds().Max();
                 if (highest < plan.Next0 - 1)
                     builder.AddGroup(plan.Next0 - 1);

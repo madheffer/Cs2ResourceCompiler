@@ -343,8 +343,23 @@ pass, but are not rebuilt as instances yet.
 - widths: each group's width is its least gap between consecutive blocks; a wider gap holds
   collapses that ship no copy (groups of prop_statics and meshes, whose copies bake into the world:
   atixref's 6755 and 6762), rebuilt as a stand-in group of empty nodes instanced once;
-- landing: a collapse's copies land before the first shipped node of the map after them, so its
-  instance goes in a group placed at that walk index (its subtree ends there), or at the root;
+- landing: a collapse's copies land before the first shipped node after them in their own lump
+  file (a world layer's lump walks apart), so its instance goes in a group placed at that walk index
+  (its subtree ends there), or at the root when they land at the walk's end;
+- order: the bake collapses in tree order, so the instances are written in block order as the walk
+  reaches each landing place: a run landing at i in a group placed at i, and a root instance between
+  two runs as a world child there (it lands at the end wherever it stands). atixref's 17 instances
+  under group 6261 collapse between root instances (blocks 7704 to 7770), so writing every root
+  instance after the walk, as the first version did, put their blocks first and moved 400 copy ids;
+- nested: a group whose every collapse lands inside a distinct collapse of one other group (its
+  copies between that collapse's, which run unbroken around them) and whose blocks follow that
+  group's is instanced from inside its template, a round later (MapInstances.Expand: an instance in
+  a target group is reached only through the group's copies, the copy inherits its outer copy's
+  EmitAt). Its instance takes a free slot of the outer template after the templates whose copies
+  come first; its group is written at the origin and its instance there, so with the outer collapse
+  unturned the second step moves by the first one's matrix, and the inner templates are solved as
+  the outer group's last members. Every inner copy is then checked through both steps
+  (`SettleWorld.BakedPlacement` over the outer instance and the inner one);
 - placement: with the group unturned its inverse only translates, so the group is written at the
   origin and `FrameSolver` places the instances, collapses for placements; the z axis is solved on
   its own (a yaw-only matrix leaves z to the translation, fl(local z + instance z), and only some
@@ -353,10 +368,14 @@ pass, but are not rebuilt as instances yet.
   instances are off the grid), and a turn must land the reference node's angles as well as positions
   (a node at its group's origin lands its position under any turn).
 
-atixref: 199 copies rebuilt as 143 instances of 13 groups, every group solved on its first frame
-candidate; 197 copies compile as Valve's. Open: the nested instance (group 6485 holds an instance,
-whose copies collapse in round two after every top-level block and land with their outer copy; to
-be rebuilt inside the outer template), the 4 rope paths, one light's precomputed bounds.
+atixref: 199 copies rebuilt as 143 instances of 13 groups and one nested group (template 630 inside
+631's, 4 second-round collapses, blocks 7881 to 7888), every group solved on its first frame
+candidate; every copy compiles as Valve's, ids and lump order included. (The first version's count
+of 197 was read off the test's first 40 lines; the test had 848 differences, most from the block
+order above.) Left on atixref, none of them instances: 81 prop_physics that Valve's package holds
+where the settle left them (the test settles neither side, so the authored placement is not
+recovered: settle inversion is open), 9 template-lump angles, the 4 rope paths and light 6478's
+precomputed bounds.
 
 ## Ground truth for the decompiler
 

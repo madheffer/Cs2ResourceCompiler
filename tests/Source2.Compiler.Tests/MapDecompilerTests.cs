@@ -99,7 +99,8 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         }
         foreach (var (reason, count) in explained)
             output.WriteLine($"  gap x{count}: {reason}");
-        foreach (var line in unexplained.Take(40))
+        // DECOMPILE_ALL=1: every unexplained line, not the first 40.
+        foreach (var line in unexplained.Take(Environment.GetEnvironmentVariable("DECOMPILE_ALL") is { Length: > 0 } ? int.MaxValue : 40))
             output.WriteLine("  UNEXPLAINED " + line);
         Assert.True(unexplained.Count == 0, $"{unexplained.Count} unexplained difference(s); first: {unexplained.FirstOrDefault()}");
     }
