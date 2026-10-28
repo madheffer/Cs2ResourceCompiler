@@ -373,7 +373,8 @@ atixref: 199 copies rebuilt as 143 instances of 13 groups and one nested group (
 candidate; every copy compiles as Valve's, ids and lump order included. (The first version's count
 of 197 was read off the test's first 40 lines; the test had 848 differences, most from the block
 order above.) Left on atixref, none of them instances: 9 template-lump angles (with prop 258's), the
-4 rope paths and light 6478's precomputed bounds.
+4 rope paths and light 6478's precomputed bounds; all closed later on 10-28 (Paths, Template members
+below): atixref now compiles exactly as Valve's.
 
 ### Settled props
 
@@ -387,7 +388,68 @@ sides as the compile does (`SettleLumpTests.Settle`; neither side when the settl
 source): atixref's 81 settled props compile exactly as Valve's, and the atixref-based probes 3 and
 4 drop from 219 to 36 and 479 to 251 differences. Open: a prop that settles but does not fall
 asleep ships without the flag and would be settled again from its resting pose; none of atixref's 81 is
-one.
+one. s2c_prefabprobe3's prop 2140:2239 is one: c2m2's prop falls out of the world, Valve's 30 s
+leave it at z -11680 still falling, and the test's settle of the decompile drops it to -16373.
+
+### Paths (2026-10-28)
+
+A CMapPath ships as one entity whose nodes are folded into keys after hammerUniqueId
+(`EntityLumpAuthor.PathKeys`, FUN_1810b5480): pathNodes (nine floats a node: the position
+through the path's inverse node matrix, then the in and out tangents), pathNodeNames, the radius
+arrays, closed_loop and one array per node key with a write_to_path_key. The nodes walk right
+after the path and ship nothing (`MapEntities.Walk`). The inverse
+(`EntityLumpAuthor.InversePath.cs`, `VmapBuilder.AddPath`):
+- the path's origin is its first node's (MapEntities.Read), so the lump's origin is node 0's;
+- each node's position is a float the inverse matrix takes to the row's first three, bit for bit
+  (`Preimage`: the forward matrix's guess, then floats nearest to it);
+- tangents: interpolationType 1 (the factory's, rc 1810b3e90) and then 0 decide every node's
+  tangents; the first that lands every row is kept. Otherwise each node's own types, 0 or 1 where
+  they land, else 3 with the authored tangent solved through the inverse rotation. For two nodes 0
+  and 1 give the same tangents, so atixref's ropes (0 in the source) come back as 1; nothing in the
+  lump tells them apart;
+- node keys: classname (the path class's path_node_class), then the node class's keys in order,
+  each from its path array or its default; a float key keeps its default text when that reads as
+  the value (Hammer keeps "2", not "2.0"); pathNodeColors is not traced (PathKeys), so color_tint
+  stays at its default;
+- the nodes take the walk indices after the path, and ids after the path's where free and below
+  the highest id the lump shows (otherwise from the made-up pool).
+A cable_dynamic (CMapCable) ships pathNodes too but with a model of its own and its tint as
+rendercolor; it is left as the entity it was (s2c_prefabinst passes that way) until cables are
+rebuilt as CMapCable.
+
+### Template members and the light step (2026-10-28)
+
+A point_template's removed member comes back from its copy (`MapDecompiler.FromTemplateCopy`).
+The copy is `TemplateTransform.Relative` of the member: its translation depends on the member's
+origin only and its angles on the member's angles only, so the two are solved apart
+(`TemplatePlacement`), each kept only when the forward gives the copy's floats bit for bit. The
+matrix inverse is the first guess only: near a pitch of 90 the read-back is ill-conditioned
+(atixref's lights at (90, 0, 0) come back 89.99998 and land 89.999992), so the guess's decimal
+roundings and nearby floats are tried, fewest decimals first; several values can land and the one a
+mapper would type is taken.
+
+Keys a lit compile's light step writes in place are not the source's: the precomputed bounds and
+box are traced again (`LightPrecompute`; atixref's light 6478 holds stale ones from an earlier
+placement in the source), and directlight goes 3 to 2 on a stationary light with no shadow
+(`BakedShadowAssignment`). The decompile keeps the package's values, which a lit recompile gives
+again; the test's truth side has no light step and ships the source's, so the test accepts those keys
+only where ours equal what Valve's package holds. One case inverts exactly: desiredstationary 1
+with bakedshadowindex -1 is written only with directlight 1 on a light of mode 3 (no free shadow
+channel), and for a non-legacy class the mode is directlight itself, so the source's was 3
+(s2c_prefabprobe11's later placements).
+
+### A prefab map's own instances (2026-10-28)
+
+A prefab map whose copies hold more than one collapse (in id order the template indices start
+again) is planned as the map's own instances are (`InstancePlan.Build` over the prefab map's nodes
+and copies), and the copy ids padded as for one collapse (`MatchCopyIds`). One collapse stays with
+`TemplatePlan`, which until now kept the first collapse and dropped the rest without a note.
+s2c_prefabprobe3: c2m2's 12 copies come back as 4 instances of 1 group, exact. Not planned: a prefab
+map that places prefabs (their blocks sit among its collapses'; InstancePlan does not model them)
+and any prefab map of a map with shared prefab maps (s2c_prefabprobe9's planned group landed 78
+walk indices late). s2c_prefabprobe4 (atixref placed as a prefab at (1024, 512, 64) turned 90) is
+planned but its outer group has no frame: every collapse is turned in world space and
+`FrameSolver` takes the first placement unturned.
 
 ## Ground truth for the decompiler
 
@@ -402,8 +464,9 @@ its members), each compiled -world and full.
 ## Plan
 
 1. Done: `s2c decompile-map`, our own vmap 40 writer.
-2. Done for point entities, world layers, templates, prefabs, instances (multi-copy and nested)
-   and settled props (stages 1 and 3 above); left: paths and cables, shared prefab families.
+2. Done for point entities, world layers, templates, prefabs, instances (multi-copy and nested),
+   paths and settled props (stages 1 and 3 above); left: cables, shared prefab families, turned
+   prefabs with instances.
 3. Brush entities from their entity models: hulls done (stage 2); left the hull vertex order,
    render meshes (UVs, render-only faces) and triangle-mesh shapes.
 4. World meshes from the world node, split by whatever per-source-mesh identity the compile
@@ -417,40 +480,47 @@ its members), each compiled -world and full.
 6. A round-trip test per map: decompile, compile with ours, `map-diff` against the shipped
    package; the parity matrix's maps first, then the workshop corpus.
 
-## Handoff (2026-10-28)
+## Handoff (2026-10-28, evening)
 
 Branch research/vmap-decompile, worktree `D:\_cursor projects\source2-compiler-wt-decompile`,
-last commit 01d1dd1, nothing pushed. Tracker 48.9% (18 of 44 subtasks done).
+nothing pushed. Tracker 50.8% (18 of 44 subtasks done).
 
-The check is `MapDecompilerTests.Entities_CompileAsTheSourceDoes` (20 maps, about 4 minutes;
+The check is `MapDecompilerTests.Entities_CompileAsTheSourceDoes` (20 maps, about 2 minutes;
 `DECOMPILE_ALL=1` prints every difference, `DECOMPILE_LUMP=<file>` lists both sides of a lump).
 Count the `unexplained difference(s)` from the summary blocks (`Failed ... Error Message`), not
 from the interleaved test output, which pairs maps with the wrong counts.
+`BrushPhysics_CompilesAsTheSourceDoes` on s2c_prefabprobe2 fails as it did before this work (one
+of stage 2's 3 differing hulls, carousel_door01_108_27).
 
 | Map | Unexplained differences | What is left |
 |---|---|---|
-| 12 maps (probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, prefabprobe 1/2/5/6/7, pinst, instnest, prefabinst) | 0 | passing |
-| atixref | 33 | 4 rope paths (20 lines), 9 template-lump angles plus prop 258's (one ulp-scale turn), light 6478's precomputed bounds |
-| s2c_prefabprobe3 | 36 | not itemised yet (atixref-based) |
-| s2c_prefabprobe4 | 251 | not itemised yet (atixref-based) |
+| 13 maps (probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, atixref, prefabprobe 1/2/5/6/7, pinst, instnest, prefabinst) | 0 | passing |
+| s2c_prefabprobe3 | 2 | prop 2140:2239 still falling when Valve's settle ends (no Start asleep), settled again by ours |
+| s2c_prefabprobe4 | 201 | atixref as a prefab turned 90: 199 copies not rebuilt (FrameSolver wants an unturned first placement) |
 | s2c_prefabprobe9 | 883 | shared prefab families nested |
-| s2c_prefabprobe11 | 28 | brush model taken from a later placement |
-| s2c_prefabprobe12 | 28 | shared prefab copies inside turned prefabs |
-| s2c_prefabprobe8 | 7 | the main map's own instances |
-| s2c_pinst7 | 1 | the main map's own instances |
+| s2c_prefabprobe11 | 22 | 9 light copies inside the turned shared prefab (origin and angles), 2 func_brush models taken from a later placement |
+| s2c_prefabprobe12 | 22 | as 11: 9 copies in turned prefabs, 2 func_brush |
+| s2c_prefabprobe8 | 7 | the main map's own instances: 3 light copies in the wrong place (ours only / missing pairs) |
+| s2c_pinst7 | 1 | the main map's own instances: lump order |
+
+Done this session: atixref's ropes (CMapPath rebuilt, positions and tangents solved), template
+members' placement as an exact solve, light-step keys (test checks them against the package;
+directlight 1 with desiredstationary inverted to 3), a prefab map's own multi-collapse instances.
 
 Next, in the order the user is likely to pick:
-1. atixref's rope paths (`path_particle_rope_clientside`, rebuild CMapPath / CMapPathNode).
-2. Template-lump angles: 236# and 257# angles one float step off (89.99999237 vs 89.9999771):
-   find the forward's angle path for template members (MapInstances / point_template) in the
-   decompile, then solve exactly; no fitting.
-3. Light 6478's precomputed bounds and obb.
-4. Itemise prefabprobe3 and 4 with `DECOMPILE_ALL=1`.
-5. Shared prefab families (9, 11, 12), the main map's own instances (8, pinst7), turned outer
-   collapses and deeper nesting.
-6. Brush geometry: hull vertex order as an exact solve (GroupVertices hash-slot order), corner
+1. Turned prefabs with instances (probe4, then the copies in 11 and 12): either let `FrameSolver`
+   take a right-angle first placement, or write a single prefab's map in its own frame with the
+   prefab node turned and solve that placement exactly (the stronger fix: it is what the source has).
+2. The main map's own instances (probe8, pinst7): itemise with `DECOMPILE_LUMP`.
+3. Shared prefab families (9; 11 and 12's func_brush model from a later placement).
+4. Cables: rebuild cable_dynamic as CMapCable (nodes from pathNodes as for paths, tint from
+   rendercolor, the model from its nodes).
+5. A prefab map that places prefabs, with instances of its own (InstancePlan with prefab blocks).
+6. The falling prop (probe3): a prop the settle leaves awake is not invertible from the package; at
+   most note it.
+7. Brush geometry: hull vertex order as an exact solve (GroupVertices hash-slot order), corner
    placement as an exact solve, render meshes and UVs, world meshes (plan 3 and 4).
-7. Hammer: element defaults from Hammer's own map code, and an open-and-re-save check.
+8. Hammer: element defaults from Hammer's own map code, and an open-and-re-save check.
 
 After each milestone: update `tools/map-survey/decompile_progress.json`, upload it as an asset of
 the tracker and point `datasets/subtasks` at it (Progress tracker above).

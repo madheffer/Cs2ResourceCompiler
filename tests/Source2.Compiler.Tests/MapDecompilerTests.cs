@@ -51,7 +51,8 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         if (source is null || !File.Exists(package)) { MapFixtures.Skip($"the {addon}/{map} source and package"); return; }
         var schema = MapFixtures.GameSchema();
 
-        var result = MapDecompiler.Decompile(MapDecompiler.ReadPackage(package), map, schema, StockMaterials());
+        var files = MapDecompiler.ReadPackage(package);
+        var result = MapDecompiler.Decompile(files, map, schema, StockMaterials());
         var decompiled = Maps.MapNodeAngles.Apply(DmxBinary.Read(result.Vmap));
         var truth = DmxBinary.ReadFile(source);
 
@@ -83,6 +84,10 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
                 explained["brush entity with no model or no hull: no geometry, so it does not ship"] =
                     explained.GetValueOrDefault("brush entity with no model or no hull: no geometry, so it does not ship") + truthSide.Count - withoutBrush.Count;
             var oursSide = EntityLumpComparison.Read(ours[path], path).Where(e => !brush.Contains(e.HammerId)).ToList();
+            // Valve's own lump of the package, for keys a lit compile rewrites.
+            var shipped = files.FirstOrDefault(f => f.Key.EndsWith(path, StringComparison.OrdinalIgnoreCase)).Value is { } lump
+                ? EntityLumpComparison.Read(lump, path).GroupBy(e => e.HammerId).ToDictionary(g => g.Key, g => g.First())
+                : [];
             // DECOMPILE_LUMP=<lump file name>: both sides' entities of that lump, in order.
             if (Environment.GetEnvironmentVariable("DECOMPILE_LUMP") is { Length: > 0 } listed && Path.GetFileName(path) == listed)
                 foreach (var (side, list) in new[] { ("truth", truthSide), ("ours", EntityLumpComparison.Read(ours[path], path).ToList()) })
@@ -94,6 +99,16 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
                 // the decompile cannot ship yet moves every later member's index.
                 if (gap.Reason is null && withoutBrush.Count != truthSide.Count && line.Contains("_template_lump_ent_index", StringComparison.Ordinal))
                     gap = (null!, "template member index moved by a brush member that does not ship");
+                // Keys a lit compile's light step writes in place: the precomputed keys the source holds
+                // from an earlier placement, traced again (LightPrecompute), and directlight, 3 made 2 on
+                // a stationary light with no shadow (BakedShadowAssignment). The package holds the step's
+                // values, the truth side here (no light step) the source's. Explained only when ours is
+                // what Valve shipped.
+                if (gap.Reason is null && Regex.Match(line, @"^\[(\w+)#([\d:]+)\] (precomputed\w+|directlight|bakedshadowindex|desiredstationary|light_(?:path|map)_uniqueid): value valve .*?, ours (\w+):(.*)$") is { Success: true } pre
+                    && shipped.TryGetValue(pre.Groups[2].Value, out var valveEntity)
+                    && valveEntity.Values.TryGetValue(pre.Groups[3].Value, out var valveValue)
+                    && valveValue.Value == pre.Groups[4].Value + ":" + pre.Groups[5].Value)
+                    gap = (null!, "light step keys: ours are the package's, the source's were rewritten by the lit compile");
                 if (gap.Reason is null)
                     unexplained.Add($"{Path.GetFileName(path)}: {line}");
                 else

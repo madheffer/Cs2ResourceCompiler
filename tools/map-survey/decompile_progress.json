@@ -53,7 +53,7 @@
   "subtask": "Point templates and their removed members",
   "weight": 2,
   "done": 1,
-  "evidence": "ze_doom_p2_c_gameplay"
+  "evidence": "ze_doom_p2_c_gameplay; members' placement an exact solve (atixref 236#, 257#)"
  },
  {
   "module": "Entities",
@@ -73,8 +73,8 @@
   "module": "Entities",
   "subtask": "Paths, ropes and cables (CMapPath, CMapPathNode)",
   "weight": 3,
-  "done": 0,
-  "evidence": "atixref ropes fail"
+  "done": 0.6,
+  "evidence": "atixref's 4 ropes exact: nodes, positions and tangents solved through PathControls; CMapCable not rebuilt"
  },
  {
   "module": "Entities",
@@ -192,8 +192,8 @@
   "module": "Instances",
   "subtask": "Several collapses of one template, rounds, nesting",
   "weight": 4,
-  "done": 0.8,
-  "evidence": "atixref 13 groups, up to 50 collapses, nested group 630 in 631 (round 2) exact; turned outer and deeper nesting open"
+  "done": 0.85,
+  "evidence": "atixref 13 groups incl. nested 630 in 631 exact; a prefab map's own collapses (probe3: 12 copies, 4 instances) exact; turned prefab (probe4) and shared families open"
  },
  {
   "module": "Instances",
@@ -277,7 +277,7 @@
   "subtask": "Entity lump round trip test",
   "weight": 2,
   "done": 1,
-  "evidence": "Entities_CompileAsTheSourceDoes, 13 of 22 maps"
+  "evidence": "Entities_CompileAsTheSourceDoes, 13 of 20 maps exact (atixref 10-28)"
  },
  {
   "module": "Verification",

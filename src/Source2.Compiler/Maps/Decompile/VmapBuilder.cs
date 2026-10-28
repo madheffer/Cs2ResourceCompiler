@@ -109,6 +109,49 @@ public sealed class VmapBuilder
         return e;
     }
 
+    /// <summary>
+    /// A CMapPath under <paramref name="parent"/> (the world when null) with a CMapPathNode child
+    /// per node, <paramref name="nodeIds"/> theirs. Shape: atixref's rope paths; the path stands
+    /// at its first node (MapEntities.Read), particleSnapshotSpacing at the 16 they all hold.
+    /// </summary>
+    public DmxBinary.Element AddPath(int nodeId, MapEntities.Entity path, IReadOnlyList<int> nodeIds,
+                                     DmxBinary.Element? parent = null)
+    {
+        var nodes = path.PathNodes ?? [];
+        var e = New("CMapPath");
+        Node(e, nodeId, ReferenceId(nodeId));
+        e.Set("relayPlugData", T.Element, PlugList())
+         .Set("connectionsData", T.Array(T.Element), Connections(path.Connections))
+         .Set("entity_properties", T.Element, Props(path.Keys))
+         .Set("hitNormal", T.Vector3, new Vector3(0, 0, 1))
+         .Set("isProceduralEntity", T.Bool, false);
+        Placement(e, nodes.Count > 0 ? nodes[0].Origin : path.Origin, path.Angles, path.Scales);
+        Flags(e);
+        e.Set("interpolationType", T.Int, path.InterpolationType)
+         .Set("closedLoop", T.Bool, path.ClosedLoop)
+         .Set("particleSnapshotSpacing", T.Float, 16f);
+        for (var i = 0; i < nodes.Count; i++)
+        {
+            var n = New("CMapPathNode");
+            Node(n, nodeIds[i], ReferenceId(nodeIds[i]));
+            n.Set("relayPlugData", T.Element, PlugList())
+             .Set("connectionsData", T.Array(T.Element), Array.Empty<object?>())
+             .Set("entity_properties", T.Element, Props(nodes[i].Keys))
+             .Set("hitNormal", T.Vector3, new Vector3(0, 0, 1))
+             .Set("isProceduralEntity", T.Bool, false);
+            Placement(n, nodes[i].Origin, Vector3.Zero, Vector3.One);
+            Flags(n);
+            n.Set("pathNodeName", T.String, "")
+             .Set("inTangent", T.Vector3, nodes[i].InTangent)
+             .Set("outTangent", T.Vector3, nodes[i].OutTangent)
+             .Set("inTangentType", T.Int, nodes[i].InTangentType)
+             .Set("outTangentType", T.Int, nodes[i].OutTangentType);
+            AddChild(e, n);
+        }
+        AddChild(parent ?? World, e);
+        return e;
+    }
+
     /// <summary>A CMapWorldLayer in the world, at the origin: its entities keep their world
     /// placement. Shape: Mako's layers (s2c_big) without the transform pin and the
     /// group fields, as a CMapGroup is saved bare (s2c_instnest).</summary>

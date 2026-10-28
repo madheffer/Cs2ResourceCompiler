@@ -130,6 +130,17 @@ public static partial class EntityLumpAuthor
             sourceKeys.Add(new(key, text));
         }
 
+        // A baked build's shadow step gives a light with no free channel desiredstationary 1,
+        // bakedshadowindex -1 and directlight 1 (BakedShadowAssignment.Assign), only on a light of
+        // mode 3; for a class other than the legacy ones the mode is directlight itself, so the
+        // source's was 3.
+        if (Text("desiredstationary") == "1" && Text("bakedshadowindex") == "-1" && !LegacyLights.Contains(className))
+        {
+            var at = sourceKeys.FindIndex(k => k.Key.EqualsAscii("directlight"));
+            if (at >= 0 && sourceKeys[at].Value == "1")
+                sourceKeys[at] = new(sourceKeys[at].Key, "3");
+        }
+
         var idPath = Text("hammerUniqueId") ?? "";
         var nodeId = int.TryParse(idPath.Split(':')[^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) ? id : 0;
         if (idInTable)
@@ -149,6 +160,17 @@ public static partial class EntityLumpAuthor
             UnbuildConnections(Child(lumpEntity, "m_connections"), fixup),
             HasGeometry: brushModel is not null)
         { BoneTransforms = boneTransforms };
+        // A path's nodes are folded into keys after hammerUniqueId (PathKeys): back to its nodes.
+        // A CMapCable ships them too, with a model of its own and its tint as rendercolor; it is
+        // not rebuilt as a cable yet, so it stays the entity it was.
+        if (brushModel is null && keys.Any(k => k.Key.EqualsAscii("pathNodes")))
+        {
+            var notes = new List<string>();
+            if (UnbuildPath(entity, keys, schema, notes) is { } path)
+                entity = path;
+            else
+                dropped.Add("pathNodes (" + string.Join("; ", notes) + ")");
+        }
         return new SourceEntity(entity, sourceId, idPath, brushModel, dropped) { Raw = lumpEntity };
     }
 

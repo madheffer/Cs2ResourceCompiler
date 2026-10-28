@@ -147,6 +147,22 @@ public static class MapDecompiler
         foreach (var placements in families)
             SolveFrame(placements, notes);
 
+        // A prefab map's own instances collapsed more than once (its copies' indices start again):
+        // planned as the map's own are (InstancePlan), over the prefab map's nodes. A shared prefab
+        // map's copies are one collapse per placement (SolveFrame), and one collapse is a template
+        // group of its own (TemplatePlan). A map that places prefabs is left to TemplatePlan too (its
+        // prefabs take blocks among its collapses', which InstancePlan does not model), and so is
+        // every prefab map of a map with shared ones: s2c_prefabprobe9's planned groups landed 78 walk
+        // indices late, the shared maps' blocks not being modelled either.
+        foreach (var sc in scopes.Values.Where(sc => families.Count == 0 && sc.Parent is not null && sc.Copies.Count > 0
+                                                     && sc.Children.Count == 0 && CollapseCount(sc.Copies) > 1))
+        {
+            sc.Plan = InstancePlan.Build([.. sc.Copies.Select(c => (c, entities.IndexOf(c), fileOf[c]))],
+                                         [.. sc.Entities.Select(w => (w, entities.IndexOf(w), fileOf[w]))], notes);
+            if (sc.Plan is not null)
+                notes.Add($"prefab {sc.Chain}: {sc.Copies.Count} copies rebuilt as {sc.Plan.Collapses.Count} instances of {sc.Plan.Groups.Count} groups");
+        }
+
         // The map's own instance copies: their template indices repeat (each template walks once, every
         // collapse carries its index), and their ids start past every node of the map
         // (MapInstances.Expand), so from the lowest id that carries a repeated index on, every node of
@@ -213,6 +229,12 @@ public static class MapDecompiler
                 used.Add(pool);
                 return pool;
             }
+            int Take(int id)
+            {
+                used.Add(id);
+                return id;
+            }
+            var shownMax = used.Count > 0 ? used.Max() : 0;
             string? openLayer = null;
             DmxBinary.Element? layerNode = null;
             void FillTo(int sourceId, DmxBinary.Element? parent = null)
@@ -226,7 +248,7 @@ public static class MapDecompiler
             }
 
             // The scope's own nodes, and its copies' template group where the walk meets it.
-            var templates = TemplatePlan(scope, notes);
+            var templates = scope.Plan is null ? TemplatePlan(scope, notes) : null;
             var items = scope.Entities.Select(e => (e.SourceId, Entity: (EntityLumpAuthor.SourceEntity?)e, Template: (List<TemplateSlot>?)null)).ToList();
             if (templates is not null)
                 items.Add((templates.First(t => t.Copy is not null).Copy!.SourceId, null, templates));
@@ -237,7 +259,8 @@ public static class MapDecompiler
             // those whose copies land before walk index i in a group placed at i, its subtree ending
             // there (MapInstances.EmitAt), and those whose copies land at the walk's end at the root,
             // where they stand between. A nested group's instance sits in its outer template.
-            var plan = scope.Parent is null ? instancePlan : null;
+            var plan = scope.Parent is null ? instancePlan : scope.Plan;
+            var templateFixup = FixupOf(scope.Parent is null ? ":0" : scope.Chain + ":0");
             var planGroups = new Dictionary<InstancePlan.Group, DmxBinary.Element>();
             var planItems = new List<(int At, int Kind, InstancePlan.Group? Group)>();
             var pending = new Queue<InstancePlan.Collapse>();
@@ -323,7 +346,7 @@ public static class MapDecompiler
                         }
                         FillTo(g.SourceIds[i], element);
                         var copy = g.Collapses[0][i];
-                        var t = EntityLumpAuthor.Unbuild(copy.Raw!, schema, FixupOf(":0"), instanced: true).Entity;
+                        var t = EntityLumpAuthor.Unbuild(copy.Raw!, schema, templateFixup, instanced: true).Entity;
                         var node = builder.AddEntity(NewId(), t.Keys, g.Local[i].Origin, g.Local[i].Angles, t.Scales, t.Connections, parent: element);
                         if (copy.BrushModel is { } copyModel)
                             AddBrushGeometry(builder, node, copy with { Entity = copy.Entity with { Origin = g.Local[i].Origin, Angles = g.Local[i].Angles } },
@@ -364,6 +387,16 @@ public static class MapDecompiler
                     layerNode = builder.AddLayer(NewId(), layer);
                 openLayer = layer;
                 var x = e!.Entity;
+                if (x.PathNodes is { } pathNodes)
+                {
+                    // A path's nodes walk right after it and ship nothing (MapEntities.Walk), so they
+                    // take the indices that follow; their ids the ones after the path's where free.
+                    var nodeIds = Enumerable.Range(1, pathNodes.Count)
+                        .Select(k => !used.Contains(x.NodeId + k) && x.NodeId + k < shownMax ? Take(x.NodeId + k) : NewId()).ToList();
+                    builder.AddPath(x.NodeId, x, nodeIds, parent: layer is null ? null : layerNode);
+                    at = Math.Max(at, e.SourceId + 1 + pathNodes.Count);
+                    continue;
+                }
                 var entityNode = builder.AddEntity(x.NodeId, x.Keys, x.Origin, x.Angles, x.Scales, x.Connections,
                                                    parent: layer is null ? null : layerNode);
                 if (e.BrushModel is { } model)
@@ -428,7 +461,7 @@ public static class MapDecompiler
         {
             int Simulated(Scope scope) => SimulatedCopyIds(main, scopes.Values, mapName, schema)
                 .Where(c => c.Scope == scope).Select(c => c.Id).DefaultIfEmpty(int.MaxValue).Min();
-            foreach (var scope in scopes.Values.Where(sc => sc.Instance is not null).OrderBy(sc => sc.Copies.Min(c => c.Entity.NodeId)))
+            foreach (var scope in scopes.Values.Where(sc => sc.Instance is not null || (sc.Plan is not null && sc.Builder is not null)).OrderBy(sc => sc.Copies.Min(c => c.Entity.NodeId)))
             {
                 var target = scope.Copies.Min(c => c.Entity.NodeId);
                 var simulated = Simulated(scope);
@@ -607,6 +640,9 @@ public static class MapDecompiler
         /// <summary>A later placement's prefab transform over the first's map.</summary>
         public (Vector3 Origin, Vector3 Angles) Placement { get; set; }
 
+        /// <summary>The map's instances rebuilt from copies of more than one collapse.</summary>
+        public InstancePlan? Plan { get; set; }
+
         /// <summary>The rebuilt instance, when the map has copies.</summary>
         public DmxBinary.Element? Instance { get; set; }
 
@@ -626,6 +662,14 @@ public static class MapDecompiler
     /// <summary>One slot of a template group, in preorder: a copy's template, a node that walks and ships
     /// nothing (an editor-only placeholder), or one that does not walk (an empty group).</summary>
     private sealed record TemplateSlot(EntityLumpAuthor.SourceEntity? Copy, bool Walks);
+
+    /// <summary>How many collapses a scope's copies hold: in id order, a collapse's template indices
+    /// rise, and the next collapse starts them again (as <see cref="TemplatePlan"/> splits them).</summary>
+    private static int CollapseCount(List<EntityLumpAuthor.SourceEntity> copies)
+    {
+        var sorted = copies.OrderBy(c => c.Entity.NodeId).ToList();
+        return 1 + sorted.Zip(sorted.Skip(1)).Count(p => p.Second.SourceId <= p.First.SourceId);
+    }
 
     /// <summary>
     /// The template group a scope's copies come from, slot by slot. A copy's id is its collapse's
@@ -874,9 +918,15 @@ public static class MapDecompiler
         keys.RemoveAll(k => k.Key.EqualsAscii("_template_lump_ent_index"));
         if (template is not null && template.Entity.ClassName.EqualsAscii("point_template"))
         {
-            var m = TemplateTransform.Concat(TemplateTransform.AngleMatrix(template.Entity.Origin, template.Entity.Angles),
-                                             TemplateTransform.AngleMatrix(origin, angles));
-            (origin, angles) = (new Vector3(m[3], m[7], m[11]), TemplateTransform.MatrixAngles(m));
+            if (TemplatePlacement.Solve(template.Entity.Origin, template.Entity.Angles, origin, angles) is { } placed)
+                (origin, angles) = placed;
+            else
+            {
+                var m = TemplateTransform.Concat(TemplateTransform.AngleMatrix(template.Entity.Origin, template.Entity.Angles),
+                                                 TemplateTransform.AngleMatrix(origin, angles));
+                (origin, angles) = (new Vector3(m[3], m[7], m[11]), TemplateTransform.MatrixAngles(m));
+                notes.Add($"{e.ClassName} {copy.IdPath}: no placement lands on its template copy's; the inverse's kept");
+            }
         }
         else
             notes.Add($"{e.ClassName} {copy.IdPath}: only a copy in {Path.GetFileName(lump)} survives, and that template places it at the origin; its placement is lost");
