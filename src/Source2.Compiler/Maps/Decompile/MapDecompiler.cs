@@ -650,7 +650,7 @@ public static class MapDecompiler
         var placed = placements.Select((p, k) =>
             nodes.Select(e => p.Entities.First(x => Inner(x) == Inner(e)).Entity)
                  .Select(x => (x.Origin, x.Angles)).ToArray()).ToList();
-        var solution = FrameSolver.Solve(placed, 32768, 20_000_000, out var why);
+        var solution = FrameSolver.Solve(placed, 32768, 2_000_000, out var why);
         if (solution is null)
         {
             notes.Add($"prefab {first.Chain}: no exact frame for its {placements.Count} placements ({why}); later placements solved from the first");
