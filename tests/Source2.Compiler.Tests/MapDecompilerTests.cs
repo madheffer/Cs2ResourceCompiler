@@ -235,6 +235,16 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary><c>DECOMPILE_INPUTS=&lt;vpk&gt;</c>: the input dependencies its .vmap_c records (MapDecompiler.MapInputs).</summary>
+    [Fact]
+    public void MapInputsOfAPackage()
+    {
+        if (Environment.GetEnvironmentVariable("DECOMPILE_INPUTS") is not { Length: > 0 } vpk)
+            return;
+        foreach (var (file, crc) in MapDecompiler.MapInputs(MapDecompiler.ReadPackage(vpk), Path.GetFileNameWithoutExtension(vpk)))
+            output.WriteLine($"    {crc:x8} {file}");
+    }
+
     /// <summary>
     /// <c>DECOMPILE_CORNERS=&lt;addon&gt;|&lt;map&gt;|&lt;entity node id&gt;</c>: each corner of the true source's
     /// meshes under that entity, placed by the compile's two moves, against what CornerFor finds for

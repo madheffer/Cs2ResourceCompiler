@@ -164,8 +164,8 @@
   "module": "Prefabs",
   "subtask": "Prefab file names from the .vmap_c RED2 inputs",
   "weight": 1,
-  "done": 0,
-  "evidence": "found: RED2 lists maps/<prefab>.vmap with its CRC"
+  "done": 0.6,
+  "evidence": "10-29: MapInputs reads the .vmap_c's RED2 inputs; one prefab map takes its source's name (under maps/prefabs/<map>/); several are noted (the package does not pair files with placements)"
  },
  {
   "module": "Instances",

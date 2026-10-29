@@ -486,6 +486,16 @@ after the path and ship nothing (`MapEntities.Walk`). The inverse
   stays at its default;
 - the nodes take the walk indices after the path, and ids after the path's where free and below
   the highest id the lump shows (otherwise from the made-up pool).
+### Prefab file names (2026-10-29)
+
+The map's .vmap_c records the files its compile read (RED2 input dependencies, sorted, CRC each:
+`MapDecompiler.MapInputs`), the prefab maps among them (s2c_prefabprobe9: maps/s2c_fixinner.vmap and
+maps/s2c_fixmid.vmap). With one prefab map written (a shared family counts once) and one recorded,
+the decompile's prefab map takes that file's base name, still under maps/prefabs/<map>/ so a
+decompile never overwrites the source's own file. With more, nothing in the package pairs a file with
+its placements (the order is alphabetical), so the maps keep their chain names and the recorded names
+are noted.
+
 ### Cables (2026-10-29)
 
 A cable class (@CableClass: cable_dynamic, cable_static; `FgdSchema.IsCableClass`) comes back as a

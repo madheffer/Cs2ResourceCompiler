@@ -298,6 +298,19 @@ public static class MapDecompiler
         var matched = false;
         // Every collapse's copies, before the template writer keeps only the first's (TemplatePlan).
         var allCopies = scopes.Values.ToDictionary(sc => sc, sc => sc.Copies.OrderBy(c => c.Entity.NodeId).ToList());
+        // The prefab maps the compile read, as its .vmap_c records them (sorted, the map's own among
+        // them): with one prefab map written and one recorded, it takes that file's name. More cannot
+        // be paired with their placements from the package; their names are noted.
+        var recorded = MapInputs(files, mapName).Select(i => i.File)
+            .Where(f => f.EndsWith(".vmap", StringComparison.OrdinalIgnoreCase) && !f.Equals($"maps/{mapName}.vmap", StringComparison.OrdinalIgnoreCase)).ToList();
+        // A shared prefab map is written once, by its family's first placement: a scope that is, or lies
+        // under, a later placement writes none.
+        bool Later(Scope? sc) => sc is not null && (families.Any(f => f.IndexOf(sc) > 0) || Later(sc.Parent));
+        var written = scopes.Values.Where(sc => sc.Parent is not null && !Later(sc)).ToList();
+        if (written.Count == 1 && recorded.Count == 1)
+            written[0].FileName = Path.GetFileNameWithoutExtension(recorded[0]);
+        else if (recorded.Count > 0)
+            notes.Add($"prefab maps: the compile read {string.Join(", ", recorded)}; {written.Count} written under their chains (which placement used which file is not in the package)");
         Emit(main);
         // A shared prefab map is written once, so a brush entity its first placement has no hulls for
         // has none in any placement: noted for each later one whose own model the package lacks too.
@@ -1122,8 +1135,11 @@ public static class MapDecompiler
         /// <summary>The map's source of made-up node ids, once written.</summary>
         public Func<int>? NewId { get; set; }
 
-        /// <summary>The prefab map's content path.</summary>
-        public string Path(string mapName) => $"maps/prefabs/{mapName}/prefab_{Chain.Replace(':', '_')}.vmap";
+        /// <summary>The prefab map's file name, when the package names it (<see cref="MapInputs"/>).</summary>
+        public string? FileName { get; set; }
+
+        /// <summary>The prefab map's content path: under the decompile's own folder, never the source's.</summary>
+        public string Path(string mapName) => $"maps/prefabs/{mapName}/{FileName ?? "prefab_" + Chain.Replace(':', '_')}.vmap";
 
         /// <summary>The prefab node's own id: the last id of its chain.</summary>
         public int NodeId => int.Parse(Chain[(Chain.LastIndexOf(':') + 1)..], System.Globalization.CultureInfo.InvariantCulture);
@@ -1623,6 +1639,20 @@ public static class MapDecompiler
         else
             notes.Add($"{e.ClassName} {copy.IdPath}: only a copy in {Path.GetFileName(lump)} survives, and that template places it at the origin; its placement is lost");
         return copy with { Entity = e with { Keys = keys, Connections = connections, Origin = origin, Angles = angles } };
+    }
+
+    /// <summary>The input dependencies the map's .vmap_c records (its RED2 block): content-relative file
+    /// names with their CRC, the map's own source first, then every file the compile read (prefab maps
+    /// among them).</summary>
+    public static List<(string File, uint Crc)> MapInputs(IReadOnlyDictionary<string, byte[]> files, string mapName)
+    {
+        if (!files.TryGetValue($"maps/{mapName}.vmap_c", out var bytes))
+            return [];
+        using var resource = new Resource();
+        resource.Read(new MemoryStream(bytes));
+        if (resource.EditInfo is not ValveResourceFormat.Blocks.ResourceEditInfo info)
+            return [];
+        return [.. info.InputDependencies.Concat(info.AdditionalInputDependencies).Select(d => (d.ContentRelativeFilename, d.FileCRC))];
     }
 
     /// <summary>Every entry of a map package, by path.</summary>
