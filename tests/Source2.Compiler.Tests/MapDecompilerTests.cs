@@ -236,6 +236,62 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// <c>DECOMPILE_CORNERS=&lt;addon&gt;|&lt;map&gt;|&lt;entity node id&gt;</c>: each corner of the true source's
+    /// meshes under that entity, placed by the compile's two moves, against what CornerFor finds for
+    /// the placed point: whether it lands, and how many floats the source's world point lies from the
+    /// inverse estimate.
+    /// </summary>
+    [Fact]
+    public void CornerSearch_AgainstTheSource()
+    {
+        if (Environment.GetEnvironmentVariable("DECOMPILE_CORNERS") is not { Length: > 0 } spec)
+            return;
+        var p = spec.Split('|');
+        var document = DmxBinary.ReadFile(MapFixtures.VmapSource(p[0], p[1])!);
+        var entity = document.Elements.First(e => e.Type == "CMapEntity" && e.GetValue<int>("nodeID") == int.Parse(p[2], System.Globalization.CultureInfo.InvariantCulture));
+        var toEntity = Maps.CTransform.FromNode(entity).Inverse().Matrix();
+        var fromEntity = Maps.CTransform.FromNode(entity).Matrix();
+        static long Key(float f) { var i = BitConverter.SingleToInt32Bits(f); return i < 0 ? int.MinValue - (long)i : i; }
+        foreach (var mesh in entity.GetElements("children").Where(c => c.Type == "CMapMesh"))
+        {
+            var toWorld = Maps.CTransform.FromNode(mesh).Matrix();
+            var origin = mesh.GetValue<Vector3>("origin") ?? Vector3.Zero;
+            var positions = mesh.Get<DmxBinary.Element>("meshData")!.Get<DmxBinary.Element>("vertexData")!.GetElements("streams")
+                .First(s => s.Name.StartsWith("position", StringComparison.Ordinal)).Get<object?[]>("data")!.Cast<Vector3>().ToArray();
+            int lands = 0, misses = 0;
+            foreach (var c in positions)
+            {
+                var world = Maps.MapMeshes.Transform(toWorld, c);
+                var target = Maps.MapMeshes.Transform(toEntity, world);
+                var found = MapDecompiler.CornerFor(target, origin, toWorld, toEntity, fromEntity);
+                if (Maps.MapMeshes.Transform(toEntity, Maps.MapMeshes.Transform(toWorld, found)) == target)
+                {
+                    lands++;
+                    continue;
+                }
+                misses++;
+                var estimate = Maps.MapMeshes.Transform(fromEntity, target);
+                output.WriteLine($"  miss: corner {c:R} world {world:R} target {target:R}; estimate {estimate:R} is " +
+                                 $"({Key(world.X) - Key(estimate.X)}, {Key(world.Y) - Key(estimate.Y)}, {Key(world.Z) - Key(estimate.Z)}) floats from the world point");
+            }
+            output.WriteLine($"mesh {mesh.GetValue<int>("nodeID")}: {lands} corners found, {misses} missed");
+            // The shipped hull's vertices against the placed corners (DECOMPILE_CORNERS's 4th field: the package).
+            if (p.Length > 3)
+            {
+                var files = MapDecompiler.ReadPackage(p[3]);
+                var model = files.First(f => f.Key.Contains("/entities/", StringComparison.Ordinal) && f.Key.EndsWith("_" + p[2] + ".vmdl_c", StringComparison.Ordinal));
+                var hull = BrushGeometry.Read(model.Value, new Dictionary<uint, string>()).Pieces.SelectMany(x => x.Vertices).ToArray();
+                var placed = positions.Select(c => Maps.MapMeshes.Transform(toEntity, Maps.MapMeshes.Transform(toWorld, c))).ToArray();
+                foreach (var h in hull)
+                {
+                    var near = placed.MinBy(q => Vector3.DistanceSquared(q, h));
+                    output.WriteLine($"  hull {h:R}: {(placed.Contains(h) ? "a placed corner" : $"nearest placed {near:R}, off {(h - near):R}")}");
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// <c>DECOMPILE_IDS=&lt;vmap&gt;|&lt;map&gt;[|settle]</c>: our lump author on a .vmap under that map name,
     /// as this file's checks run it: every default_ents entity's id and class, lump order.
     /// </summary>

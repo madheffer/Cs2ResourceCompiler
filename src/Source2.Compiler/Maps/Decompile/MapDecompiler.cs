@@ -790,6 +790,30 @@ public static class MapDecompiler
                 fitted[h] = v = CornerFor(h, e.Entity.Origin, toWorld, toEntity, fromEntity);
             return v;
         }
+        // A mesh at the world's origin: its move is the identity, so every world point is a corner.
+        var atZero = new Dictionary<Vector3, Vector3>();
+        var identity = CTransform.FromNode(DmxBinary.NewElement("CMapMesh", "", Guid.Empty)).Matrix();
+        Vector3 FitAtZero(Vector3 h)
+        {
+            if (!atZero.TryGetValue(h, out var v))
+                atZero[h] = v = CornerFor(h, Vector3.Zero, identity, toEntity, fromEntity);
+            return v;
+        }
+        // A mesh turned with its entity, as Hammer turns a brush entity's meshes with it: the two moves
+        // nearly cancel, and the corner is searched on the mesh's own floats.
+        var turnedNode = DmxBinary.NewElement("CMapMesh", "", Guid.Empty);
+        turnedNode.Attributes["origin"] = e.Entity.Origin;
+        turnedNode.Attributes["angles"] = entityNode.Attributes["angles"];
+        var turnedToWorld = CTransform.FromNode(turnedNode).Matrix();
+        var turnedFromWorld = CTransform.FromNode(turnedNode).Inverse().Matrix();
+        var turned = new Dictionary<Vector3, Vector3?>();
+        Vector3? FitTurned(Vector3 h)
+        {
+            if (!turned.TryGetValue(h, out var v))
+                turned[h] = v = LocalCorner(h, MapMeshes.Transform(turnedFromWorld, MapMeshes.Transform(fromEntity, h)),
+                                            c => MapMeshes.Transform(toEntity, MapMeshes.Transform(turnedToWorld, c)));
+            return v;
+        }
         // The model's part takes its shapes through PartOrder, a CRT qsort on shape type after
         // every insert: with one type that is a fixed permutation of the input, which the meshes
         // are written in the inverse of, so the hulls come out in the model's order.
@@ -798,19 +822,48 @@ public static class MapDecompiler
         var input = new BrushGeometry.Piece[count];
         for (var k = 0; k < count; k++)
             input[placedAt[k]] = geometry.Pieces[k];
-        var unordered = 0;
+        var (unordered, moved, off) = (0, 0, 0);
+        // Inside a prefab or a copy the forward moves mesh and entity by the placement too, so the
+        // landing check here holds only for the map's own entities.
+        var own = !e.IdPath.Contains(':', StringComparison.Ordinal);
         foreach (var piece in input)
         {
-            var faces = piece.Faces.Select(f => f.Select(Fit).ToArray()).ToArray();
-            var order = HullOrder(faces, [.. piece.Vertices.Select(Fit)], piece, e.Entity, entityNode);
+            var (origin, angles) = (e.Entity.Origin, Vector3.Zero);
+            Func<Vector3, Vector3> fit = Fit;
+            // Judged by the forward's chain for one mesh (its hull's points, bit for bit): the mesh as
+            // Hammer leaves it under an entity first, else turned with the entity, else at the world's
+            // origin (its pivot is Hammer's to place; only its move reaches the compile). Inside a
+            // prefab or a copy the forward also moves by the placement, which that chain does not, so
+            // those keep the first.
+            if (own && !SamePoints(piece, fit, origin, angles, e.Entity, entityNode)
+                && Nudged(piece, Fit, h => MapMeshes.Transform(toEntity, MapMeshes.Transform(toWorld, h)),
+                          h => CornerFor(h, e.Entity.Origin, toWorld, toEntity, fromEntity),
+                          f => SamePoints(piece, f, origin, angles, e.Entity, entityNode)) is { } nudged)
+                (fit, moved) = (nudged, moved + 1);
+            else if (own && !SamePoints(piece, fit, origin, angles, e.Entity, entityNode))
+            {
+                var turnedAngles = (Vector3)turnedNode.Attributes["angles"]!;
+                if (piece.Vertices.All(h => FitTurned(h) is not null)
+                    && SamePoints(piece, h => FitTurned(h)!.Value, e.Entity.Origin, turnedAngles, e.Entity, entityNode))
+                    (angles, fit, moved) = (turnedAngles, h => FitTurned(h)!.Value, moved + 1);
+                else if (SamePoints(piece, FitAtZero, Vector3.Zero, Vector3.Zero, e.Entity, entityNode))
+                    (origin, fit, moved) = (Vector3.Zero, FitAtZero, moved + 1);
+                else
+                    off++;
+            }
+            var faces = piece.Faces.Select(f => f.Select(fit).ToArray()).ToArray();
+            var vertexOrder = piece.Vertices.Select(fit).ToArray();
+            var order = HullOrder(faces, vertexOrder, piece, e.Entity, entityNode, origin, angles);
             if (order is null)
                 unordered++;
-            builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero,
-                            [.. (order ?? faces).Select(f => (f, 0))], [piece.Material],
-                            [.. piece.Vertices.Select(Fit)]);
+            builder.AddMesh(node, newId(), origin, angles, [.. (order ?? faces).Select(f => (f, 0))], [piece.Material], vertexOrder);
         }
         if (unordered > 0)
             notes.Add($"{label}: {unordered} hull(s) whose vertex order no face order searched gives (same points, other order)");
+        if (moved > 0)
+            notes.Add($"{label}: {moved} mesh(es) whose corners needed more than landing on the hull (a vertex the hull build moves, a mesh turned with the entity or at the world's origin)");
+        if (off > 0)
+            notes.Add($"{label}: {off} mesh(es) with a corner no searched point places exactly");
         if (geometry.HasRender)
             notes.Add($"{label}: render mesh not read (texture alignment and render-only faces are not recovered)");
         if (geometry.TriangleMeshes > 0)
@@ -831,12 +884,12 @@ public static class MapDecompiler
     /// none lands within the budget.
     /// </summary>
     private static Vector3[][]? HullOrder(Vector3[][] faces, Vector3[] vertexOrder, BrushGeometry.Piece piece,
-                                          MapEntities.Entity entity, DmxBinary.Element entityNode, int budget = 3000)
+                                          MapEntities.Entity entity, DmxBinary.Element entityNode, Vector3 meshOrigin, Vector3 meshAngles, int budget = 3000)
     {
         var scratch = new VmapBuilder("hullorder");
         bool Lands(Vector3[][] candidate)
         {
-            var mesh = scratch.AddMesh(scratch.World, 1, entity.Origin, Vector3.Zero, [.. candidate.Select(f => (f, 0))], [piece.Material], vertexOrder);
+            var mesh = scratch.AddMesh(scratch.World, 1, meshOrigin, meshAngles, [.. candidate.Select(f => (f, 0))], [piece.Material], vertexOrder);
             scratch.RemoveFromWorld(mesh);
             var hulls = Physics.EntityPhysicsModels.BrushMeshHulls(mesh, entityNode, entity.ClassName, VmapBuilder.FormatVersion);
             return hulls.Count == 1 && hulls[0].Length == piece.Vertices.Length
@@ -857,6 +910,95 @@ public static class MapDecompiler
             if (Lands(candidate))
                 return candidate;
         }
+        return null;
+    }
+
+    /// <summary>
+    /// Corners for a hull whose build moves a vertex off its corner's placed point (probe_classes'
+    /// func_nav_blocker: two vertices a float below theirs in z): for each vertex no corner lands on,
+    /// the corners that land on the points up to 2 floats a side of it, and the combination whose mesh
+    /// the forward hulls into the shipped points (at most 4096 tried). Null when none does.
+    /// </summary>
+    private static Func<Vector3, Vector3>? Nudged(BrushGeometry.Piece piece, Func<Vector3, Vector3> fit, Func<Vector3, Vector3> place,
+                                                  Func<Vector3, Vector3> cornerFor, Func<Func<Vector3, Vector3>, bool> lands)
+    {
+        static float Step(float f, int by)
+        {
+            for (; by > 0; by--) f = MathF.BitIncrement(f);
+            for (; by < 0; by++) f = MathF.BitDecrement(f);
+            return f;
+        }
+        var off = piece.Vertices.Distinct().Where(h => place(fit(h)) != h).ToList();
+        if (off.Count == 0 || off.Count > 4)
+            return null;
+        var options = new List<List<Vector3>>();
+        foreach (var h in off)
+        {
+            var list = new List<Vector3>();
+            for (var dx = -2; dx <= 2; dx++)
+                for (var dy = -2; dy <= 2; dy++)
+                    for (var dz = -2; dz <= 2; dz++)
+                    {
+                        var near = new Vector3(Step(h.X, dx), Step(h.Y, dy), Step(h.Z, dz));
+                        var corner = cornerFor(near);
+                        if (place(corner) == near && !list.Contains(corner))
+                            list.Add(corner);
+                    }
+            if (list.Count == 0)
+                return null;
+            options.Add(list);
+        }
+        var pick = new int[off.Count];
+        for (var tried = 0; tried < 4096; tried++)
+        {
+            var chosen = new Dictionary<Vector3, Vector3>();
+            for (var k = 0; k < off.Count; k++)
+                chosen[off[k]] = options[k][pick[k]];
+            Vector3 Fitted(Vector3 h) => chosen.TryGetValue(h, out var c) ? c : fit(h);
+            if (lands(Fitted))
+                return Fitted;
+            var at = 0;
+            while (at < pick.Length && ++pick[at] == options[at].Count)
+                pick[at++] = 0;
+            if (at == pick.Length)
+                break;
+        }
+        return null;
+    }
+
+    /// <summary>Whether the piece's mesh, its corners fitted and placed so, hulls into exactly the shipped
+    /// points (any order) through the forward's chain for one mesh.</summary>
+    private static bool SamePoints(BrushGeometry.Piece piece, Func<Vector3, Vector3> fit, Vector3 origin, Vector3 angles,
+                                   MapEntities.Entity entity, DmxBinary.Element entityNode)
+    {
+        static (int, int, int) Bits(Vector3 v) => (BitConverter.SingleToInt32Bits(v.X), BitConverter.SingleToInt32Bits(v.Y), BitConverter.SingleToInt32Bits(v.Z));
+        var scratch = new VmapBuilder("samepoints");
+        var mesh = scratch.AddMesh(scratch.World, 1, origin, angles, [.. piece.Faces.Select(f => (f.Select(fit).ToArray(), 0))], [piece.Material],
+                                   [.. piece.Vertices.Select(fit)]);
+        var hulls = Physics.EntityPhysicsModels.BrushMeshHulls(mesh, entityNode, entity.ClassName, VmapBuilder.FormatVersion);
+        return hulls.Count == 1 && hulls[0].Length == piece.Vertices.Length
+               && hulls[0].Select(Bits).Order().SequenceEqual(piece.Vertices.Select(Bits).Order());
+    }
+
+    /// <summary>A mesh-space corner <paramref name="place"/> takes to <paramref name="target"/> bit for bit: the
+    /// estimate, then the floats round it in growing shells, up to 12 a side; null when none lands.</summary>
+    private static Vector3? LocalCorner(Vector3 target, Vector3 estimate, Func<Vector3, Vector3> place)
+    {
+        static float Step(float f, int by)
+        {
+            for (; by > 0; by--) f = MathF.BitIncrement(f);
+            for (; by < 0; by++) f = MathF.BitDecrement(f);
+            return f;
+        }
+        static bool Same(Vector3 a, Vector3 b) => BitConverter.SingleToInt32Bits(a.X) == BitConverter.SingleToInt32Bits(b.X)
+            && BitConverter.SingleToInt32Bits(a.Y) == BitConverter.SingleToInt32Bits(b.Y) && BitConverter.SingleToInt32Bits(a.Z) == BitConverter.SingleToInt32Bits(b.Z);
+        for (var r = 0; r <= 12; r++)
+            for (var dx = -r; dx <= r; dx++)
+                for (var dy = -r; dy <= r; dy++)
+                    for (var dz = -r; dz <= r; dz++)
+                        if (Math.Max(Math.Abs(dx), Math.Max(Math.Abs(dy), Math.Abs(dz))) == r
+                            && new Vector3(Step(estimate.X, dx), Step(estimate.Y, dy), Step(estimate.Z, dz)) is var c && Same(place(c), target))
+                            return c;
         return null;
     }
 
@@ -908,7 +1050,22 @@ public static class MapDecompiler
         }
         var best = world - meshOrigin;
         var error = Ulps(Place(best), target);
-        for (var r = 0; r <= 4 && error > 0; r++)
+        if (error == 0)
+            return best;
+        // The mesh's move is a plain add per axis, so the world points are searched on their own:
+        // those the entity's inverse takes exactly to the target, nearest shells first (up to 16
+        // floats a side), and for each a local float per axis that the add takes to it (the add
+        // rounds, so not every world float is reachable from the corner side).
+        static float? Addend(float want, float origin)
+        {
+            var guess = want - origin;
+            for (var r = 0; r <= 8; r++)
+                foreach (var s in r == 0 ? (int[])[0] : [r, -r])
+                    if (Step(guess, s) is var x && x + origin == want)
+                        return x;
+            return null;
+        }
+        for (var r = 0; r <= 16; r++)
             for (var dx = -r; dx <= r; dx++)
                 for (var dy = -r; dy <= r; dy++)
                     for (var dz = -r; dz <= r; dz++)
@@ -916,12 +1073,17 @@ public static class MapDecompiler
                         if (Math.Max(Math.Abs(dx), Math.Max(Math.Abs(dy), Math.Abs(dz))) != r)
                             continue;
                         var w = new Vector3(Step(world.X, dx), Step(world.Y, dy), Step(world.Z, dz));
-                        var v = w - meshOrigin;
-                        var e = Ulps(Place(v), target);
-                        if (e < error)
-                            (best, error) = (v, e);
-                        if (error == 0)
-                            return best;
+                        if (MapMeshes.Transform(toEntity, w) != target)
+                        {
+                            // The nearest reachable point so far, for the fallback.
+                            var v0 = w - meshOrigin;
+                            if (Ulps(Place(v0), target) is var e0 && e0 < error)
+                                (best, error) = (v0, e0);
+                            continue;
+                        }
+                        if (Addend(w.X, meshOrigin.X) is { } x && Addend(w.Y, meshOrigin.Y) is { } y && Addend(w.Z, meshOrigin.Z) is { } z
+                            && Place(new Vector3(x, y, z)) == target)
+                            return new Vector3(x, y, z);
                     }
         return best;
     }

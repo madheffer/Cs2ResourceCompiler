@@ -108,8 +108,8 @@
   "module": "Brush entities",
   "subtask": "Bit-exact corner placement as an exact solve",
   "weight": 3,
-  "done": 0.7,
-  "evidence": "search-based today, 3 misses + 2 in prefabs"
+  "done": 0.9,
+  "evidence": "10-29: exact world-point + per-axis local solve, judged by the forward's one-mesh chain, nudged vertices the hull build moves; 451/455 brush models exact; left 1 ze_doom corner, 2 in a prefab (placement not modelled)"
  },
  {
   "module": "Brush entities",

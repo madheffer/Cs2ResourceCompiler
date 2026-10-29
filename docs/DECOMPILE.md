@@ -236,7 +236,17 @@ What is left in stage 2:
   for vertex in order. Brush entity PHYS exact: probe_classes 119 of 121 (was 86), ze_doom_p2_c
   272 of 274, ze_hold_em_p 32 of 32, s2c_prefabprobe2 21 of 23; one same-point-set hull left
   (ze_doom), past the budget.
-- Three models with a corner no searched point places exactly (listed in the test).
+- **Corners: an exact solve where the package allows, 10-29.** `CornerFor` searches world points the
+  entity's inverse takes exactly to the hull vertex (16 floats a side), each reached from a local float
+  per axis (the mesh's move is a plain add, which rounds). Each mesh is then judged by the forward's
+  one-mesh chain (`SamePoints`: the hull's points bit for bit): the hull build can move a vertex a float
+  off its corner's placed point (probe_classes' func_nav_blocker, two vertices 3.8e-6 low in z), so
+  for a vertex no corner lands on, the corners landing up to 2 floats a side are combined until the
+  chain gives the shipped points (`Nudged`); then a mesh turned with its entity, then one at the
+  world's origin (a pivot is Hammer's to place). Brush entity PHYS exact: probe_classes 121 of 121,
+  ze_hold_em_p 32 of 32, probe01 5 of 5, ze_doom_p2_c_gameplay 272 of 274 (teleportrandom2: a corner
+  not found; teleportlab_4: the order not found in the budget), s2c_prefabprobe2 21 of 23 (two inside
+  its prefab, whose placement the one-mesh chain does not model, so neither check runs there).
 - **Render meshes**: a brush entity with visible faces gets them back from its hulls with world
   alignment; the render mesh's UVs and render-only faces are not read yet.
 - Triangle-mesh shapes (physicsType mesh), and brush entities whose model the compile failed.
