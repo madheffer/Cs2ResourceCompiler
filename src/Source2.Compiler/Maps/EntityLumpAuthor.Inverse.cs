@@ -161,13 +161,25 @@ public static partial class EntityLumpAuthor
             HasGeometry: brushModel is not null)
         { BoneTransforms = boneTransforms };
         // A path's nodes are folded into keys after hammerUniqueId (PathKeys): back to its nodes.
-        // A CMapCable ships them too, with a model of its own and its tint as rendercolor; it is
-        // not rebuilt as a cable yet, so it stays the entity it was.
-        if (brushModel is null && keys.Any(k => k.Key.EqualsAscii("pathNodes")))
+        // A cable (@CableClass) ships them too, a cable_dynamic with a model of its own and its tint
+        // as rendercolor, "%i %i %i" (CMapCable::vf217): the tint's alpha never ships, so it is the
+        // factory's 255.
+        var cable = schema?.IsCableClass(className) == true;
+        if ((brushModel is null || cable) && keys.Any(k => k.Key.EqualsAscii("pathNodes")))
         {
             var notes = new List<string>();
             if (UnbuildPath(entity, keys, schema, notes) is { } path)
+            {
                 entity = path;
+                if (cable)
+                {
+                    byte[] tint = [255, 255, 255, 255];
+                    if (className.EqualsAscii("cable_dynamic") && keys.FirstOrDefault(k => k.Key.EqualsAscii("rendercolor")).Value is { } color
+                        && Plain(color).Split(' ', StringSplitOptions.RemoveEmptyEntries) is [var r, var g, var b])
+                        tint = [(byte)CNumbers.Atoi(r), (byte)CNumbers.Atoi(g), (byte)CNumbers.Atoi(b), 255];
+                    entity = entity with { Tint = tint };
+                }
+            }
             else
                 dropped.Add("pathNodes (" + string.Join("; ", notes) + ")");
         }

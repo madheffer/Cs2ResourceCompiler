@@ -79,6 +79,59 @@ public static partial class EntityLumpAuthor
                 return e;
         }
 
+        // On a turned path several origins land on a row's position, and a node's tangents (types 0 and
+        // 1) follow its neighbours' origins: every landing origin of each node (nearest first), and the
+        // choice that lands every row, a node's row depending on itself and its two neighbours only
+        // (PathNode); a choice of pairs, row by row.
+        var wrapsLoop = closed && count > 1 && schema?.HasFlag(path.ClassName, "supports_loop") == true;
+        if (!wrapsLoop && count >= 2)
+        {
+            var options = new List<Vector3>[count];
+            for (var i = 0; i < count; i++)
+            {
+                var local = new Vector3(rows[i][0], rows[i][1], rows[i][2]);
+                options[i] = Preimages(v => Maps.MapMeshes.Transform(toLocal, v), Maps.MapMeshes.Transform(frame, local), local, 8, 32);
+            }
+            foreach (var interpolation in (int[])[1, 0])
+                if (Chosen(interpolation) is { } picked)
+                    return With(interpolation, Nodes(i => new MapEntities.PathNode(picked[i], nodeKeys[i])));
+
+            Vector3[]? Chosen(int interpolation)
+            {
+                var work = Nodes(i => new MapEntities.PathNode(origins[i], nodeKeys[i]));
+                bool RowLands(int i, int? before, int here, int? after)
+                {
+                    if (before is { } b) work[i - 1] = work[i - 1] with { Origin = options[i - 1][b] };
+                    work[i] = work[i] with { Origin = options[i][here] };
+                    if (after is { } a) work[i + 1] = work[i + 1] with { Origin = options[i + 1][a] };
+                    var row = PathNode(With(interpolation, work), work, i, false, toLocal);
+                    for (var k = 0; k < 9; k++)
+                        if (BitConverter.SingleToInt32Bits(row[k]) != BitConverter.SingleToInt32Bits(rows[i][k]))
+                            return false;
+                    return true;
+                }
+                // States after row k - 1 lands: (choice of node k - 1, choice of node k) -> the choices before.
+                var states = new Dictionary<(int, int), int[]>();
+                for (var c0 = 0; c0 < options[0].Count; c0++)
+                    for (var c1 = 0; c1 < options[1].Count; c1++)
+                        if (RowLands(0, null, c0, c1))
+                            states.TryAdd((c0, c1), [c0, c1]);
+                for (var k = 1; k < count - 1 && states.Count > 0; k++)
+                {
+                    var next = new Dictionary<(int, int), int[]>();
+                    foreach (var ((before, here), chain) in states)
+                        for (var after = 0; after < options[k + 1].Count; after++)
+                            if (!next.ContainsKey((here, after)) && RowLands(k, before, here, after))
+                                next[(here, after)] = [.. chain, after];
+                    states = next;
+                }
+                foreach (var ((before, here), chain) in states)
+                    if (RowLands(count - 1, before, here, null))
+                        return [.. chain.Select((c, i) => options[i][c])];
+                return null;
+            }
+        }
+
         // Each node's own types (a path type past 1): a type 0 or 1 tangent where one lands,
         // else type 3, the authored tangent, through the inverse rotation.
         var own = Nodes(i => new MapEntities.PathNode(origins[i], nodeKeys[i]));
@@ -196,7 +249,13 @@ public static partial class EntityLumpAuthor
     /// compile keeps nothing that tells them apart, and the nearest to the guess is taken.
     /// </summary>
     private static Vector3? Preimage(Func<Vector3, Vector3> forward, Vector3 guess, Vector3 want, int reach = 8)
+        => Preimages(forward, guess, want, reach, 1) is [var first, ..] ? first : null;
+
+    /// <summary>Every vector <paramref name="forward"/> takes to <paramref name="want"/> bit for bit within
+    /// <paramref name="reach"/> float steps of the guess, nearest shells first, at most <paramref name="most"/>.</summary>
+    private static List<Vector3> Preimages(Func<Vector3, Vector3> forward, Vector3 guess, Vector3 want, int reach, int most)
     {
+        var found = new List<Vector3>();
         for (var shell = 0; shell <= reach; shell++)
             for (var dx = -shell; dx <= shell; dx++)
                 for (var dy = -shell; dy <= shell; dy++)
@@ -209,9 +268,13 @@ public static partial class EntityLumpAuthor
                         if (BitConverter.SingleToInt32Bits(got.X) == BitConverter.SingleToInt32Bits(want.X)
                             && BitConverter.SingleToInt32Bits(got.Y) == BitConverter.SingleToInt32Bits(want.Y)
                             && BitConverter.SingleToInt32Bits(got.Z) == BitConverter.SingleToInt32Bits(want.Z))
-                            return v;
+                        {
+                            found.Add(v);
+                            if (found.Count >= most)
+                                return found;
+                        }
                     }
-        return null;
+        return found;
     }
 
     private static float Step(float value, int steps)

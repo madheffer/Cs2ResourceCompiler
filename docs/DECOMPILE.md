@@ -470,9 +470,34 @@ after the path and ship nothing (`MapEntities.Walk`). The inverse
   stays at its default;
 - the nodes take the walk indices after the path, and ids after the path's where free and below
   the highest id the lump shows (otherwise from the made-up pool).
-A cable_dynamic (CMapCable) ships pathNodes too but with a model of its own and its tint as
-rendercolor; it is left as the entity it was (s2c_prefabinst passes that way) until cables are
-rebuilt as CMapCable.
+### Cables (2026-10-29)
+
+A cable class (@CableClass: cable_dynamic, cable_static; `FgdSchema.IsCableClass`) comes back as a
+CMapCable (`VmapBuilder.AddCable`, the field order of a Hammer save): its nodes as for a path, its
+tint from rendercolor ("%i %i %i", alpha 255: it never ships), its model's settings from
+`CableSettings`:
+- the render mesh is the render tube: samples x (sides + 1) vertices, (samples - 1) x sides x 6
+  indices, so the side count and sample count are exact; its positions are stored coarsely (about
+  2.5e-4 near the origin, 2e-3 further out, another order), so the radius only that closely;
+- the spacing shows only through each node pair's sample count; any spacing with the same counts
+  compiles the same (render and physics), and the first a mapper would type is taken (16, whole
+  units, halves);
+- a collision cable's physics mesh is exact: settings are kept only when the forward's mesh
+  (`EntityPhysicsModels.CableShape` through `RnMeshBuilder.Create`, whose 1/32 weld joins a closed
+  loop's last ring to its first) has the shipped vertices bit for bit; radius in float steps, flip
+  and error searched;
+- the material is the draw call's; the texture settings and particleSnapshotSpacing are not recovered.
+
+Results: s2c_cablecoll's 15 collision cables and s2c_prefabinst's all exact; s2c_cablerender's nine
+render-only cables with exact sides and samples and the radius to the mesh's precision (noted not
+exact); every cable's lump exact. A cable_static ships nothing of its own in the lump (its tube is
+world geometry) and is not recovered; a cable whose material is missing has no model and takes the
+factory settings, noted.
+
+Turned paths: several origins land on a row's position, and a node's type 0/1 tangents follow its
+neighbours' origins, so the nearest preimage can miss (s2c_cablerender's cable at 10 35 -20). When it
+does, every landing origin of each node (up to 32, nearest first) is kept and the choice that lands
+every row is found pair by pair (a row depends on its node and its two neighbours); open paths only.
 
 ### Template members and the light step (2026-10-28)
 

@@ -519,10 +519,26 @@ public static class MapDecompiler
                     // take the indices that follow; their ids the ones after the path's where free.
                     var nodeIds = Enumerable.Range(1, pathNodes.Count)
                         .Select(k => !used.Contains(x.NodeId + k) && x.NodeId + k < shownMax ? Take(x.NodeId + k) : NewId()).ToList();
-                    builder.AddPath(x.NodeId, x, nodeIds, parent: layer is null ? null : layerNode);
+                    if (schema?.IsCableClass(x.ClassName) == true)
+                    {
+                        // A cable_dynamic's settings from the model it shipped; a cable_static's tube is
+                        // in the world geometry, which is not read yet.
+                        var cable = e.BrushModel is { } cableModel && files.TryGetValue(cableModel + "_c", out var cableBytes)
+                            ? CableSettings.Solve(x, cableBytes, schema, notes)
+                            : VmapBuilder.Cable.Factory("");
+                        if (e.BrushModel is null)
+                            notes.Add($"{x.ClassName} {x.NodeId}: no model of its own (its tube is world geometry); factory settings, no material");
+                        else if (!files.ContainsKey(e.BrushModel + "_c"))
+                            notes.Add($"{x.ClassName} {x.NodeId}: its model {e.BrushModel} is not in the package (the compile failed it: a missing material); factory settings, no material");
+                        builder.AddCable(x.NodeId, x, nodeIds, cable, parent: layer is null ? null : layerNode);
+                    }
+                    else
+                        builder.AddPath(x.NodeId, x, nodeIds, parent: layer is null ? null : layerNode);
                     at = Math.Max(at, e.SourceId + 1 + pathNodes.Count);
                     continue;
                 }
+                if (schema?.IsCableClass(x.ClassName) == true)
+                    notes.Add($"{x.ClassName} {x.NodeId}: not rebuilt as a cable ({string.Join("; ", e.Dropped.Where(d => d.StartsWith("pathNodes", StringComparison.Ordinal)))}); kept as an entity");
                 var entityNode = builder.AddEntity(x.NodeId, x.Keys, x.Origin, x.Angles, x.Scales, x.Connections,
                                                    parent: layer is null ? null : layerNode);
                 if (e.BrushModel is { } model)

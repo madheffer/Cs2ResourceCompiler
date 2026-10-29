@@ -45,6 +45,10 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     [InlineData("s2c_rc_probe", "s2c_prefabprobe12")]
     [InlineData("s2c_rc_probe", "s2c_pinst7")]
     [InlineData("s2c_rc_probe", "s2c_prefabinst")]
+    // Cables rebuilt as CMapCable: 17 collision cables over every cable setting (s2c_cablecoll) and
+    // render-only ones over materials, tints and shapes (s2c_cablerender), both -world builds.
+    [InlineData("s2c_rc_probe", "s2c_cablecoll")]
+    [InlineData("s2c_rc_probe", "s2c_cablerender")]
     public void Entities_CompileAsTheSourceDoes(string addon, string map)
     {
         var source = MapFixtures.VmapSource(addon, map);
@@ -152,6 +156,83 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         foreach (var line in unexplained.Take(Environment.GetEnvironmentVariable("DECOMPILE_ALL") is { Length: > 0 } ? int.MaxValue : 40))
             output.WriteLine("  UNEXPLAINED " + line);
         Assert.True(unexplained.Count == 0, $"{unexplained.Count} unexplained difference(s); first: {unexplained.FirstOrDefault()}");
+    }
+
+    /// <summary>
+    /// <c>DECOMPILE_CABLES=&lt;addon&gt;|&lt;map&gt;|&lt;vpk&gt;</c>: each cable_dynamic of the true source, our
+    /// render tube (CableCollision.RenderTube, the source's settings) against the render mesh of the
+    /// model Valve's package ships for it: vertex counts, and how many positions are bit for bit ours
+    /// in order (a decompile can solve a cable's settings only if they are).
+    /// </summary>
+    [Fact]
+    public void CableRenderMeshes_AgainstTheTube()
+    {
+        if (Environment.GetEnvironmentVariable("DECOMPILE_CABLES") is not { Length: > 0 } spec)
+            return;
+        var p = spec.Split('|');
+        var source = MapFixtures.VmapSource(p[0], p[1])!;
+        var schema = MapFixtures.GameSchema();
+        var document = DmxBinary.ReadFile(source);
+        var files = MapDecompiler.ReadPackage(p[2]);
+        var lump = EntityLumpComparison.Read(files.First(f => f.Key.EndsWith("/entities/default_ents.vents_c", StringComparison.OrdinalIgnoreCase)).Value);
+        foreach (var element in document.OfType("CMapCable"))
+        {
+            var cable = MapEntities.ReadNode(element)!;
+            var shippedEntity = lump.FirstOrDefault(e => e.HammerId == cable.NodeId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var modelPath = shippedEntity?.Values.GetValueOrDefault("model").Value is { } m ? m[(m.IndexOf(':') + 1)..] + "_c" : null;
+            if (modelPath is null || !files.TryGetValue(modelPath, out var bytes))
+            {
+                output.WriteLine($"{cable.NodeId} {cable.ClassName}: no model ({modelPath})");
+                continue;
+            }
+            var (controls, scales) = EntityLumpAuthor.PathControls(cable, schema);
+            var (tube, tubeIndices) = Physics.CableCollision.RenderTube(controls, scales, Physics.CableCollision.SettingsOf(element));
+            // The forward's physics mesh on the source's own settings against the PHYS mesh shipped.
+            using (var phys = new ValveResourceFormat.Resource())
+            {
+                phys.Read(new MemoryStream(bytes));
+                var shipped = CableSettings.PhysicsVertices(phys);
+                var shape = Physics.EntityPhysicsModels.CableShape(cable, Physics.CableCollision.SettingsOf(element), schema);
+                output.WriteLine($"{cable.NodeId}: closed {cable.ClosedLoop} interp {cable.InterpolationType} angles {cable.Angles} error {element.GetValue<float>("physicsSimplificationError")}; " +
+                                 $"shipped physics {shipped?.Count.ToString() ?? "none"}, forward {shape?.Points.Length}, same {(shipped is not null && shape is { } sh && Physics.RnMeshBuilder.Create(sh.Indices, sh.Points, null) is { } built && shipped.SetEquals(built.Vertices))}");
+            }
+            using var resource = new ValveResourceFormat.Resource();
+            resource.Read(new MemoryStream(bytes));
+            var model = (ValveResourceFormat.ResourceTypes.Model)resource.DataBlock!;
+            foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
+            {
+                var vb = mesh.VBIB.VertexBuffers[0];
+                var position = vb.InputLayoutFields.First(f => f.SemanticName.Equals("POSITION", StringComparison.OrdinalIgnoreCase));
+                var count = (int)vb.ElementCount;
+                var points = Enumerable.Range(0, count).Select(v =>
+                {
+                    var at = v * (int)vb.ElementSizeInBytes + (int)position.Offset;
+                    return new Vector3(BitConverter.ToSingle(vb.Data, at), BitConverter.ToSingle(vb.Data, at + 4), BitConverter.ToSingle(vb.Data, at + 8));
+                }).ToArray();
+                var inOrder = Enumerable.Range(0, Math.Min(count, tube.Length)).Count(i => points[i] == tube[i]);
+                var tubeSet = tube.ToHashSet();
+                var inSet = points.Count(tubeSet.Contains);
+                // The model's positions lie on a 1/2048 grid: which snap of ours gives them.
+                static Vector3 Snap(Vector3 v, Func<double, double> f) => new((float)(f(v.X * 2048.0) / 2048.0), (float)(f(v.Y * 2048.0) / 2048.0), (float)(f(v.Z * 2048.0) / 2048.0));
+                var snaps = new (string Name, Func<double, double> F)[] { ("round", x => Math.Round(x, MidpointRounding.ToEven)), ("floor", Math.Floor), ("trunc", Math.Truncate) };
+                var snapCounts = string.Join(", ", snaps.Select(s =>
+                {
+                    var set = tube.Select(t => Snap(t, s.F)).ToHashSet();
+                    return $"{s.Name} {points.Count(set.Contains)}";
+                }));
+                var onGrid = points.Count(q => Snap(q, x => Math.Round(x)) == q);
+                output.WriteLine($"   on 1/2048 grid {onGrid}/{count}; snapped tube in the model's set: {snapCounts}");
+                static (Vector3, Vector3) Box(IEnumerable<Vector3> v) => (v.Aggregate(Vector3.Min), v.Aggregate(Vector3.Max));
+                var nearest = points.Select(q => tube.MinBy(t => Vector3.DistanceSquared(t, q))).ToArray();
+                var offsets = points.Zip(nearest, (q, t) => q - t).ToArray();
+                output.WriteLine($"   model box {Box(points)}, tube box {Box(tube)}; nearest offsets mean {offsets.Aggregate(Vector3.Add) / count:R}, " +
+                                 $"max |d| {offsets.Max(o => o.Length()):R}; distinct nearest {nearest.Distinct().Count()}");
+                var ib = mesh.VBIB.IndexBuffers[0];
+                output.WriteLine($"{cable.NodeId} {cable.ClassName} sides {element.GetValue<int>("numSides")} r {element.GetValue<float>("radius")} spacing {element.GetValue<float>("tessellationSpacing")} " +
+                                 $"flip {element.GetValue<bool>("flipFaces")} mat {element.Get<string>("materialName")}: model {count} vertices ({position.Format}), {ib.ElementCount} indices; tube {tube.Length} / {tubeIndices.Length}; " +
+                                 $"{inOrder} in order, {inSet} in the tube's set; first {points[0]:R} vs {tube.FirstOrDefault():R}");
+            }
+        }
     }
 
     /// <summary>

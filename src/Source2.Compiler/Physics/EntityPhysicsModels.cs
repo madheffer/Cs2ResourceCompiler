@@ -285,26 +285,35 @@ public static class EntityPhysicsModels
         if (CableCollision.Collides(element))
         {
             var settings = through.Count > 0 ? CableCollision.Copied(CableCollision.SettingsOf(element)) : CableCollision.SettingsOf(element);
-            var (controls, scales) = EntityLumpAuthor.PathControls(cable, schema);
-            var (local, indices) = WorldCollision.FirstUse(CableCollision.RenderTube(controls, scales, settings));
-            if (indices.Length > 0)
+            if (CableShape(cable, settings, schema) is { } shape)
             {
-                var transform = new CTransform(cable.Origin, 1f, CTransform.AngleQuaternion(cable.Angles));
-                var (toWorld, toEntity) = (transform.Matrix(), transform.Inverse().Matrix());
-                var placed = local.Select(p => MapMeshes.Transform(toEntity, MapMeshes.Transform(toWorld, p))).ToArray();
-                var faces = new int[indices.Length / 3][];
-                for (var t = 0; t < faces.Length; t++)
-                    faces[t] = [indices[t * 3], indices[(t * 3) + 1], indices[(t * 3) + 2]];
-                var (points, triangles) = BrushHulls.Simplified(BrushHulls.TriangleMesh(placed, faces, local), settings.Error);
-                var shapeIndices = new int[triangles.Count * 3];
-                for (var t = 0; t < triangles.Count; t++)
-                    (shapeIndices[t * 3], shapeIndices[(t * 3) + 1], shapeIndices[(t * 3) + 2]) = triangles[t];
-                var (shapePoints, shapeTriangles) = settings.Error > 0f ? WorldCollision.FirstUse(([.. points], shapeIndices)) : ([.. points], shapeIndices);
                 var physics = WorldCollision.ReadMaterial(material(name), collisionProperty, shaderTranslucency: false);
-                pieces.Add(new WorldCollision.Piece(cable.NodeId, 0, name, physics, shapePoints, shapeTriangles) { ToolMaterial = name });
+                pieces.Add(new WorldCollision.Piece(cable.NodeId, 0, name, physics, shape.Points, shape.Indices) { ToolMaterial = name });
             }
         }
         return new Model(cable.NodeId, cable.ClassName, path, false, WorldPhysics.Build(pieces, entityModel: true)) { Entity = element, Cable = true };
+    }
+
+    /// <summary>A collision cable's triangle mesh in its model (see <see cref="CableModel"/>): the render
+    /// tube, welded, placed, joined at the seam and simplified with the cable's error; null when the
+    /// tube is empty.</summary>
+    internal static (Vector3[] Points, int[] Indices)? CableShape(MapEntities.Entity cable, CableCollision.Settings settings, FgdSchema? schema)
+    {
+        var (controls, scales) = EntityLumpAuthor.PathControls(cable, schema);
+        var (local, indices) = WorldCollision.FirstUse(CableCollision.RenderTube(controls, scales, settings));
+        if (indices.Length == 0)
+            return null;
+        var transform = new CTransform(cable.Origin, 1f, CTransform.AngleQuaternion(cable.Angles));
+        var (toWorld, toEntity) = (transform.Matrix(), transform.Inverse().Matrix());
+        var placed = local.Select(p => MapMeshes.Transform(toEntity, MapMeshes.Transform(toWorld, p))).ToArray();
+        var faces = new int[indices.Length / 3][];
+        for (var t = 0; t < faces.Length; t++)
+            faces[t] = [indices[t * 3], indices[(t * 3) + 1], indices[(t * 3) + 2]];
+        var (points, triangles) = BrushHulls.Simplified(BrushHulls.TriangleMesh(placed, faces, local), settings.Error);
+        var shapeIndices = new int[triangles.Count * 3];
+        for (var t = 0; t < triangles.Count; t++)
+            (shapeIndices[t * 3], shapeIndices[(t * 3) + 1], shapeIndices[(t * 3) + 2]) = triangles[t];
+        return settings.Error > 0f ? WorldCollision.FirstUse(([.. points], shapeIndices)) : ([.. points], shapeIndices);
     }
 
     /// <summary>The model file for one that holds only physics (RED2 and DATA alone when it has no shapes).</summary>

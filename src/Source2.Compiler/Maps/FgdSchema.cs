@@ -255,6 +255,12 @@ public sealed partial class FgdSchema
 
     private readonly HashSet<string> _pathNodes = new(Tier0Strings.IgnoreCase);
 
+    /// <summary>Whether the class is a <c>@CableClass</c> (base.fgd: cable_static, cable_dynamic), which
+    /// Hammer places as a CMapCable.</summary>
+    public bool IsCableClass(string className) => _cables.Contains(className);
+
+    private readonly HashSet<string> _cables = new(Tier0Strings.IgnoreCase);
+
     /// <summary>
     /// One entry of a class's <c>create_entity_template_lumps</c> metadata: the
     /// lump the compile builds out of the entities the class names.
@@ -566,6 +572,8 @@ public sealed partial class FgdSchema
             _solid.Add(name);
         if (kind.Value.EqualsAscii("@PathNodeClass"))
             _pathNodes.Add(name);
+        if (kind.Value.EqualsAscii("@CableClass"))
+            _cables.Add(name);
         var cls = new Class(name, bases, own, gameKeys, flags, TemplateLumpsIn(head), MetadataValuesIn(head))
         {
             BakeResources = BakeResourcesIn(head),

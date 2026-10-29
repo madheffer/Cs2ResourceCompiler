@@ -73,8 +73,8 @@
   "module": "Entities",
   "subtask": "Paths, ropes and cables (CMapPath, CMapPathNode)",
   "weight": 3,
-  "done": 0.6,
-  "evidence": "atixref's 4 ropes exact: nodes, positions and tangents solved through PathControls; CMapCable not rebuilt; cable probes s2c_cablecoll + s2c_cablerender compiled -world (10-29)"
+  "done": 0.9,
+  "evidence": "atixref's ropes exact; cables as CMapCable (10-29): lumps exact on s2c_cablecoll, s2c_cablerender, s2c_prefabinst; collision cables' settings exact through their physics mesh (16); render-only: sides+samples exact, radius to mesh precision; texture settings, cable_static open"
  },
  {
   "module": "Entities",

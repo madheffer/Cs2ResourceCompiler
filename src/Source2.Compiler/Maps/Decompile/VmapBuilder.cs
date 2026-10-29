@@ -116,9 +116,29 @@ public sealed class VmapBuilder
     /// </summary>
     public DmxBinary.Element AddPath(int nodeId, MapEntities.Entity path, IReadOnlyList<int> nodeIds,
                                      DmxBinary.Element? parent = null)
+        => PathElement("CMapPath", nodeId, path, nodeIds, parent, null);
+
+    /// <summary>A cable's settings as CMapCable holds them (CableCollision.Settings and the render ones).</summary>
+    public sealed record Cable(string Material, int Sides, float Spacing, float Radius, bool Flip, bool Collision, float Error)
+    {
+        /// <summary>The factory's (rc 18114e350), as CableCollision.SettingsOf reads a node that stores none.</summary>
+        public static Cable Factory(string material) => new(material, 8, 16f, 16f, false, true, 2f);
+    }
+
+    /// <summary>
+    /// A CMapCable: a path (its nodes as CMapPathNode children) with the cable's fields after the
+    /// path's, in the order a Hammer save holds them (s2c_cablerender's source, from probe_cable);
+    /// the texture fields at Hammer's defaults (not recovered), the tint the entity's.
+    /// </summary>
+    public DmxBinary.Element AddCable(int nodeId, MapEntities.Entity path, IReadOnlyList<int> nodeIds, Cable cable,
+                                      DmxBinary.Element? parent = null)
+        => PathElement("CMapCable", nodeId, path, nodeIds, parent, cable);
+
+    private DmxBinary.Element PathElement(string type, int nodeId, MapEntities.Entity path, IReadOnlyList<int> nodeIds,
+                                          DmxBinary.Element? parent, Cable? cable)
     {
         var nodes = path.PathNodes ?? [];
-        var e = New("CMapPath");
+        var e = New(type);
         Node(e, nodeId, ReferenceId(nodeId));
         e.Set("relayPlugData", T.Element, PlugList())
          .Set("connectionsData", T.Array(T.Element), Connections(path.Connections))
@@ -130,6 +150,22 @@ public sealed class VmapBuilder
         e.Set("interpolationType", T.Int, path.InterpolationType)
          .Set("closedLoop", T.Bool, path.ClosedLoop)
          .Set("particleSnapshotSpacing", T.Float, 16f);
+        if (cable is not null)
+            e.Set("materialName", T.String, cable.Material)
+             .Set("tintColor", T.Color, path.Tint ?? new byte[] { 255, 255, 255, 255 })
+             .Set("lightingOriginName", T.String, "")
+             .Set("numSides", T.Int, cable.Sides)
+             .Set("tessellationSpacing", T.Float, cable.Spacing)
+             .Set("radius", T.Float, cable.Radius)
+             .Set("flipFaces", T.Bool, cable.Flip)
+             .Set("textureOrientation", T.Int, 0)
+             .Set("textureScale", T.Float, 0.25f)
+             .Set("textureRepeatsCircumference", T.Float, 1f)
+             .Set("textureOffsetAlongPath", T.Float, 0f)
+             .Set("textureOffsetCircumference", T.Float, 0f)
+             .Set("collisionEnabled", T.Bool, cable.Collision)
+             .Set("physicsSimplificationError", T.Float, cable.Error)
+             .Set("visOccluder", T.Bool, false);
         for (var i = 0; i < nodes.Count; i++)
         {
             var n = New("CMapPathNode");
