@@ -317,7 +317,15 @@ public static class MapDecompiler
         // rounding, which a mesh at the world's origin does not give back (docs/DECOMPILE.md "World
         // geometry"). Written after the map's nodes so they take made-up ids, before the copy ids are
         // matched, which pads past them.
-        foreach (var mesh in Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" ? WorldGeometry.Read(files, mapName, table, notes) : [])
+        // The pieces reach the soups through PartOrder (a CRT qsort on shape type after every insert: with
+        // one type a fixed permutation of the input), so they are written in its inverse, as a brush
+        // entity's hulls are.
+        var worldMeshes = Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" ? WorldGeometry.Read(files, mapName, table, notes) : [];
+        var worldAt = Physics.WorldCollision.PartOrder(Enumerable.Range(0, worldMeshes.Count), _ => 0);
+        var worldInput = new WorldGeometry.Mesh[worldMeshes.Count];
+        for (var k = 0; k < worldMeshes.Count; k++)
+            worldInput[worldAt[k]] = worldMeshes[k];
+        foreach (var mesh in worldInput)
             main.Builder!.AddMesh(main.Builder!.World, main.NewId!(), Vector3.Zero, Vector3.Zero,
                                   [.. mesh.Faces.Select(f => (f.Corners, f.Material))], mesh.Materials,
                                   cornerTexcoords: [.. mesh.Faces.Select(f => f.Texcoords)]);

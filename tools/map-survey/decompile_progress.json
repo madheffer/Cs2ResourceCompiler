@@ -206,8 +206,8 @@
   "module": "World geometry",
   "subtask": "World meshes from the world node",
   "weight": 6,
-  "done": 0.1,
-  "evidence": "10-29: survey (soups merged per attribute; render fragments are vis clusters); WorldGeometry reader behind DECOMPILE_WORLD_MESHES; blocker: soup positions carry each mesh's placement rounding (1e-4), mesh origins to recover"
+  "done": 0.25,
+  "evidence": "10-29: probe01's world physics from the decompile: every field exact but the soups' triangle order and RED2 piece counts (vertices exact in order); experiment flag DECOMPILE_WORLD_MESHES; next: faces back for triangle order, member ranges for big welded worlds"
  },
  {
   "module": "World geometry",

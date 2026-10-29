@@ -17,8 +17,8 @@ namespace Source2.Compiler.Maps.Decompile;
 /// normals and tangents, after the T-junction fix and the 1/32 weld.</item>
 /// </list>
 /// So the source's split into meshes is gone. The world is rebuilt as one mesh per physics soup, its
-/// triangles in the soup's order, each corner's material and texture coordinates taken from a render
-/// vertex at exactly its position on a render triangle in its plane; a soup triangle no render one lies
+/// triangles in the soup's order, each corner's material and texture coordinates taken from the nearest render
+/// vertex within the closing weld's 1/32 on a render triangle in its plane; a soup triangle no render one lies
 /// under (a tool face) takes the soup's tool material.
 /// </summary>
 internal static class WorldGeometry
@@ -54,6 +54,12 @@ internal static class WorldGeometry
                 var tool = (uint)(Child(shape, "m_nToolMaterialHash")?.ToInt64(null) ?? 0);
                 var toolName = tool != 0 && toolMaterials.TryGetValue(tool, out var t) ? t : null;
                 var name = Child(shape, "m_UserFriendlyName")?.ToString() ?? "";
+                var triangles = Enumerable.Range(0, triangleBlob.Length / 12)
+                    .Select(k => (BitConverter.ToInt32(triangleBlob, k * 12), BitConverter.ToInt32(triangleBlob, k * 12 + 4), BitConverter.ToInt32(triangleBlob, k * 12 + 8))).ToList();
+                // The soup is its members' meshes one after another, each in its own weld order: its connected
+                // pieces, ordered by their first vertex, are written as meshes of their own in that order.
+                foreach (var piece in Pieces(triangles, vertices.Length))
+                {
                 var materials = new List<string>();
                 int MaterialIndex(string m)
                 {
@@ -63,9 +69,9 @@ internal static class WorldGeometry
                     return at < 0 ? materials.Count - 1 : at;
                 }
                 var faces = new List<(Vector3[], int, Vector2[]?)>();
-                for (var k = 0; k + 12 <= triangleBlob.Length; k += 12)
+                foreach (var (ia, ib, ic) in piece)
                 {
-                    Vector3[] corners = [vertices[BitConverter.ToInt32(triangleBlob, k)], vertices[BitConverter.ToInt32(triangleBlob, k + 4)], vertices[BitConverter.ToInt32(triangleBlob, k + 8)]];
+                    Vector3[] corners = [vertices[ia], vertices[ib], vertices[ic]];
                     var normal = Vector3.Cross(corners[1] - corners[0], corners[2] - corners[0]);
                     var hits = corners.Select(c => Corner(render, c, normal)).ToArray();
                     if (hits.All(h => h is not null) && hits.Select(h => h!.Value.Material).Distinct().Count() == 1)
@@ -85,11 +91,12 @@ internal static class WorldGeometry
                     }
                 }
                 result.Add(new Mesh(materials, faces, name));
+                }
             }
         // DECOMPILE_WORLDDEBUG=1: each physics vertex's nearest render position (how they relate).
         if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
         {
-            var all = render.Keys.Select(k => new Vector3(BitConverter.Int32BitsToSingle(k.Item1), BitConverter.Int32BitsToSingle(k.Item2), BitConverter.Int32BitsToSingle(k.Item3))).ToList();
+            var all = render.Values.SelectMany(l => l.Select(c => c.Position)).Distinct().ToList();
             foreach (var mesh in result.Take(1))
                 foreach (var v in mesh.Faces.SelectMany(f => f.Corners).Distinct().Take(12))
                 {
@@ -97,15 +104,104 @@ internal static class WorldGeometry
                     notes.Add($"world debug: physics {v:R} nearest render {near:R} off {(v - near):R}");
                 }
         }
-        notes.Add($"world: {result.Count} mesh(es) from the physics soups; {matched} triangles with a render face's material and texture coordinates, " +
+        notes.Add($"world: {result.Count} mesh(es), the physics soups' connected pieces; {matched} triangles with a render face's material and texture coordinates, " +
                   $"{toolFaces} a tool material, {unknown} neither (toolsnodraw); render-only faces not rebuilt");
         return result;
     }
 
-    /// <summary>A render corner: its material, texcoord and its triangle's (unnormalised) normal.</summary>
-    private readonly record struct RenderCorner(string Material, Vector2 Texcoord, Vector3 Normal);
+    /// <summary>The soup's connected pieces (triangles sharing a vertex), ordered by their lowest vertex, each
+    /// in <see cref="FirstUseOrder"/> over its own vertices (soup indices kept).</summary>
+    internal static List<List<(int A, int B, int C)>> Pieces(List<(int A, int B, int C)> triangles, int vertexCount)
+    {
+        var parent = Enumerable.Range(0, vertexCount).ToArray();
+        int Find(int v) { while (parent[v] != v) v = parent[v] = parent[parent[v]]; return v; }
+        foreach (var (a, b, c) in triangles)
+        {
+            parent[Find(b)] = Find(a);
+            parent[Find(c)] = Find(a);
+        }
+        var groups = triangles.GroupBy(t => Find(t.A)).Select(g => g.ToList())
+            .OrderBy(g => g.Min(t => Math.Min(t.A, Math.Min(t.B, t.C)))).ToList();
+        var result = new List<List<(int, int, int)>>();
+        foreach (var g in groups)
+        {
+            // Local numbering in soup order, so the piece's first vertex is its own 0.
+            var used = g.SelectMany(t => new[] { t.A, t.B, t.C }).Distinct().Order().ToList();
+            var local = used.Select((v, i) => (v, i)).ToDictionary(x => x.v, x => x.i);
+            var ordered = FirstUseOrder([.. g.Select(t => (local[t.A], local[t.B], local[t.C]))], used.Count);
+            result.Add([.. ordered.Select(t => (used[t.A], used[t.B], used[t.C]))]);
+        }
+        return result;
+    }
 
-    /// <summary>Every render triangle's corners by exact position, from the world nodes' models.</summary>
+    /// <summary>
+    /// The soup's triangles in an order (each rotated, winding kept) whose first use of their corners is the
+    /// soup's vertex order: RnMeshCreate keeps its input vertices in weld order (RnMeshBuilder), so a mesh
+    /// whose faces meet the vertices in that order gives it back. For each vertex in turn, the first unused
+    /// triangle (shipped order) holding it whose rotation brings its new vertices in ascending order and no
+    /// other new one; then every triangle whose corners are all met. A triangle no such step reaches goes at
+    /// the end, as shipped.
+    /// </summary>
+    internal static List<(int A, int B, int C)> FirstUseOrder(List<(int A, int B, int C)> triangles, int vertexCount)
+    {
+        var holding = new List<int>[vertexCount];
+        for (var t = 0; t < triangles.Count; t++)
+            foreach (var v in (int[])[triangles[t].A, triangles[t].B, triangles[t].C])
+                (holding[v] ??= []).Add(t);
+        var seen = new bool[vertexCount];
+        var done = new bool[triangles.Count];
+        var result = new List<(int, int, int)>(triangles.Count);
+        void Emit(int t, (int, int, int) rotated)
+        {
+            done[t] = true;
+            result.Add(rotated);
+            foreach (var v in (int[])[rotated.Item1, rotated.Item2, rotated.Item3])
+                seen[v] = true;
+        }
+        void Covered(int v)
+        {
+            foreach (var t in holding[v] ?? [])
+                if (!done[t] && seen[triangles[t].A] && seen[triangles[t].B] && seen[triangles[t].C])
+                    Emit(t, triangles[t]);
+        }
+        for (var next = 0; next < vertexCount; next++)
+        {
+            if (seen[next])
+                continue;
+            foreach (var t in holding[next] ?? [])
+            {
+                if (done[t])
+                    continue;
+                var (a, b, c) = triangles[t];
+                (int, int, int)? pick = null;
+                foreach (var r in ((int, int, int)[])[(a, b, c), (b, c, a), (c, a, b)])
+                {
+                    var fresh = new[] { r.Item1, r.Item2, r.Item3 }.Where(v => !seen[v]).Distinct().ToList();
+                    if (fresh.Count > 0 && fresh.SequenceEqual(Enumerable.Range(next, fresh.Count)))
+                    {
+                        pick = r;
+                        break;
+                    }
+                }
+                if (pick is { } p)
+                {
+                    Emit(t, p);
+                    foreach (var v in (int[])[p.Item1, p.Item2, p.Item3])
+                        Covered(v);
+                    break;
+                }
+            }
+        }
+        for (var t = 0; t < triangles.Count; t++)
+            if (!done[t])
+                result.Add(triangles[t]);
+        return result;
+    }
+
+    /// <summary>A render corner: its material, texcoord and its triangle's (unnormalised) normal.</summary>
+    private readonly record struct RenderCorner(Vector3 Position, string Material, Vector2 Texcoord, Vector3 Normal);
+
+    /// <summary>Every render triangle's corners by 1/32 cell, from the world nodes' models.</summary>
     private static Dictionary<(int, int, int), List<RenderCorner>> RenderCorners(IReadOnlyDictionary<string, byte[]> files, string mapName)
     {
         var corners = new Dictionary<(int, int, int), List<RenderCorner>>();
@@ -141,10 +237,10 @@ internal static class WorldGeometry
                             var normal = Vector3.Cross(P(b) - P(a), P(c) - P(a));
                             foreach (var v in (int[])[a, b, c])
                             {
-                                var key = Key(P(v));
+                                var key = Cell(P(v));
                                 if (!corners.TryGetValue(key, out var list))
                                     corners[key] = list = [];
-                                list.Add(new RenderCorner(material, T(v), normal));
+                                list.Add(new RenderCorner(P(v), material, T(v), normal));
                             }
                         }
                     }
@@ -152,18 +248,29 @@ internal static class WorldGeometry
         return corners;
     }
 
-    /// <summary>The render corner at exactly <paramref name="at"/> on a triangle facing the same way
-    /// (unit normals within 1e-4), or null.</summary>
+    /// <summary>The nearest render corner within the closing weld's 1/32 of <paramref name="at"/> on a triangle
+    /// facing the same way (unit normals within 1e-4), or null. The render positions are that weld's
+    /// representatives: another mesh's corner nearby wins (probe01: -256 where the soup has -256.00006,
+    /// a mesh at origin 511.99994 against one at 512).</summary>
     private static (string Material, Vector2 Texcoord)? Corner(Dictionary<(int, int, int), List<RenderCorner>> render, Vector3 at, Vector3 normal)
     {
-        if (!render.TryGetValue(Key(at), out var list) || normal.LengthSquared() == 0f)
+        if (normal.LengthSquared() == 0f)
             return null;
         var n = Vector3.Normalize(normal);
-        foreach (var c in list)
-            if (c.Normal.LengthSquared() > 0f && Vector3.Dot(Vector3.Normalize(c.Normal), n) > 0.9999f)
-                return (c.Material, c.Texcoord);
-        return null;
+        var (cx, cy, cz) = Cell(at);
+        RenderCorner? best = null;
+        var bestDistance = float.MaxValue;
+        for (var dx = -1; dx <= 1; dx++)
+            for (var dy = -1; dy <= 1; dy++)
+                for (var dz = -1; dz <= 1; dz++)
+                    foreach (var c in render.GetValueOrDefault((cx + dx, cy + dy, cz + dz)) ?? [])
+                        if (Vector3.DistanceSquared(c.Position, at) is var d && d <= Weld * Weld && d < bestDistance
+                            && c.Normal.LengthSquared() > 0f && Vector3.Dot(Vector3.Normalize(c.Normal), n) > 0.9999f)
+                            (best, bestDistance) = (c, d);
+        return best is { } b ? (b.Material, b.Texcoord) : null;
     }
 
-    private static (int, int, int) Key(Vector3 v) => (BitConverter.SingleToInt32Bits(v.X), BitConverter.SingleToInt32Bits(v.Y), BitConverter.SingleToInt32Bits(v.Z));
+    private const float Weld = 1f / 32f;
+
+    private static (int, int, int) Cell(Vector3 v) => ((int)MathF.Floor(v.X / Weld), (int)MathF.Floor(v.Y / Weld), (int)MathF.Floor(v.Z / Weld));
 }

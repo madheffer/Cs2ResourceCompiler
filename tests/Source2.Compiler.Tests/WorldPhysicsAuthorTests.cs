@@ -55,7 +55,8 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
     /// <summary>
     /// The file built from the map (<see cref="Physics.WorldPhysics"/>) against
     /// Valve's: <c>WPBUILD=&lt;addon&gt;|&lt;map&gt;|&lt;compiled .vpk&gt;</c>,
-    /// <c>WPBUILD_SHOW</c> caps the listed differences per block.
+    /// <c>WPBUILD_SHOW</c> caps the listed differences per block; a 4th field names the package's map when the
+    /// .vmap is another's (a decompile: <c>s2c_rc_probe|s2c_dec_probe01|probe01.vpk|probe01</c>).
     /// </summary>
     [Fact]
     public void BuildsFromTheMap()
@@ -245,7 +246,7 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
                 last = line;
             }
             using var red = new ValveResourceFormat.Resource();
-            red.Read(new MemoryStream(Read(p[2], $"maps/{p[1]}/world_physics.vmdl_c")));
+            red.Read(new MemoryStream(Read(p[2], $"maps/{(p.Length > 3 ? p[3] : p[1])}/world_physics.vmdl_c")));
             output.WriteLine("valve RED2: " + (red.EditInfo?.ToString() ?? "none"));
             return;
         }
@@ -255,7 +256,7 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
             var pieces = Physics.WorldCollision.Pieces(doc, name => Physics.WorldCollision.ReadMaterial(name, models.Material, models.CollisionProperty),
                 null, gpu == null ? null : gpu.For, models.Physics, models.SmartProp, models.CollisionProperty);
             using var res = new ValveResourceFormat.Resource();
-            res.Read(new MemoryStream(Read(p[2], $"maps/{p[1]}/world_physics.vmdl_c")));
+            res.Read(new MemoryStream(Read(p[2], $"maps/{(p.Length > 3 ? p[3] : p[1])}/world_physics.vmdl_c")));
             var phys = ((ValveResourceFormat.ResourceTypes.Model)res.DataBlock!).GetEmbeddedPhys()!;
             var hulls = phys.Parts[0].Shape.Hulls;
             foreach (var piece in pieces.Where(x => x.Hull != null && wanted.Contains(x.NodeId)))
@@ -325,7 +326,7 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
                 output.WriteLine($"found: {source}");
             return;
         }
-        var files = Physics.WorldPhysicsFiles.Build(doc, p[0], p[1], models, gpu == null ? null : gpu.For, notes, MapFixtures.GameSchema());
+        var files = Physics.WorldPhysicsFiles.Build(doc, p[0], p.Length > 3 ? p[3] : p[1], models, gpu == null ? null : gpu.For, notes, MapFixtures.GameSchema());
         var mine = files.Model;
         var valve = Read(p[2], files.ModelPath);
         // WPBUILD_SAVE=<path>: our world_physics.vmdl_c, for inspection.

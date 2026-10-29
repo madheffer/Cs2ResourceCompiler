@@ -499,24 +499,38 @@ What a package keeps of the world's own meshes (probe01; `MapDecompilerTests.Wor
   packed tangent frame (lossy), after the T-junction fix and the 1/32 weld.
 
 So the split into source meshes is not in the package, and the target is meshes that compile to the
-same output. `WorldGeometry` rebuilds one mesh per soup at the world's origin, its triangles in the
-soup's order, each corner's material and texcoord from a render vertex at exactly its position on a
-triangle in its plane, a tool soup's faces its tool material (`VmapBuilder.AddMesh` takes per-corner
-texcoords for it). It is an experiment only (`DECOMPILE_WORLD_MESHES=1`), because of what probe01 shows:
-- the soups' positions are not the render positions: -256.00006 against -256, 127.99994 against 128,
-  -176.00014 -943.9999 against -176 -944. Our forward gives Valve's soups exactly from the source, so the
-  rounding is each source mesh's own placement (its stored local corners plus its origin, in float),
-  and the render path rounds them otherwise. A mesh at the world's origin reproduces neither: only 27 of
-  probe01's 280 soup triangles find a render face by exact position.
+same output. `WorldGeometry` (an experiment, `DECOMPILE_WORLD_MESHES=1`):
+- **Positions: the soups'.** A soup vertex is the source corner plus its mesh's origin in float
+  (probe01's meshes stand at origins like 511.99994, so -768 lands -256.00006), exactly what the forward
+  computes; the render positions are the closing 1/32 weld's representatives (another mesh's -256 wins).
+  A mesh at the world's origin with the soup's positions as corners adds them back exactly, so no
+  origin has to be recovered.
+- **Materials and texcoords: the render's,** from the nearest render corner within 1/32 on a triangle in
+  the same plane (all 280 of probe01's soup triangles; a tool soup's faces its tool hash's material).
+- **Pieces:** each soup split into connected pieces, ordered by their first vertex, written in the
+  inverse of PartOrder (the qsort the pieces reach the soups through), each piece's triangles in an order
+  whose first use of the corners is the soup's vertex order (`FirstUseOrder`: RnMeshCreate keeps its input
+  vertices in weld order).
 
-Next: recover each mesh's placement. Both forward transforms are ported (the physics one bit-exact on 9
-maps; the render one exact on probe01's 18 entries, `NodeMeshEntries`), so for each soup vertex the
-pair (physics q, render r) constrains (local corner, mesh origin). Group the soup into connected pieces,
-search each piece's origin (Hammer leaves a mesh's origin at its centre on the grid, often) for the one
-whose local corners land both q and r, and write each piece as its own mesh there. Then check with
-`WorldPhysicsAuthorTests.BuildsFromTheMap` (WPBUILD on the decompiled .vmap, whose package lookup by map
-name still needs the original's name passed). Render-only faces (in no soup) and the T-junction
-triangles (render only, made by the compile) come after.
+Checked with WPBUILD on the decompiled .vmap (`WorldPhysicsAuthorTests.BuildsFromTheMap`, a 4th field
+naming the package's map), probe01: CTRL, DATA, the manifest and every PHYS field exact, both soups'
+vertices exact in order and their BVH nodes exact, but **the triangles' order** (soup 0 from its 7th,
+the tool soup from its 5th) and RED2's physics_shape_count / physics_shape_mesh_count (16 source meshes
+against 12 pieces: touching meshes weld into one piece).
+
+Open, in order:
+1. **The triangles' order.** The BVH (RnMeshBuilder) keeps leaves in the input's order, and Valve's input
+   was the source's faces cut by its triangulator. Rebuilding the faces (coplanar triangles of one
+   material sharing an edge, kept only where our port of the triangulator, `PolygonTriangulator`, cuts the
+   polygon back into those triangles) should give the forward that input order.
+2. **Members, not connected pieces.** On ze_hold_em_p the whole world is one connected piece (4548
+   triangles; the weld joins touching meshes), and WPBUILD on it ran for over 15 minutes without finishing
+   (something quadratic in the forward on one mesh that size). But the soup's vertices are its members'
+   in member order, each member's new vertices contiguous (the weld keeps clusters in the order they
+   form), so members are vertex ranges: split at boundaries such that each range's triangles (by their
+   highest vertex) meet its vertices first-use in order, the count bounded by RED2's
+   physics_shape_mesh_count.
+3. Render-only faces (in no soup) and the T-junction triangles (render only, the compile's own).
 
 ### Element defaults from Hammer's map code (2026-10-29, partly)
 
