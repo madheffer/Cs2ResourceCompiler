@@ -567,11 +567,34 @@ Open, in order:
    - Before the search, `Repair` runs the inversion (`Preimage` put back into faces under the vertex
      order) and local tries (restarts, re-pairings, moves; best in place 262 of 280). Neither reaches
      exact, and both cost a full RnMeshCreate per try, so the repair is off by default.
-   Next for it: keep a face that brings no vertex inside its mesh's block (Hammer writes a mesh's faces
-   together; the blocks are what members approximate), meet the forward pass (strong vertex rule at the
-   input's start) with the backward one (exact BVH), or measure Hammer's face order for the primitives it
-   makes (CS2 closed, in Hammer). Debug switches: `DECOMPILE_SEARCH_BUDGET` (steps, default 5M),
-   `DECOMPILE_SEARCH_PREFER=inverted`, `DECOMPILE_WORLDDEBUG=1`.
+   **10-30: forward search (now the default direction; `DECOMPILE_SEARCH_DIRECTION=backward` for the
+   other).** `WorldGeometry.ForwardSearch` places faces from the input's start (lone triangles or quads,
+   chosen as it goes) and sends each triangle through `BvhRun`, which runs every node's partition
+   forward with an undo log. Measured and added, in order:
+   - In the source, of 144 faces 120 bring vertices in and the 24 that bring none trail their highest
+     corner by at most 7 introductions (each stays in its mesh). The search keeps such a face within
+     `DECOMPILE_SEARCH_LAG` (default 8) introductions, a search bound only (the result is checked against
+     the shipped triangles); a covered face is tried from one start, as its corner order changes nothing.
+   - **A node's right child's entry is known at the node's last right arrival**, not only when the node
+     is whole: a queue's cyclic order never changes once in, and each left arrival still to come turns
+     it once (`BvhRun.Arrive`, the flush). On probe01 the root's 56 right triangles arrive as one block,
+     so its right subtree is checked at triangle ~224 instead of 280.
+   - On each push of a triangle of the right child's leftmost leaf (whose order in the right child's
+     entry is fixed), the queued ones of that leaf must already stand in a turn of its order.
+   - Conflict-directed backjumping: a leaf's failure blames the decisions that placed the triangles its
+     entry depends on (`BvhRun.Depends`: up the left links the input's own order, past a right turn the
+     whole entry of the node above it); a table of failed states (placed set, next vertex, BVH state)
+     catches repeats (a quad and its two triangles alone place the same sequence).
+   Model check: along the source's order the forward search is PHYS-exact. Free: deepest 164 of 280
+   (23 before), stuck at node 3 (54 triangles, its right side arriving in three groups). Even given the
+   source's first 220 triangles it cannot finish the last 60 within 50M arrivals: what tells their orders
+   apart are the flushes of nodes 1 and 2 (224 and 90 triangles), whose dependency sets are nearly every
+   decision. Next: an earlier check for a big node's right child than its last right arrival (whether
+   the queued cyclic order can still be turned into one of the right child's valid entries), or a
+   constraint-solver formulation; Hammer's own primitive face order (CS2 closed) stays a cross-check.
+   Debug switches: `DECOMPILE_SEARCH_BUDGET` (default 5M), `DECOMPILE_SEARCH_GUIDE=preimage` (worse:
+   deepest 87), `DECOMPILE_TRUTH_PREFIX=n`, `DECOMPILE_SEARCH_PREFER=inverted`, `DECOMPILE_SEARCH_SLOTS=all`,
+   `DECOMPILE_WORLDDEBUG=1`.
 2. **Members (10-29 night): split by vertex runs; large maps run.** `WorldGeometry.Members` walks the
    soup's vertices in order: a triangle belongs to the member that introduced its highest vertex, and a
    new member starts where the triangles introducing a vertex share none with the current run or carry

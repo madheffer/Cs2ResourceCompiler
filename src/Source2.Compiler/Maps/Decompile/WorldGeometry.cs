@@ -454,23 +454,11 @@ internal static class WorldGeometry
         List<Face>? found = null;
         // Debugging: DECOMPILE_TRUTH=<file of the source's input triangles, as SoupInputsOfTwoMaps dumps them>
         // keeps the search to that order, to see where the model loses it.
-        int[]? truth = null;
-        if (Environment.GetEnvironmentVariable("DECOMPILE_TRUTH") is { Length: > 0 } truthFile && File.Exists(truthFile))
-        {
-            var lines = File.ReadAllLines(truthFile);
-            if (lines.Length == soup.Count)
-                truth = [.. lines.Select(line =>
-                {
-                    var c = line.Split(' ').Select(q => q.Split(',').Select(x => float.Parse(x, System.Globalization.CultureInfo.InvariantCulture)).ToArray()).Select(q => new Vector3(q[0], q[1], q[2])).ToArray();
-                    bool Near(Vector3 a, Vector3 b) => MathF.Max(MathF.Abs(a.X - b.X), MathF.Max(MathF.Abs(a.Y - b.Y), MathF.Abs(a.Z - b.Z))) <= 1 / 32f;
-                    return Enumerable.Range(0, soup.Count).FirstOrDefault(t => Enumerable.Range(0, 3).Any(r =>
-                        Near(c[0], vertices[(r == 0 ? soup[t].A : r == 1 ? soup[t].B : soup[t].C)]) &&
-                        Near(c[1], vertices[(r == 0 ? soup[t].B : r == 1 ? soup[t].C : soup[t].A)]) &&
-                        Near(c[2], vertices[(r == 0 ? soup[t].C : r == 1 ? soup[t].A : soup[t].B)])), -1);
-                })];
-        }
+        var truth = Truth(soup, vertices);
         var truthLost = "";
         var rankCandidates = Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_RANK") == "1";
+        var greedySlots = Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_SLOTS") != "all";
+        var lagBound = int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_LAG"), out var lb) ? lb : 8;
         if (truth is not null && truth.All(t => t >= 0))
         {
             // The source's own choices: its input forward through the builder, each node's entry read from
@@ -583,8 +571,14 @@ internal static class WorldGeometry
                 return;
             }
             var at = gen[i];
+            var taken = false;
             Pull(rc[i], x =>
             {
+                // Greedy by default (DECOMPILE_SEARCH_SLOTS=all tries every identity): a slot's identity
+                // only matters later, and trying them all here multiplies out before anything is checked.
+                if (taken && greedySlots)
+                    return;
+                taken = true;
                 slots[i][at] = x;
                 gen[i]++;
                 GenAll(i, k);
@@ -627,6 +621,11 @@ internal static class WorldGeometry
                     unplaced--;
                 undo.Add((v, placedHere));
             }
+            // A face bringing no vertex stays near its corners: at most lagBound vertices come in between
+            // its highest corner and it (a search bound, not a rule: probe01's source has at most 7; the
+            // result is checked against the shipped triangles all the same).
+            if (ok && undo.All(u => !u.Placed) && unplaced - 1 - corners.Max() > lagBound)
+                ok = false;
             if (ok)
             {
                 chosen.Add((last, end));
@@ -640,8 +639,10 @@ internal static class WorldGeometry
                     unplaced++;
             }
         }
+        var visits = new long[soup.Count + 1];
         void Step(int placed)
         {
+            visits[placed]++;
             if (placed > deepest)
                 (deepest, deepestAt) = (placed, $"triangles {string.Join(" ", chosen.TakeLast(4).Select(c => c.Last))}, {unplaced} vertices unplaced");
             if (placed == total)
@@ -709,8 +710,495 @@ internal static class WorldGeometry
         thread.Start();
         thread.Join();
         report = found is not null ? $"backward search found an order in {steps} steps"
-            : $"backward search found none in {steps} steps (deepest {deepest} of {total} triangles: {deepestAt}{(truth is null ? "" : $"; truth {string.Join(",", truth.TakeLast(10))}; {truthLost}")})";
+            : $"backward search found none in {steps} steps (visits by depth {string.Join(",", visits.Take(deepest + 1))}; deepest {deepest} of {total} triangles: {deepestAt}{(truth is null ? "" : $"; truth {string.Join(",", truth.TakeLast(10))}; {truthLost}")})";
         return found;
+    }
+
+    /// <summary>
+    /// RnMeshCreate's BVH (its pre-order trace) run forward one triangle at a time, so a search can place
+    /// faces and take them back: a SAH node sends a left triangle on at once (turning its queue first, the
+    /// swap partition's front-to-back, when any right one waits) and queues a right one, which go on in
+    /// queue order once the node has all of its triangles; a split by count sends its first ones left; a
+    /// leaf must get the shipped triangles in their order, or the arrival fails.
+    /// </summary>
+    private sealed class BvhRun
+    {
+        private readonly int[] leftChild, rightChild, size;
+        private readonly HashSet<int>?[] leftSet;
+        private readonly bool[] byCount;
+        private readonly int[][] leafOrder;
+        private readonly int[] arrived, head, leftArrived;
+        private readonly bool[] flushed;
+        private readonly List<int>[] queue;
+        private readonly List<(int Node, byte Kind)> log = [];
+        public long Arrivals;
+        public readonly long[] FlushFailures, CyclicFailures;
+        private readonly Dictionary<int, int>[] firstLeafRank;
+        private readonly int[] parent;
+        private readonly bool[] isLeft;
+        private readonly int[][] sets;
+        /// <summary>The leaf the last failing arrival reached.</summary>
+        public int FailedLeaf = -1;
+
+        /// <summary>
+        /// The triangles whose input order a node's entry depends on: a left child's entry is its parent's
+        /// restricted to it, so up the left links it is the input's restricted to it; a right child's is its
+        /// parent's queue, which depends on the parent's whole entry.
+        /// </summary>
+        public int[] Depends(int n)
+        {
+            var x = n;
+            while (true)
+            {
+                var a = x;
+                while (parent[a] >= 0 && isLeft[a])
+                    a = parent[a];
+                if (parent[a] < 0)
+                    return sets[x];
+                x = parent[a];
+            }
+        }
+        public int Size(int n) => size[n];
+
+        public BvhRun(List<(int[] Entry, HashSet<int>? Left, bool ByCount)> trace, Func<int, int> soupOf)
+        {
+            var n = trace.Count;
+            (leftChild, rightChild, size, leftSet, byCount, leafOrder) = (new int[n], new int[n], new int[n], new HashSet<int>?[n], new bool[n], new int[n][]);
+            (arrived, head, queue, leftArrived, flushed) = (new int[n], new int[n], new List<int>[n], new int[n], new bool[n]);
+            (FlushFailures, CyclicFailures) = (new long[n], new long[n]);
+            firstLeafRank = new Dictionary<int, int>[n];
+            (parent, isLeft, sets) = (new int[n], new bool[n], new int[n][]);
+            parent[0] = -1;
+            var at = 0;
+            int Read()
+            {
+                var i = at++;
+                var (entry, left, count) = trace[i];
+                sets[i] = [.. entry.Select(soupOf)];
+                size[i] = entry.Length;
+                queue[i] = [];
+                byCount[i] = count;
+                if (left is null)
+                {
+                    leafOrder[i] = [.. entry.Select(soupOf).Order()];
+                    return i;
+                }
+                leftSet[i] = [.. left.Select(soupOf)];
+                leftChild[i] = Read();
+                rightChild[i] = Read();
+                (parent[leftChild[i]], isLeft[leftChild[i]]) = (i, true);
+                parent[rightChild[i]] = i;
+                var leaf = rightChild[i];
+                while (leftSet[leaf] is not null)
+                    leaf = leftChild[leaf];
+                firstLeafRank[i] = leafOrder[leaf].Select((t, k) => (t, k)).ToDictionary(x => x.t, x => x.k);
+                return i;
+            }
+            Read();
+        }
+
+        public int Mark => log.Count;
+
+        /// <summary>A hash of everything a later arrival depends on: each node's counts and queue.</summary>
+        public ulong StateHash()
+        {
+            var h = 1469598103934665603UL;
+            void Mix(long x) => h = (h ^ (ulong)x) * 1099511628211UL;
+            for (var n = 0; n < arrived.Length; n++)
+            {
+                Mix(arrived[n]);
+                if (leftSet[n] is null)
+                    continue;
+                Mix(leftArrived[n]);
+                Mix(flushed[n] ? 1 : 0);
+                if (!flushed[n])
+                    for (var i = head[n]; i < queue[n].Count; i++)
+                        Mix(queue[n][i] + 7);
+            }
+            return h;
+        }
+
+        public bool Arrive(int t) => Arrive(0, t);
+
+        private bool Arrive(int n, int t)
+        {
+            Arrivals++;
+            if (leftSet[n] is not { } left)
+            {
+                if (arrived[n] >= leafOrder[n].Length || leafOrder[n][arrived[n]] != t)
+                {
+                    FailedLeaf = n;
+                    return false;
+                }
+                arrived[n]++;
+                log.Add((n, 0));
+                return true;
+            }
+            arrived[n]++;
+            log.Add((n, 0));
+            bool ok;
+            if (byCount[n])
+                ok = Arrive(arrived[n] <= size[leftChild[n]] ? leftChild[n] : rightChild[n], t);
+            else if (left.Contains(t))
+            {
+                leftArrived[n]++;
+                log.Add((n, 3));
+                if (queue[n].Count > head[n] && !flushed[n])
+                {
+                    queue[n].Add(queue[n][head[n]]);
+                    head[n]++;
+                    log.Add((n, 2));
+                }
+                ok = Arrive(leftChild[n], t);
+            }
+            else
+            {
+                queue[n].Add(t);
+                log.Add((n, 1));
+                ok = true;
+                // The right child's leftmost leaf gets its triangles in the shipped order, and a queue's
+                // cyclic order never changes once in (turns move the front to the back, a new one joins
+                // where the back meets the front), so the queued ones of that leaf must already stand in
+                // a turn of its order: one descent going round.
+                if (!flushed[n] && firstLeafRank[n].TryGetValue(t, out _))
+                {
+                    var (descents, count, first, last) = (0, 0, -1, -1);
+                    for (var i = head[n]; i < queue[n].Count; i++)
+                        if (firstLeafRank[n].TryGetValue(queue[n][i], out var r))
+                        {
+                            if (count++ == 0)
+                                first = r;
+                            else if (r < last)
+                                descents++;
+                            last = r;
+                        }
+                    if (count >= 2 && first < last)
+                        descents++;
+                    if (count >= 2 && descents > 1)
+                    {
+                        FailedLeaf = n;
+                        CyclicFailures[n]++;
+                        return false;
+                    }
+                }
+                // The last right one: the queue's cyclic order is fixed from here, and each left one still to
+                // come turns it once, so the right child's entry is known now.
+                var rights = size[n] - size[leftChild[n]];
+                if (queue[n].Count - head[n] == rights)
+                {
+                    flushed[n] = true;
+                    log.Add((n, 4));
+                    var turns = (size[leftChild[n]] - leftArrived[n]) % rights;
+                    for (var i = 0; i < rights && ok; i++)
+                        ok = Arrive(rightChild[n], queue[n][head[n] + (turns + i) % rights]);
+                    if (!ok)
+                        FlushFailures[n]++;
+                }
+            }
+            return ok;
+        }
+
+        public void Undo(int mark)
+        {
+            while (log.Count > mark)
+            {
+                var (n, kind) = log[^1];
+                log.RemoveAt(log.Count - 1);
+                if (kind == 0)
+                    arrived[n]--;
+                else if (kind == 3)
+                    leftArrived[n]--;
+                else if (kind == 4)
+                    flushed[n] = false;
+                else
+                {
+                    queue[n].RemoveAt(queue[n].Count - 1);
+                    if (kind == 2)
+                        head[n]--;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The input built from its start: each step a face (a soup triangle alone from any corner, or a quad
+    /// with a coplanar neighbour that the triangulator cuts into the two in that order) whose corners bring
+    /// in exactly the next vertices, or none; a face bringing none placed within <paramref name="lagBound"/>
+    /// vertices of its highest corner (a search bound), so a triangle whose corners are all met and whose
+    /// window has passed ends the branch; every triangle sent through the BVH as it is placed
+    /// (<see cref="BvhRun"/>: a leaf getting one out of the shipped order ends the branch). Faces are tried
+    /// in our order (<paramref name="rankOfSoup"/>). Returns the faces in input order, or null within
+    /// <paramref name="budget"/> arrivals.
+    /// </summary>
+    private static List<Face>? ForwardSearch(List<(int[] Entry, HashSet<int>? Left, bool ByCount)> trace, Func<int, int> soupOf,
+                                             Vector3[] vertices, List<(int A, int B, int C)> soup, int[] rankOfSoup, long budget, int lagBound,
+                                             int[]? truth, out string report)
+    {
+        var bvh = new BvhRun(trace, soupOf);
+        // DECOMPILE_TRUTH_PREFIX=n: keep to the source's order only for its first n triangles.
+        var truthPrefix = int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_TRUTH_PREFIX"), out var tp) ? tp : int.MaxValue;
+        if (truth is not null && Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
+        {
+            // Where each SAH node's triangles go (L/R) along the source's input, for the first few nodes.
+            for (var i = 0; i < Math.Min(trace.Count, 12); i++)
+                if (trace[i].Left is { } l)
+                {
+                    var set = trace[i].Entry.Select(soupOf).ToHashSet();
+                    var left = l.Select(soupOf).ToHashSet();
+                    Console.Error.WriteLine($"node {i} ({set.Count}, {left.Count} left): {new string([.. truth.Where(set.Contains).Select(t => left.Contains(t) ? 'L' : 'R')])}");
+                }
+        }
+        var byEdge = new Dictionary<(int, int), int>();
+        for (var t = 0; t < soup.Count; t++)
+            foreach (var (x, y) in (ValueTuple<int, int>[])[(soup[t].A, soup[t].B), (soup[t].B, soup[t].C), (soup[t].C, soup[t].A)])
+                byEdge[(x, y)] = t;
+        Vector3 Normal(int k) => Vector3.Normalize(Vector3.Cross(vertices[soup[k].B] - vertices[soup[k].A], vertices[soup[k].C] - vertices[soup[k].A]));
+        // The faces each triangle can begin: itself alone from each corner, or a quad cut into it then a
+        // neighbour.
+        var begins = new List<(int Partner, int[] Loop, int[] Corners)>[soup.Count];
+        var partners = new List<int>[soup.Count];
+        for (var t = 0; t < soup.Count; t++)
+        {
+            int[] own = [soup[t].A, soup[t].B, soup[t].C];
+            begins[t] = [.. Enumerable.Range(0, 3).Select(r => (-1, (int[])[own[r], own[(r + 1) % 3], own[(r + 2) % 3]], (int[])[own[r], own[(r + 1) % 3], own[(r + 2) % 3]]))];
+            partners[t] = [];
+            for (var x = 0; x < 3; x++)
+            {
+                if (!byEdge.TryGetValue((own[(x + 1) % 3], own[x]), out var u) || u == t)
+                    continue;
+                var (n1, n2) = (Normal(t), Normal(u));
+                if (!(Vector3.Dot(n1, n2) > 1 - 1e-5f && MathF.Abs(Vector3.Dot(n1, vertices[own[0]]) - Vector3.Dot(n1, vertices[soup[u].A])) < 1e-3f))
+                    continue;
+                partners[t].Add(u);
+                int[] other = [soup[u].A, soup[u].B, soup[u].C];
+                var third = other.First(v => !own.Contains(v));
+                int[] loop = [.. own.Take(x + 1), third, .. own.Skip(x + 1)];
+                for (var r = 0; r < 4; r++)
+                {
+                    var rotated = loop.Skip(r).Concat(loop.Take(r)).ToArray();
+                    var cut = PolygonTriangulator.Triangulate([.. rotated.Select(v => vertices[v])]);
+                    if (cut.Length != 6)
+                        continue;
+                    var corners = cut.Select(i => rotated[i]).ToArray();
+                    if (Norm((corners[0], corners[1], corners[2])) == Norm(soup[t]) && Norm((corners[3], corners[4], corners[5])) == Norm(soup[u]))
+                        begins[t].Add((u, rotated, corners));
+                }
+            }
+        }
+        var top = soup.Select(t => Math.Max(t.A, Math.Max(t.B, t.C))).ToArray();
+        var byVertex = new List<int>[vertices.Length];
+        for (var v = 0; v < vertices.Length; v++)
+            byVertex[v] = [];
+        for (var t = 0; t < soup.Count; t++)
+            foreach (var v in (int[])[soup[t].A, soup[t].B, soup[t].C])
+                byVertex[v].Add(t);
+        var byTop = Enumerable.Range(0, soup.Count).OrderBy(t => top[t]).ToArray();
+        var placed = new bool[soup.Count];
+        var chosen = new List<(int First, int Begin)>();
+        var total = soup.Count;
+        List<Face>? found = null;
+        var (deepest, visits) = (0, new long[soup.Count + 1]);
+        var truthLost = "";
+        // Covered triangles (every corner met) whose window has passed: each must have gone already, or
+        // still be able to go in a quad whose partner brings a vertex in.
+        bool Stale(int next)
+        {
+            foreach (var t in byTop)
+            {
+                if (top[t] >= next - 1 - lagBound)
+                    break;
+                if (!placed[t] && !partners[t].Any(u => !placed[u] && top[u] >= next - 1 - lagBound))
+                    return true;
+            }
+            return false;
+        }
+        // Conflict-directed backjumping: a branch's failure names the decisions (by depth) that caused it;
+        // a decision not among them is skipped on the way back. A leaf getting a triangle out of order
+        // blames the decisions that placed the triangles its entry depends on (BvhRun.Depends); anything
+        // else blames the decision just before (plain backtracking). Skipping can only lose solutions,
+        // never accept a wrong one: the result is checked against the shipped triangles.
+        var depthOf = new int[soup.Count];
+        var depends = new Dictionary<int, int[]>();
+        var jumps = 0L;
+        HashSet<int> Before(int depth) => depth > 0 ? [depth - 1] : [];
+        // States already searched to failure: the same triangles placed, the same next vertex and the same
+        // BVH state have the same future (a quad and its two triangles alone place the same sequence).
+        var failed = new HashSet<(ulong, ulong, int)>();
+        var zobrist = Enumerable.Range(0, soup.Count).Select(t => (ulong)(new Random(t * 7919 + 13).NextInt64())).ToArray();
+        var placedHash = 0UL;
+        long repeats = 0;
+        HashSet<int>? Dfs(int count, int next)
+        {
+            var depth = chosen.Count;
+            var key = (placedHash, bvh.StateHash(), next);
+            if (failed.Contains(key))
+            {
+                repeats++;
+                return Before(depth);
+            }
+            var result = Explore(count, next, depth);
+            if (result is not null && bvh.Arrivals < budget)
+                failed.Add(key);
+            return result;
+        }
+        HashSet<int>? Explore(int count, int next, int depth)
+        {
+            visits[count]++;
+            deepest = Math.Max(deepest, count);
+            if (count == total)
+            {
+                found = [.. chosen.Select(c =>
+                {
+                    var (partner, loop, _) = begins[c.First][c.Begin];
+                    List<int> triangles = partner < 0 ? [c.First] : [c.First, partner];
+                    return new Face(loop, triangles, [.. begins[c.First].Where(x => x.Partner == partner && (partner >= 0 || x.Loop.Length == 3)).Select(x => x.Loop)]);
+                })];
+                return null;
+            }
+            if (Stale(next))
+            {
+                if (truth is not null)
+                    truthLost = $"at {count} (next vertex {next}) a covered triangle's window passed: {string.Join(" ", byTop.Where(t => !placed[t] && top[t] < next - 1 - lagBound).Take(4).Select(t => $"{t}(top {top[t]})"))}";
+                return Before(depth);
+            }
+            if (truth is not null && count < total)
+            {
+                var t0 = truth[count];
+                truthLost = $"at {count} (next vertex {next}) the source's {t0} [{soup[t0]}] top {top[t0]}, placed {placed[t0]}";
+            }
+            // Candidates: the triangles holding the next vertex, and the covered ones still in their window.
+            var candidates = new HashSet<int>();
+            if (next < vertices.Length)
+                foreach (var t in byVertex[next])
+                    if (!placed[t])
+                        candidates.Add(t);
+            foreach (var t in byTop.Reverse())
+            {
+                if (top[t] < next - 1 - lagBound - 1)
+                    break;
+                if (top[t] < next && !placed[t])
+                    candidates.Add(t);
+            }
+            foreach (var t in byTop)
+            {
+                if (top[t] >= next - 2 - lagBound)
+                    break;
+                if (!placed[t] && partners[t].Any(u => !placed[u] && top[u] < next && top[u] >= next - 1 - lagBound))
+                    candidates.Add(t);
+            }
+            var conflict = new HashSet<int>();
+            foreach (var t in candidates.OrderBy(t => rankOfSoup[t]))
+            {
+                if (truth is not null && count < truthPrefix && t != truth[count])
+                    continue;
+                // A face bringing no vertex is tried from one start per partner: its corners' order changes
+                // nothing (RnMeshCreate turns each triangle by its edges).
+                var coveredTried = new HashSet<int>();
+                for (var b = 0; b < begins[t].Count; b++)
+                {
+                    if (bvh.Arrivals >= budget)
+                        return [];
+                    var (partner, _, corners) = begins[t][b];
+                    if (partner >= 0 && (placed[partner] || (truth is not null && count < truthPrefix && (count + 1 >= total || truth[count + 1] != partner))))
+                        continue;
+                    if (corners.All(v => v < next) && !coveredTried.Add(partner))
+                        continue;
+                    var fresh = next;
+                    var valid = true;
+                    foreach (var v in corners)
+                        if (v >= fresh)
+                        {
+                            if (v != fresh)
+                            {
+                                valid = false;
+                                break;
+                            }
+                            fresh++;
+                        }
+                    if (!valid || (fresh == next && next - 1 - corners.Max() > lagBound))
+                        continue;
+                    var mark = bvh.Mark;
+                    if (bvh.Arrive(t) && (partner < 0 || bvh.Arrive(partner)))
+                    {
+                        placed[t] = true;
+                        depthOf[t] = depth;
+                        placedHash ^= zobrist[t];
+                        if (partner >= 0)
+                        {
+                            placed[partner] = true;
+                            depthOf[partner] = depth;
+                            placedHash ^= zobrist[partner];
+                        }
+                        chosen.Add((t, b));
+                        var child = Dfs(count + (partner < 0 ? 1 : 2), fresh);
+                        if (child is null)
+                            return null;
+                        chosen.RemoveAt(chosen.Count - 1);
+                        placed[t] = false;
+                        placedHash ^= zobrist[t];
+                        if (partner >= 0)
+                        {
+                            placed[partner] = false;
+                            placedHash ^= zobrist[partner];
+                        }
+                        bvh.Undo(mark);
+                        if (bvh.Arrivals >= budget)
+                            return [];
+                        if (!child.Contains(depth))
+                        {
+                            jumps++;
+                            return child;
+                        }
+                        child.Remove(depth);
+                        conflict.UnionWith(child);
+                        continue;
+                    }
+                    if (truth is not null)
+                        truthLost += $"; fails in the BVH (begin {b})";
+                    var leaf = bvh.FailedLeaf;
+                    bvh.Undo(mark);
+                    if (!depends.TryGetValue(leaf, out var dep))
+                        depends[leaf] = dep = bvh.Depends(leaf);
+                    foreach (var x in dep)
+                        if (placed[x])
+                            conflict.Add(depthOf[x]);
+                }
+            }
+            if (conflict.Count == 0)
+                return Before(depth);
+            return conflict;
+        }
+        var thread = new Thread(() => Dfs(0, 0), 1 << 30);
+        thread.Start();
+        thread.Join();
+        report = found is not null ? $"forward search found an order in {bvh.Arrivals} arrivals ({jumps} backjumps)"
+            : $"forward search found none in {bvh.Arrivals} arrivals ({jumps} backjumps, {repeats} repeated states; deepest {deepest} of {total}; visits by depth {string.Join(",", visits.Take(deepest + 1))}{(truthLost == "" ? "" : "; " + truthLost)})";
+        report += $"; cyclic failures {string.Join(" ", bvh.CyclicFailures.Select((c, i) => (c, i)).Where(x => x.c > 0).OrderByDescending(x => x.c).Take(4).Select(x => $"node {x.i}: {x.c}"))}";
+        report += $"; flush failures {string.Join(" ", bvh.FlushFailures.Select((c, i) => (c, i)).Where(x => x.c > 0).OrderByDescending(x => x.c).Take(6).Select(x => $"node {x.i} ({bvh.Size(x.i)}): {x.c}"))}";
+        report = report.Replace("visits by depth " + string.Join(",", visits.Take(deepest + 1)), $"visits ending {string.Join(",", visits.Skip(Math.Max(0, deepest - 5)).Take(6))}");
+        return found;
+    }
+
+    /// <summary>Debugging: DECOMPILE_TRUTH=&lt;file of the source's input triangles, as SoupInputsOfTwoMaps
+    /// dumps them&gt; as soup triangle ids in input order (each matched within 1/32), to keep a search to it.</summary>
+    private static int[]? Truth(List<(int A, int B, int C)> soup, Vector3[] vertices)
+    {
+        int[]? truth = null;
+        if (Environment.GetEnvironmentVariable("DECOMPILE_TRUTH") is { Length: > 0 } truthFile && File.Exists(truthFile))
+        {
+            var lines = File.ReadAllLines(truthFile);
+            if (lines.Length == soup.Count)
+                truth = [.. lines.Select(line =>
+                {
+                    var c = line.Split(' ').Select(q => q.Split(',').Select(x => float.Parse(x, System.Globalization.CultureInfo.InvariantCulture)).ToArray()).Select(q => new Vector3(q[0], q[1], q[2])).ToArray();
+                    bool Near(Vector3 a, Vector3 b) => MathF.Max(MathF.Abs(a.X - b.X), MathF.Max(MathF.Abs(a.Y - b.Y), MathF.Abs(a.Z - b.Z))) <= 1 / 32f;
+                    return Enumerable.Range(0, soup.Count).FirstOrDefault(t => Enumerable.Range(0, 3).Any(r =>
+                        Near(c[0], vertices[(r == 0 ? soup[t].A : r == 1 ? soup[t].B : soup[t].C)]) &&
+                        Near(c[1], vertices[(r == 0 ? soup[t].B : r == 1 ? soup[t].C : soup[t].A)]) &&
+                        Near(c[2], vertices[(r == 0 ? soup[t].C : r == 1 ? soup[t].A : soup[t].B)])), -1);
+                })];
+        }
+        return truth;
     }
 
     [ThreadStatic] private static List<(int A, int B, int C)>? soupTriangles;
@@ -846,12 +1334,19 @@ internal static class WorldGeometry
                 for (var i = 0; i < trace.Count; i++)
                     if (trace[i].Left is { } l && !trace[i].ByCount)
                         own[i] = [.. trace[i].Entry.Reverse().Select(l.Contains)];
+                // Triangles tried in our order, or with DECOMPILE_SEARCH_GUIDE=preimage in the inverted order's
+                // (which gives every leaf already).
                 var rankOfSoup = new int[shipped.Count];
                 for (var i = 0; i < soupOf.Length; i++)
                     if (soupOf[i] >= 0)
-                        rankOfSoup[soupOf[i]] = i;
-                var found = BackwardSearch(trace, x => soupOf[x], vertices, shipped,
-                    Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_PREFER") == "inverted" ? pattern : own, rankOfSoup, budget, out searched);
+                        rankOfSoup[soupOf[i]] = Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_GUIDE") == "preimage" ? position[i] : i;
+                // DECOMPILE_SEARCH_DIRECTION=backward: from the input's end (exact BVH, hidden choices);
+                // otherwise from its start.
+                var found = Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_DIRECTION") == "backward"
+                    ? BackwardSearch(trace, x => soupOf[x], vertices, shipped,
+                        Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_PREFER") == "inverted" ? pattern : own, rankOfSoup, budget, out searched)
+                    : ForwardSearch(trace, x => soupOf[x], vertices, shipped, rankOfSoup, budget,
+                        int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_LAG"), out var lag) ? lag : 8, Truth(shipped, vertices), out searched);
                 if (found is not null)
                 {
                     var memberOfTriangle = flat.SelectMany(x => x.Triangles.Select(t => (t, m: memberOf[x]))).ToDictionary(x => x.t, x => x.m);
