@@ -486,6 +486,23 @@ after the path and ship nothing (`MapEntities.Walk`). The inverse
   stays at its default;
 - the nodes take the walk indices after the path, and ids after the path's where free and below
   the highest id the lump shows (otherwise from the made-up pool).
+### Element defaults from Hammer's map code (2026-10-29, partly)
+
+resourcecompiler's mapdoclib declares a node's attributes in its constructor, each through the attribute
+adder 180cdf760 (name, type, storage) and a typed setter (180ce8160 int, 180ce9bc0 bool, 180ce8cf0
+string, 180ce8340 float, 180ce9890 element): only about 30 functions call it (58 sites).
+- CMapRootElement (180f687f0): isprefab (false), editorbuild, editorversion, itemFile (""),
+  defaultcamera, an element at +0x160 (3dcameras), world, visbility, mapVariables, rootSelectionSet,
+  m_ReferencedMeshSnapshots, m_bIsCordoning (false), m_bCordonsVisible (false), nodeInstanceData: the
+  fields and order `VmapBuilder` writes.
+- CMapWorld (180fc0fa0): its bases first, CMapNode's nodeID, referenceID, children, variableTargetKeys,
+  variableNames (180f8f920), the entity base's relayPlugData, connectionsData (180fef250),
+  entity_properties (180f359c0), then nextDecalID (0), fixupEntityNames (true), mapUsageType
+  ("standard"): as written.
+- Not found this way: the placement and flag fields (origin, angles, scales, transformLocked,
+  force_hidden, editorOnly) and the class fields (a mesh's, a cable's); they are declared some other
+  way, likely the tool attribute tables hammer.dll's CConcreteToolAttr templates come from. Open.
+
 ### Prefab file names (2026-10-29)
 
 The map's .vmap_c records the files its compile read (RED2 input dependencies, sorted, CRC each:
@@ -662,7 +679,7 @@ its members), each compiled -world and full.
 ## Handoff (2026-10-29)
 
 Branch research/vmap-decompile, worktree `D:\_cursor projects\source2-compiler-wt-decompile`,
-nothing pushed. Tracker 54.3% (22 of 44 subtasks done).
+nothing pushed. Tracker 59.7% (22 of 44 subtasks done, most others partly).
 
 The check is `MapDecompilerTests.Entities_CompileAsTheSourceDoes` (20 maps, about 16 minutes, most of it probe4's frame searches;
 `DECOMPILE_ALL=1` prints every difference, `DECOMPILE_LUMP=<file>` lists both sides of a lump).
@@ -732,13 +749,14 @@ Next, in the order the user is likely to pick:
    `DECOMPILE_TREE=2` with placements and the true prefab maps' trees.
 3. Shared prefab families: done 10-29, 9, 11 and 12 exact (copies in turned placements,
    LocateCopies; families nested in families above; their func_brush had no model in any placement).
-4. Cables: rebuild cable_dynamic as CMapCable (nodes from pathNodes as for paths, tint from
-   rendercolor, the model from its nodes).
+4. Cables: done 10-29 ("Cables" above): lumps exact, collision cables' settings exact; open: a
+   render-only cable's radius (the render mesh's precision), texture settings, cable_static (world).
 5. A prefab map that places prefabs, with instances of its own (InstancePlan with prefab blocks).
 6. The falling prop (probe3): a prop the settle leaves awake is not invertible from the package; at
    most note it.
-7. Brush geometry: hull vertex order as an exact solve (GroupVertices hash-slot order), corner
-   placement as an exact solve, render meshes and UVs, world meshes (plan 3 and 4).
+7. Brush geometry: hull vertex order and corners done 10-29 (451 of 455 models' PHYS exact; left:
+   two in s2c_prefabprobe2's prefab, whose placement the one-mesh chain does not model, and two on
+   ze_doom); render meshes and UVs, world meshes (plan 3 and 4).
 8. Hammer: element defaults from Hammer's own map code, and an open-and-re-save check.
 
 After each milestone: update `tools/map-survey/decompile_progress.json`, upload it as an asset of

@@ -17,8 +17,8 @@
   "module": "Map file",
   "subtask": "Element shapes and defaults from Hammer's own map code",
   "weight": 3,
-  "done": 0,
-  "evidence": "resourcecompiler FUN_180fc0fa0 found, not read"
+  "done": 0.3,
+  "evidence": "10-29: root (180f687f0) and world (180fc0fa0) constructors read, fields/order/defaults = ours; node placement/flag and class fields declared elsewhere (tool attr tables), open"
  },
  {
   "module": "Map file",
