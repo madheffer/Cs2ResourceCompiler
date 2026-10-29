@@ -79,7 +79,14 @@ internal static class WorldGeometry
                 }
                 // The soup is its members' pieces one after another, each in its own weld order (Members),
                 // each written as a mesh of its own in that order.
-                foreach (var (member, first) in Members(triangles, soupMaterial, vertices.Length))
+                var split = Members(triangles, soupMaterial, vertices.Length);
+                if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
+                {
+                    notes.Add($"world debug: members {string.Join(" ", split.Select(m => $"{m.First}:{m.Triangles.Count}"))}");
+                    for (var v = 0; v < Math.Min(12, vertices.Length); v++)
+                        notes.Add($"world debug: vertex {v} {vertices[v]:R} in triangles {string.Join(",", Enumerable.Range(0, triangles.Count).Where(t => triangles[t].Item1 == v || triangles[t].Item2 == v || triangles[t].Item3 == v).Take(6).Select(t => $"{triangles[t]}"))}");
+                }
+                foreach (var (member, first) in split)
                 {
                     List<(int A, int B, int C)> piece = [.. member.Select(k => triangles[k])];
                     var materials = new List<string> { soupMaterial[member[0]] };
@@ -128,6 +135,11 @@ internal static class WorldGeometry
     /// merged loop, from some start, into exactly the triangles merged, so nothing is guessed: a face the
     /// compile would cut otherwise stays split. Neighbours are found by directed edge.
     /// </summary>
+    /// <summary>The most triangles a rebuilt face holds (DECOMPILE_FACE_TRIANGLES, default 2: quads). The
+    /// triangulator check alone also merges neighbouring coplanar source faces (ze_hold_em_p's strip of
+    /// quads at z 153 into one long face, whose vertices no single run then brings in).</summary>
+    private static int MaxFaceTriangles => int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_FACE_TRIANGLES"), out var n) ? n : 2;
+
     internal static List<Polygon> Polygons(List<(int A, int B, int C)> piece, int[] material, Vector3[] vertices)
     {
         var polygons = new List<Polygon?>();
@@ -173,6 +185,43 @@ internal static class WorldGeometry
             }
             return starts;
         }
+        // Faces of two triangles (the default): every pair that may merge, the closest in vertex index first
+        // (a source face brings its vertices in one run, so a real pair's ids lie together; on a coplanar
+        // strip a triangle can also pair with its neighbour quad's, which the triangulator accepts too).
+        if (MaxFaceTriangles == 2)
+        {
+            var pairs = new List<(int Span, int I, int J, int[] Loop, List<int> Starts)>();
+            for (var i = 0; i < polygons.Count; i++)
+            {
+                var p = polygons[i]!;
+                for (var x = 0; x < 3; x++)
+                {
+                    int a = p.Loop[x], b = p.Loop[(x + 1) % 3];
+                    if (!byEdge.TryGetValue((b, a), out var j) || j <= i || polygons[j] is not { } q)
+                        continue;
+                    if (p.Material != q.Material || !SamePlane(i, j))
+                        continue;
+                    var y = Array.IndexOf(q.Loop, b);
+                    var other = q.Loop[(y + 2) % 3];
+                    if (p.Loop.Contains(other))
+                        continue;
+                    var loop = p.Loop.Take(x + 1).Append(other).Concat(p.Loop.Skip(x + 1)).ToArray();
+                    var starts = StartsCutting(loop, [Norm(piece[i]), Norm(piece[j])]);
+                    if (starts.Count > 0)
+                        pairs.Add((loop.Max() - loop.Min(), i, j, loop, starts));
+                }
+            }
+            var paired = new bool[polygons.Count];
+            foreach (var (_, i, j, loop, starts) in pairs.OrderBy(x => x.Span).ThenBy(x => x.I).ThenBy(x => x.J))
+            {
+                if (paired[i] || paired[j])
+                    continue;
+                (paired[i], paired[j]) = (true, true);
+                polygons[i] = new Polygon(loop, polygons[i]!.Material, [i, j], starts);
+                polygons[j] = null;
+            }
+            return [.. polygons.OfType<Polygon>()];
+        }
         var queue = new Queue<int>(Enumerable.Range(0, polygons.Count));
         while (queue.Count > 0)
         {
@@ -184,7 +233,8 @@ internal static class WorldGeometry
                 int a = p.Loop[x], b = p.Loop[(x + 1) % p.Loop.Length];
                 if (!byEdge.TryGetValue((b, a), out var j) || j == i || polygons[j] is not { } q)
                     continue;
-                if (p.Material != q.Material || !SamePlane(p.Triangles[0], q.Triangles[0]))
+                if (p.Material != q.Material || !SamePlane(p.Triangles[0], q.Triangles[0])
+                    || p.Triangles.Count + q.Triangles.Count > MaxFaceTriangles)
                     continue;
                 var y = Array.IndexOf(q.Loop, b);
                 var between = Enumerable.Range(2, q.Loop.Length - 2).Select(t => q.Loop[(y + t) % q.Loop.Length]).ToArray();
@@ -265,23 +315,32 @@ internal static class WorldGeometry
         {
             if (seen.Contains(next))
                 continue;
+            // Of the faces that can bring it in, the one bringing the fewest new vertices (the most attached
+            // to what is already met: ze_hold_em_p's first block takes its top, sharing an edge with the face
+            // before, ahead of a side sharing none), then the earliest.
+            (int Face, int Start, int Fresh)? pick = null;
             foreach (var f in holding[next])
             {
                 if (done[f])
                     continue;
+                var fresh = polygons[f].Loop.Count(v => !seen.Contains(v));
+                if (pick is { } p && p.Fresh <= fresh)
+                    continue;
                 var at = polygons[f].Starts.Where(s =>
                 {
-                    var fresh = Cut(polygons[f].Loop, s).Where(v => !seen.Contains(v)).Distinct().ToList();
-                    var expected = own.Skip(position[next]).Take(fresh.Count);
-                    return fresh.Count > 0 && fresh.SequenceEqual(expected);
+                    var cutFresh = Cut(polygons[f].Loop, s).Where(v => !seen.Contains(v)).Distinct().ToList();
+                    var expected = own.Skip(position[next]).Take(cutFresh.Count);
+                    return cutFresh.Count > 0 && cutFresh.SequenceEqual(expected);
                 }).OrderBy(s => Inversions(polygons[f], s)).DefaultIfEmpty(-1).First();
-                if (at < 0)
-                    continue;
-                Emit(f, at);
-                foreach (var g in polygons[f].Loop.SelectMany(v => holding[v]).Distinct().Order().ToList())
+                if (at >= 0)
+                    pick = (f, at, fresh);
+            }
+            if (pick is { } chosen)
+            {
+                Emit(chosen.Face, chosen.Start);
+                foreach (var g in polygons[chosen.Face].Loop.SelectMany(v => holding[v]).Distinct().Order().ToList())
                     if (!done[g] && polygons[g].Loop.All(seen.Contains))
                         Emit(g, Best(g));
-                break;
             }
         }
         for (var f = 0; f < polygons.Count; f++)
