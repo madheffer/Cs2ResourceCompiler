@@ -647,10 +647,12 @@ CS2-closed session 10-29 evening (d167724):
   check can run over netcon without clicking Save: `cs2.exe -tools -insecure -addon s2c_rc_probe
   -netconport 29000 -novid`, `open_asset maps/s2c_dec_s2c_pinst7.vmap`, `hammer_force_autosave`, then
   diff the autosave against ours. Not tried yet (the user's CS2 came up first).
-- Open from it: a brush entity whose model the source compile failed (missing material) has no
-  geometry in the package; the decompile drops it, and so does a recompile, where Valve kept it. The
-  only faithful rebuild is a mesh that fails the same way; that is the user's call. Our world builder
-  does not drop toolsskip faces (the decompile's fillers are toolsskip boxes).
+- Decided (user, 10-29): a brush entity whose model the source compile failed (missing material) has
+  no geometry in the package and stays out of the decompile, with its note ("its model ... is not in
+  the package (the compile failed it); no geometry"); a recompile drops it where Valve kept it. No
+  placeholder mesh that fails the same way. The RC check still lists them as "missing from ours".
+- Open from it: our world builder does not drop toolsskip faces (the decompile's fillers are
+  toolsskip boxes).
 
 Done this session: atixref's ropes (CMapPath rebuilt, positions and tangents solved), template
 members' placement as an exact solve, light-step keys (test checks them against the package;
