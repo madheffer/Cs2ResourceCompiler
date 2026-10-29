@@ -417,6 +417,10 @@ public sealed class VmapBuilder
         return instance;
     }
 
+    /// <summary>Take a node added at the world's root out again (a padding node tried and not kept).</summary>
+    public void RemoveFromWorld(DmxBinary.Element node)
+        => World.Attributes["children"] = (World.Get<object?[]>("children") ?? []).Where(c => !ReferenceEquals(c, node)).ToArray();
+
     /// <summary>Every node id the map holds so far.</summary>
     public IEnumerable<int> NodeIds()
     {

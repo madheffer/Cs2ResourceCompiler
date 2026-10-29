@@ -158,14 +158,26 @@ public static class MapDecompiler
         int LumpIndex(Scope sc) => sc.Lump;
         var families = new List<List<Scope>>();
         string Signature(Scope sc) => string.Join(",", sc.Entities.Select(e => $"{e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..]}@{e.SourceId}").Order(StringComparer.Ordinal));
-        foreach (var family in scopes.Values.Where(sc => sc.Parent is not null && sc.Entities.Count > 0)
-                                     .GroupBy(sc => (sc.Parent, Signature(sc))).Where(g => g.Count() > 1))
+        // The placements need not share a parent: s2c_prefabprobe9's 115 places at the root the map
+        // 112's 2156..2158 place inside 112's map, and all four carry the same indices (the walk meets
+        // the loaded map once). Scopes are taken in lump order, a parent before its children, and one
+        // under a placement placed again is that placement's own (written with the first) and joins none.
+        var bySignature = new Dictionary<string, List<Scope>>(StringComparer.Ordinal);
+        foreach (var sc in scopes.Values.Where(sc => sc.Parent is not null && sc.Entities.Count > 0).OrderBy(LumpIndex))
         {
-            var placements = family.OrderBy(LumpIndex).ToList();
-            foreach (var other in placements.Skip(1))
-                other.SameAs = placements[0];
-            families.Add(placements);
+            var replaced = false;
+            for (var up = sc.Parent; up is not null; up = up.Parent)
+                replaced |= up.SameAs is not null;
+            if (replaced)
+                continue;
+            var key = Signature(sc);
+            if (!bySignature.TryGetValue(key, out var family))
+                bySignature[key] = family = [];
+            else
+                sc.SameAs = family[0];
+            family.Add(sc);
         }
+        families.AddRange(bySignature.Values.Where(f => f.Count > 1));
 
         // An instance's copy made inside a prefab's map ships with a plain id but carries its
         // template's walk index (MapInstances.Expand; EntityLumpSet.MainLump), which lies in the
@@ -178,12 +190,40 @@ public static class MapDecompiler
             foreach (var e in scopes[""].Entities.Where(e => e.SourceId >= blocks[0].Start).ToList())
             {
                 scopes[""].Entities.Remove(e);
-                var owner = blocks.Last(b => b.Start <= e.SourceId).Scope;
-                (owner.SameAs ?? owner).Copies.Add(e);
+                Canonical(blocks.Last(b => b.Start <= e.SourceId).Scope).Copies.Add(e);
             }
 
+        // The scope a placement's nodes are written in: its family's first placement, under its
+        // parent's (a prefab inside a prefab placed again is the first placement's same prefab).
+        Scope Canonical(Scope sc)
+        {
+            if (sc.Parent is null)
+                return sc;
+            var parent = Canonical(sc.Parent);
+            var s = parent == sc.Parent ? sc : parent.Children.FirstOrDefault(c => c.NodeId == sc.NodeId) ?? sc;
+            return s.SameAs is { } first && first != s ? Canonical(first) : s;
+        }
+
+
+        foreach (var placements in families.OrderBy(f => f[0].Chain.Count(c => c == ':')))
+        {
+            // The map's placements inside prefabs placed again ship too and constrain its frame as
+            // much as its own (s2c_prefabprobe9's 113:2157 is 112:2156's map through prefabs 113 and
+            // 2157): solved with them, in lump order (its instances' collapses run in tree order).
+            var through = scopes.Values.Where(sc => sc.Parent is not null && sc.Entities.Count > 0 && !placements.Contains(sc)
+                                                    && Canonical(sc) == placements[0]);
+            SolveFrame([.. placements.Concat(through).OrderBy(LumpIndex)], notes);
+            // Solved over the lump's world placements, a nested placement's prefab transform is its
+            // outer prefab's and its own composed (SettleWorld.PrefabPlacement moves the inner prefab
+            // node by the outer's matrix): its prefab node stands in the outer map's frame.
+            IntoOuterFrame(placements, notes);
+        }
+        // A later placement of a family whose map places prefabs moves those too: it is solved on the
+        // map's own nodes, so it is checked on the nested ones as well (through both prefabs) and
+        // moved to floats near it that land them all.
         foreach (var placements in families)
-            SolveFrame(placements, notes);
+            foreach (var later in placements.Skip(1).Where(p => p.Children.Count > 0))
+                LandNested(placements[0], later, Canonical, notes);
 
         // A prefab map's own instances collapsed more than once (its copies' indices start again):
         // planned as the map's own are (InstancePlan), over the prefab map's nodes. A shared prefab
@@ -256,12 +296,14 @@ public static class MapDecompiler
         var at = 1;
         var overshoot = false;
         var matched = false;
+        // Every collapse's copies, before the template writer keeps only the first's (TemplatePlan).
+        var allCopies = scopes.Values.ToDictionary(sc => sc, sc => sc.Copies.OrderBy(c => c.Entity.NodeId).ToList());
         Emit(main);
         // A shared prefab map is written once, so a brush entity its first placement has no hulls for
         // has none in any placement: noted for each later one whose own model the package lacks too.
         foreach (var placements in families)
             foreach (var e in placements[0].Entities.Where(e => e.BrushModel is { } m && !files.ContainsKey(m + "_c")))
-                foreach (var x in placements.Skip(1).SelectMany(p => p.Entities)
+                foreach (var x in scopes.Values.Where(sc => sc != placements[0] && Canonical(sc) == placements[0]).SelectMany(p => p.Entities)
                                             .Where(x => x.IdPath[(x.IdPath.LastIndexOf(':') + 1)..] == e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..]
                                                         && x.BrushModel is { } xm && !files.ContainsKey(xm + "_c")))
                     notes.Add($"{x.Entity.ClassName} {x.IdPath}: placed from prefab {placements[0].Chain}'s map, and its model {x.BrushModel} is not in the package either; no geometry");
@@ -497,6 +539,11 @@ public static class MapDecompiler
                 while (pending.Count > 0 && pending.Peek().EmitAt == int.MaxValue
                        && entities.IndexOf(pending.Peek().Group.Collapses[pending.Peek().Index][0]) < child.Lump)
                     PlaceInstance(pending.Dequeue(), null);
+                // So too a prefab map's one template group (s2c_prefabprobe9's fixmid: its instance
+                // ahead of its three prefabs collapses first in their round, its copies' ids before
+                // their blocks).
+                if (group is not null && scope.Instance is null && scope.Copies.Min(entities.IndexOf) < child.Lump)
+                    scope.Instance = builder.AddInstance(NewId(), group, scope.CopyInstanceAt, Vector3.Zero);
                 var fix = prefabs.GetValueOrDefault(child.Chain);
                 if (child.SameAs is { } first)
                 {
@@ -518,7 +565,7 @@ public static class MapDecompiler
             // walk ends (the parent's subtree end, MapInstances.EmitAt), and with its transform
             // its group's (both the origin, unturned) the collapse moves nothing
             // (SettleWorld.BakedPlacement), so each copy stands where its template does.
-            if (group is not null)
+            if (group is not null && scope.Instance is null)
                 scope.Instance = builder.AddInstance(NewId(), group, scope.CopyInstanceAt, Vector3.Zero);
             if (plan is not null)
             {
@@ -558,7 +605,8 @@ public static class MapDecompiler
             // The map's own copies through wrappers: its highest node id moves every block by one.
             if (wraps > 0 && mainCopies.Count > 0 && Simulated(main) is var first && first < mainCopies.Min(c => c.Entity.NodeId))
                 main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + mainCopies.Min(c => c.Entity.NodeId) - first);
-            foreach (var scope in scopes.Values.Where(sc => sc.Instance is not null || (sc.Plan is not null && sc.Builder is not null)).OrderBy(sc => sc.Copies.Min(c => c.Entity.NodeId)))
+            // With shared prefab maps every collapse is matched at once (MatchEveryCollapse).
+            foreach (var scope in scopes.Values.Where(sc => families.Count == 0 && (sc.Instance is not null || (sc.Plan is not null && sc.Builder is not null))).OrderBy(sc => sc.Copies.Min(c => c.Entity.NodeId)))
             {
                 var target = scope.Copies.Min(c => c.Entity.NodeId);
                 var simulated = Simulated(scope);
@@ -587,9 +635,92 @@ public static class MapDecompiler
                 if (Simulated(scope) != target)
                     notes.Add($"prefab {scope.Chain}: its instance's copies come out at {Simulated(scope)}, not {target}; not matched");
             }
+            if (families.Count > 0)
+                MatchEveryCollapse();
             matched = !notes.Any(n => n.EndsWith("; not matched", StringComparison.Ordinal))
                       && (mainCopies.Count == 0 || SimulatedCopyIds(main, scopes.Values, mapName, schema).Where(c => c.Scope == main)
                                                        .Select(c => c.Id).ToHashSet().IsSupersetOf(mainCopies.Select(c => c.Entity.NodeId)));
+        }
+
+        // Every collapse's first copy, not only each map's first: a prefab map inside another widens
+        // the outer one's block by its own size, so one map at a time cannot set the steps between
+        // collapses (s2c_prefabprobe9: fixinner 3 nodes short puts fixmid's placements 9 too close).
+        // Each prefab map that holds nodes and the main map's highest id is a variable; how one node
+        // more in each moves every collapse's first copy is measured on the rebuild through the
+        // forward (a node added and taken out again), the paddings solved from that (least squares,
+        // rounded, never negative), and kept only when every collapse then lands on its id.
+        void MatchEveryCollapse()
+        {
+            var withCopies = scopes.Values.Where(sc => sc.Builder is not null && allCopies[sc].Count > 0 && (sc.Instance is not null || sc.Plan is not null)).ToList();
+            List<int> Starts()
+            {
+                var sim = SimulatedCopyIds(main, scopes.Values, mapName, schema);
+                var starts = new List<int>();
+                foreach (var sc in withCopies)
+                {
+                    var target = allCopies[sc];
+                    var blocks = CollapseCount(target);
+                    var ids = sim.Where(c => c.Scope == sc).Select(c => c.Id).Order().ToList();
+                    if (ids.Count == 0 || blocks == 0 || ids.Count % blocks != 0)
+                        return [];
+                    for (var b = 0; b < blocks; b++)
+                        starts.Add(ids[b * (ids.Count / blocks)]);
+                }
+                return starts;
+            }
+            var want = new List<int>();
+            foreach (var sc in withCopies)
+            {
+                var sorted = allCopies[sc];
+                for (var i = 0; i < sorted.Count; i++)
+                    if (i == 0 || sorted[i].SourceId <= sorted[i - 1].SourceId)
+                        want.Add(sorted[i].Entity.NodeId);
+            }
+            var now = Starts();
+            if (now.Count != want.Count || now.SequenceEqual(want))
+                return;
+            var maps = scopes.Values.Where(sc => sc.Parent is not null && sc.Builder is not null && sc.NewId is not null).ToList();
+            var columns = new List<int[]>();
+            foreach (var sc in maps)
+            {
+                var probe = sc.Builder!.AddGroup(sc.NewId!());
+                columns.Add([.. Starts().Zip(now, (a, b) => a - b)]);
+                sc.Builder!.RemoveFromWorld(probe);
+            }
+            {
+                var probe = main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + 1);
+                columns.Add([.. Starts().Zip(now, (a, b) => a - b)]);
+                main.Builder!.RemoveFromWorld(probe);
+            }
+            // The fewest maps padded that solve it exactly: subsets of the variables by size.
+            var gap = want.Zip(now, (a, b) => (double)(a - b)).ToArray();
+            int[]? x = null;
+            for (var size = 1; size <= columns.Count && x is null; size++)
+                foreach (var subset in Subsets(columns.Count, size))
+                {
+                    if (LeastSquares([.. subset.Select(j => columns[j])], gap) is not { } part || part.Any(v => v < 0))
+                        continue;
+                    var full = new int[columns.Count];
+                    for (var i = 0; i < subset.Length; i++)
+                        full[subset[i]] = part[i];
+                    if (want.Select((w, i) => w - now[i] - columns.Select((c, j) => c[i] * full[j]).Sum()).All(r => r == 0))
+                    {
+                        x = full;
+                        break;
+                    }
+                }
+            if (x is null)
+            {
+                notes.Add($"instances: no paddings land every collapse's copies ({want.Count} collapses); not matched");
+                return;
+            }
+            for (var j = 0; j < maps.Count; j++)
+                for (var k = 0; k < x[j]; k++)
+                    maps[j].Builder!.AddGroup(maps[j].NewId!());
+            if (x[^1] > 0)
+                main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + x[^1]);
+            if (!Starts().SequenceEqual(want))
+                notes.Add("instances: the paddings solved do not land every collapse's copies; not matched");
         }
 
         return new Result(main.Builder!.Write(), entities, placeholders, notes)
@@ -871,8 +1002,9 @@ public static class MapDecompiler
         // placement then lands on its copy.
         if (perCollapse > 0 && copies.Count == perCollapse * placements.Count)
         {
+            var blockOf = CopyBlocks(solution, copies, perCollapse, placements.Count);
             var wanted = Enumerable.Range(0, perCollapse).Select(c => (IReadOnlyList<(Vector3 Origin, Vector3 Angles)>)
-                [.. Enumerable.Range(0, placements.Count).Select(k => (copies[(k * perCollapse) + c].Entity.Origin, copies[(k * perCollapse) + c].Entity.Angles))]).ToList();
+                [.. Enumerable.Range(0, placements.Count).Select(k => (copies[(blockOf[k] * perCollapse) + c].Entity.Origin, copies[(blockOf[k] * perCollapse) + c].Entity.Angles))]).ToList();
             var local = wanted.Select(w => FrameSolver.Locate(solution, w, copies: true)).ToArray();
             var missed = local.Count(l => l is null);
             if (missed > 0)
@@ -892,6 +1024,215 @@ public static class MapDecompiler
                 if (local[c] is { } at)
                     first.Copies[first.Copies.IndexOf(copies[c])] = copies[c] with { Entity = copies[c].Entity with { Origin = at.Origin, Angles = at.Angles } };
         }
+    }
+
+    /// <summary>Every subset of 0..n-1 of the given size, in index order.</summary>
+    private static IEnumerable<int[]> Subsets(int n, int size)
+    {
+        if (size == 0) { yield return []; yield break; }
+        for (var first = 0; first <= n - size; first++)
+            foreach (var rest in Subsets(n - first - 1, size - 1))
+                yield return [first, .. rest.Select(r => r + first + 1)];
+    }
+
+    /// <summary>The non-negative integers x nearest to solving columns·x = b in least squares (normal
+    /// equations, Gaussian elimination, rounded); null when the system is singular.</summary>
+    private static int[]? LeastSquares(List<int[]> columns, double[] b)
+    {
+        var n = columns.Count;
+        var a = new double[n, n + 1];
+        for (var i = 0; i < n; i++)
+        {
+            for (var j = 0; j < n; j++)
+                a[i, j] = columns[i].Zip(columns[j], (p, q) => (double)p * q).Sum();
+            a[i, n] = columns[i].Zip(b, (p, q) => p * q).Sum();
+        }
+        // A column that moves nothing is a padding that does nothing: left at 0.
+        var live = Enumerable.Range(0, n).Where(i => a[i, i] != 0).ToList();
+        var m = live.Count;
+        var s = new double[m, m + 1];
+        for (var i = 0; i < m; i++)
+        {
+            for (var j = 0; j < m; j++)
+                s[i, j] = a[live[i], live[j]];
+            s[i, m] = a[live[i], n];
+        }
+        for (var c = 0; c < m; c++)
+        {
+            var p = Enumerable.Range(c, m - c).MaxBy(r => Math.Abs(s[r, c]));
+            if (Math.Abs(s[p, c]) < 1e-9)
+                return null;
+            for (var k = 0; k <= m; k++)
+                (s[c, k], s[p, k]) = (s[p, k], s[c, k]);
+            for (var r = 0; r < m; r++)
+            {
+                if (r == c) continue;
+                var f = s[r, c] / s[c, c];
+                for (var k = c; k <= m; k++)
+                    s[r, k] -= f * s[c, k];
+            }
+        }
+        var x = new int[n];
+        for (var i = 0; i < m; i++)
+            x[live[i]] = (int)Math.Round(s[i, m] / s[i, i]);
+        return x;
+    }
+
+    /// <summary>
+    /// Which block of copies (perCollapse a block, in id order) each placement's collapse wrote. The
+    /// collapses run in the bake's rounds, not the lump's order (s2c_prefabprobe9: 115's collapse at
+    /// the root comes a round before the nine inside 112, 113 and 114), so blocks are matched to
+    /// placements by place: block 0's centroid taken back through a placement's solved transform and
+    /// out through each other's lands nearest its own block; the assignment with the least total miss
+    /// over every choice for block 0 is kept. Only a guess at the order: every copy is then located
+    /// bit for bit through it (Locate), or not at all.
+    /// </summary>
+    private static int[] CopyBlocks(FrameSolver.Solution solution, List<EntityLumpAuthor.SourceEntity> copies, int perCollapse, int count)
+    {
+        var centroid = Enumerable.Range(0, count).Select(b =>
+        {
+            var s = Vector3.Zero;
+            for (var c = 0; c < perCollapse; c++)
+                s += copies[(b * perCollapse) + c].Entity.Origin;
+            return s / perCollapse;
+        }).ToArray();
+        static Vector3 Out((Vector3 Origin, Vector3 Angles) t, Vector3 l)
+        {
+            var (sin, cos) = Math.SinCos(t.Angles.Y * Math.PI / 180);
+            return new Vector3((float)((cos * l.X) - (sin * l.Y)), (float)((sin * l.X) + (cos * l.Y)), l.Z) + t.Origin;
+        }
+        static Vector3 Back((Vector3 Origin, Vector3 Angles) t, Vector3 w)
+        {
+            var d = w - t.Origin;
+            var (sin, cos) = Math.SinCos(-t.Angles.Y * Math.PI / 180);
+            return new Vector3((float)((cos * d.X) - (sin * d.Y)), (float)((sin * d.X) + (cos * d.Y)), d.Z);
+        }
+        var best = Enumerable.Range(0, count).ToArray();
+        var bestMiss = double.MaxValue;
+        for (var k0 = 0; k0 < count; k0++)
+        {
+            // Block 0 is placement k0's; each placement takes the free block nearest where block 0's
+            // local centroid lands through it.
+            var local = Back(solution.Later[k0], centroid[0]);
+            var blockOf = new int[count];
+            var used = new bool[count];
+            var miss = 0.0;
+            var ok = true;
+            for (var k = 0; k < count && ok; k++)
+            {
+                var at = Out(solution.Later[k], local);
+                var b = Enumerable.Range(0, count).Where(i => !used[i]).DefaultIfEmpty(-1).MinBy(i => i < 0 ? 0 : (centroid[i] - at).LengthSquared());
+                if (b < 0) { ok = false; break; }
+                used[b] = true;
+                blockOf[k] = b;
+                miss += (centroid[b] - at).Length();
+            }
+            if (ok && blockOf[k0] == 0 && miss < bestMiss)
+                (best, bestMiss) = (blockOf, miss);
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// A nested family's prefab transforms moved into its outer prefab map's frame. The solve gives
+    /// each placement's composed transform (where the outer prefab's matrix moves the inner prefab
+    /// node, SettleWorld.PrefabPlacement); the inner node's own origin is the float the outer's
+    /// first placement (unturned, a translation) moves onto it, and its angles the composed ones or
+    /// floats near them, kept only when every node of the map lands through both prefabs as through
+    /// the composed one, bit for bit.
+    /// </summary>
+    private static void IntoOuterFrame(List<Scope> placements, List<string> notes)
+    {
+        static DmxBinary.Element Prefab((Vector3 Origin, Vector3 Angles) t)
+        {
+            var e = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
+            e.Attributes["origin"] = t.Origin;
+            e.Attributes["angles"] = t.Angles;
+            return e;
+        }
+        var nodes = placements[0].Entities.Select(e => (e.Entity.Origin, e.Entity.Angles)).ToList();
+        foreach (var p in placements)
+        {
+            if (p.Parent is not { Parent: not null } outer || outer.Placement == default)
+                continue;
+            var outerNode = Prefab(outer.Placement);
+            var composed = Prefab(p.Placement);
+            var want = nodes.Select(n => SettleWorld.PrefabPlacement(n.Origin, n.Angles, [composed])).ToList();
+            bool Lands((Vector3, Vector3) own)
+            {
+                var inner = Prefab(own);
+                return nodes.Select((n, j) => SettleWorld.PrefabPlacement(n.Origin, n.Angles, [outerNode, inner]) == want[j]).All(x => x);
+            }
+            static float Preimage(float placed, float shift)
+            {
+                var x = placed - shift;
+                for (var d = 0; d < 8 && x + shift != placed; d++)
+                    x = x + shift < placed ? MathF.BitIncrement(x) : MathF.BitDecrement(x);
+                return x;
+            }
+            var origin = new Vector3(Preimage(p.Placement.Origin.X, outer.Placement.Origin.X),
+                                     Preimage(p.Placement.Origin.Y, outer.Placement.Origin.Y),
+                                     Preimage(p.Placement.Origin.Z, outer.Placement.Origin.Z));
+            var found = FrameSolver.AngleCandidates(p.Placement.Angles).Take(2000).Select(a => ((Vector3, Vector3)?)(origin, a))
+                                   .FirstOrDefault(t => outer.Placement.Angles == Vector3.Zero && Lands(t!.Value));
+            if (found is { } own)
+                p.Placement = own;
+            else
+                notes.Add($"prefab {p.Chain}: no placement in prefab {outer.Chain}'s frame lands its nodes as the solve's does; left composed");
+        }
+    }
+
+    /// <summary>
+    /// A later placement of a shared map that places prefabs: every node it ships, its map's own and
+    /// those of the prefabs inside (placed through it, then through the first placement's same
+    /// prefab: SettleWorld.PrefabPlacement over both), as the lump holds them. Its transform from the
+    /// solve is kept when that lands them all, else the floats near it (origin up to 3 either side
+    /// on each axis, yaw up to 8) are tried, nearest first, and the first that lands every node taken.
+    /// </summary>
+    private static void LandNested(Scope first, Scope later, Func<Scope, Scope> canonical, List<string> notes)
+    {
+        static DmxBinary.Element Prefab((Vector3 Origin, Vector3 Angles) t)
+        {
+            var e = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
+            e.Attributes["origin"] = t.Origin;
+            e.Attributes["angles"] = t.Angles;
+            return e;
+        }
+        static string Inner(string idPath) => idPath[(idPath.LastIndexOf(':') + 1)..];
+        // Each node: its local placement in the map written, the prefab nodes between, and the lump's.
+        var checks = new List<((Vector3 Origin, Vector3 Angles) Local, DmxBinary.Element[] Inside, (Vector3, Vector3) Want)>();
+        foreach (var x in later.Entities)
+            if (first.Entities.FirstOrDefault(e => Inner(e.IdPath) == Inner(x.IdPath)) is { } own)
+                checks.Add(((own.Entity.Origin, own.Entity.Angles), [], (x.Entity.Origin, x.Entity.Angles)));
+        foreach (var child in later.Children)
+        {
+            if (first.Children.FirstOrDefault(c => c.NodeId == child.NodeId) is not { } same)
+                continue;
+            var written = canonical(same);
+            var through = Prefab(same.Placement);
+            foreach (var x in child.Entities)
+                if (written.Entities.FirstOrDefault(e => Inner(e.IdPath) == Inner(x.IdPath)) is { } own)
+                    checks.Add(((own.Entity.Origin, own.Entity.Angles), [through], (x.Entity.Origin, x.Entity.Angles)));
+        }
+        bool Lands((Vector3 Origin, Vector3 Angles) t)
+        {
+            var node = Prefab(t);
+            return checks.All(c => SettleWorld.PrefabPlacement(c.Local.Origin, c.Local.Angles, [node, .. c.Inside]) == c.Want);
+        }
+        if (Lands(later.Placement))
+            return;
+        var (o, a) = later.Placement;
+        var near = from dx in Enumerable.Range(-3, 7) from dy in Enumerable.Range(-3, 7) from dz in Enumerable.Range(-3, 7)
+                   from dyaw in Enumerable.Range(-8, 17)
+                   orderby Math.Abs(dx) + Math.Abs(dy) + Math.Abs(dz) + Math.Abs(dyaw)
+                   select (new Vector3(FrameSolver.Step(o.X, dx), FrameSolver.Step(o.Y, dy), FrameSolver.Step(o.Z, dz)), a with { Y = FrameSolver.Step(a.Y, dyaw) });
+        foreach (var t in near)
+            if (Lands(t))
+            {
+                later.Placement = t;
+                return;
+            }
+        notes.Add($"prefab {later.Chain}: no transform near the solved one lands the nodes of the prefabs inside it ({checks.Count} nodes)");
     }
 
     /// <summary>

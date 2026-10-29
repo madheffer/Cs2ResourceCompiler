@@ -150,8 +150,8 @@
   "module": "Prefabs",
   "subtask": "One prefab map placed several times",
   "weight": 3,
-  "done": 0.8,
-  "evidence": "exact frame solver; probe11 + 12 exact incl. instance copies in turned placements (LocateCopies, 10-29); nested families (probe9) open"
+  "done": 1,
+  "evidence": "exact frame solver; probe9 (families nested in families, 10 placements of one map), 11, 12 exact incl. instance copies in turned placements (10-29)"
  },
  {
   "module": "Prefabs",
@@ -192,8 +192,8 @@
   "module": "Instances",
   "subtask": "Several collapses of one template, rounds, nesting",
   "weight": 4,
-  "done": 0.9,
-  "evidence": "atixref 13 groups incl. nested 630 in 631 exact; a prefab map's own collapses (probe3) exact; atixref as a prefab turned 90 (probe4) exact incl. its nested group under turned collapses; shared families open"
+  "done": 1,
+  "evidence": "atixref 13 groups incl. nested 630 in 631; prefab maps' own collapses; probe9's collapses across rounds paired by place and ids matched at once (10-29)"
  },
  {
   "module": "Instances",
@@ -277,7 +277,7 @@
   "subtask": "Entity lump round trip test",
   "weight": 2,
   "done": 1,
-  "evidence": "Entities_CompileAsTheSourceDoes, 18 of 20 maps exact (10-29)"
+  "evidence": "Entities_CompileAsTheSourceDoes, 19 of 20 maps exact (10-29); probe3's still-falling prop not invertible"
  },
  {
   "module": "Verification",

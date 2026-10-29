@@ -181,62 +181,70 @@ public static class FrameSolver
                 {
                     matrices[k] = SettleWorld.AngleMatrixDouble(turn, Vector3.Zero);
                     var m = matrices[k];
-                    fit = null;
+                    // Every origin that lands node r (up to 16): a few floats either side of the one its
+                    // local placement gives, and that rounded to whole units (s2c_prefabprobe9's 112:2158 at
+                    // (5120, 1024) derives as (5120.001, 1024.0006), which lands node r and not the rest).
+                    var fits = new List<Vector3>();
                     foreach (var lx in sets[r].X) foreach (var ly in sets[r].Y) foreach (var lz in sets[r].Z)
                     {
+                        if (fits.Count >= 16)
+                            break;
                         var l0 = new Vector3(lx, ly, lz);
                         double Row(int i) => ((double)m[i * 4] * l0.X) + ((double)m[(i * 4) + 1] * l0.Y) + ((double)m[(i * 4) + 2] * l0.Z);
                         var guess = new Vector3((float)(w0.X - Row(0)), (float)(w0.Y - Row(1)), zOrigin[k]);
+                        var near = new List<Vector3>();
                         foreach (var dx in (int[])[0, 1, -1, 2, -2])
                             foreach (var dy in (int[])[0, 1, -1, 2, -2])
-                                foreach (var dz in (int[])[0])
-                                {
-                                    var o = new Vector3(Step(guess.X, dx), Step(guess.Y, dy), Step(guess.Z, dz));
-                                    if (fit is null && Lands(k, o, l0, w0))
-                                        fit = o;
-                                }
-                        if (fit is not null)
-                            break;
+                                near.Add(new Vector3(Step(guess.X, dx), Step(guess.Y, dy), guess.Z));
+                        near.Add(new Vector3(MathF.Round(guess.X), MathF.Round(guess.Y), guess.Z));
+                        foreach (var o in near)
+                            if (!fits.Contains(o) && Lands(k, o, l0, w0))
+                                fits.Add(o);
                     }
-                    if (debug && fit is null && turn == derived[k])
+                    if (debug && fits.Count == 0 && turn == derived[k])
                     {
                         var l0 = new Vector3(sets[r].X[0], sets[r].Y[0], sets[r].Z[0]);
                         var m0 = matrices[k];
                         miss = $"trace placement {k}: l0 {l0:R}, m {string.Join(" ", m0.Select(v => v.ToString("R")))}";
                     }
-                    if (fit is not { } o2)
-                        continue;
-                    var every = true;
-                    for (var j = 0; j < first.Length && every; j++)
+                    foreach (var o2 in fits)
                     {
-                        every = sets[j].X.Any(lx => sets[j].Y.Any(ly => sets[j].Z.Any(lz => Lands(k, o2, new Vector3(lx, ly, lz), placed[k][j].Origin))));
-                        if (debug && !every && turn == derived[k])
-                            miss = $"turn {turn:R} origin {o2:R}: node {j} {first[j].Origin:R} -> {placed[k][j].Origin:R} lands no local {sets[j].X[0]:R},{sets[j].Y[0]:R},{sets[j].Z[0]:R}";
+                        var every = true;
+                        for (var j = 0; j < first.Length && every; j++)
+                        {
+                            every = sets[j].X.Any(lx => sets[j].Y.Any(ly => sets[j].Z.Any(lz => Lands(k, o2, new Vector3(lx, ly, lz), placed[k][j].Origin))));
+                            if (debug && !every && turn == derived[k])
+                                miss = $"turn {turn:R} origin {o2:R}: node {j} {first[j].Origin:R} -> {placed[k][j].Origin:R} lands no local {sets[j].X[0]:R},{sets[j].Y[0]:R},{sets[j].Z[0]:R}";
+                        }
+                        // The turn has to land the reference node's angles too, from some local angles that
+                        // the first placement also lands: a node where its prefab or group stands lands its
+                        // position under any turn (atixref's lights at their group's origin).
+                        if (every)
+                        {
+                            var l = new Vector3(sets[r].X[0], sets[r].Y[0], sets[r].Z[0]);
+                            var here = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
+                            here.Attributes["origin"] = o2;
+                            here.Attributes["angles"] = turn;
+                            var firstPrefab = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
+                            firstPrefab.Attributes["origin"] = shift;
+                            firstPrefab.Attributes["angles"] = turns[0];
+                            every = AngleCandidates(Unturned(first[r].Angles, turns[0])).Take(2197).Any(a =>
+                                ++work > 0 && SettleWorld.PrefabPlacement(l, a, [firstPrefab]).Angles == first[r].Angles
+                                && SettleWorld.PrefabPlacement(l, a, [here]).Angles == placed[k][r].Angles);
+                            if (debug && !every && turn == derived[k])
+                                miss = $"turn {turn:R} origin {o2:R}: reference node angles {first[r].Angles:R} -> {placed[k][r].Angles:R} land from no local angles";
+                        }
+                        if (every)
+                        {
+                            fit = o2;
+                            break;
+                        }
                     }
-                    // The turn has to land the reference node's angles too, from some local angles that
-                    // the first placement also lands: a node where its prefab or group stands lands its
-                    // position under any turn (atixref's lights at their group's origin).
-                    if (every)
-                    {
-                        var l = new Vector3(sets[r].X[0], sets[r].Y[0], sets[r].Z[0]);
-                        var here = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
-                        here.Attributes["origin"] = o2;
-                        here.Attributes["angles"] = turn;
-                        var firstPrefab = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
-                        firstPrefab.Attributes["origin"] = shift;
-                        firstPrefab.Attributes["angles"] = turns[0];
-                        every = AngleCandidates(Unturned(first[r].Angles, turns[0])).Take(2197).Any(a =>
-                            ++work > 0 && SettleWorld.PrefabPlacement(l, a, [firstPrefab]).Angles == first[r].Angles
-                            && SettleWorld.PrefabPlacement(l, a, [here]).Angles == placed[k][r].Angles);
-                        if (debug && !every && turn == derived[k])
-                            miss = $"turn {turn:R} origin {o2:R}: reference node angles {first[r].Angles:R} -> {placed[k][r].Angles:R} land from no local angles";
-                    }
-                    if (every)
+                    if (fit is not null)
                     {
                         turns[k] = turn;
                         break;
                     }
-                    fit = null;
                 }
                 if (fit is not { } found)
                 {
