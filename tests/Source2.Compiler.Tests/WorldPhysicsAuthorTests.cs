@@ -77,6 +77,12 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
             return soups;
         }
         var (a, b) = (Soups(p[1]), Soups(p[2]));
+        // DECOMPILE_SOUPS_DUMP=<dir>: each soup's input triangles, one per line as their corners' positions.
+        if (Environment.GetEnvironmentVariable("DECOMPILE_SOUPS_DUMP") is { Length: > 0 } dump)
+            foreach (var (name, soups) in (ValueTuple<string, List<(int[] I, Vector3[] V)>>[])[("source", a), ("ours", b)])
+                for (var s = 0; s < soups.Count; s++)
+                    File.WriteAllLines(Path.Combine(dump, $"{name}_{s}.txt"), Enumerable.Range(0, soups[s].I.Length / 3)
+                        .Select(t => string.Join(" ", Enumerable.Range(0, 3).Select(c => soups[s].V[soups[s].I[t * 3 + c]]).Select(v => $"{v.X:R},{v.Y:R},{v.Z:R}"))));
         for (var s = 0; s < Math.Min(a.Count, b.Count); s++)
         {
             string Tri((int[] I, Vector3[] V) soup, int t) => $"{soup.V[soup.I[t * 3]]:R} {soup.V[soup.I[t * 3 + 1]]:R} {soup.V[soup.I[t * 3 + 2]]:R}";

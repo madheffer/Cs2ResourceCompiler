@@ -55,7 +55,7 @@ internal static class WorldGeometry
                 var toolName = tool != 0 && toolMaterials.TryGetValue(tool, out var t) ? t : null;
                 var name = Child(shape, "m_UserFriendlyName")?.ToString() ?? "";
                 var triangles = Enumerable.Range(0, triangleBlob.Length / 12)
-                    .Select(k => (BitConverter.ToInt32(triangleBlob, k * 12), BitConverter.ToInt32(triangleBlob, k * 12 + 4), BitConverter.ToInt32(triangleBlob, k * 12 + 8))).ToList();
+                    .Select(k => (A: BitConverter.ToInt32(triangleBlob, k * 12), B: BitConverter.ToInt32(triangleBlob, k * 12 + 4), C: BitConverter.ToInt32(triangleBlob, k * 12 + 8))).ToList();
                 // Each triangle's material and its corners' texcoords (from the render), soup-wide.
                 var soupMaterial = new string[triangles.Count];
                 var uv = new Dictionary<(int Triangle, int Vertex), Vector2>();
@@ -86,21 +86,34 @@ internal static class WorldGeometry
                     for (var v = 0; v < Math.Min(12, vertices.Length); v++)
                         notes.Add($"world debug: vertex {v} {vertices[v]:R} in triangles {string.Join(",", Enumerable.Range(0, triangles.Count).Where(t => triangles[t].Item1 == v || triangles[t].Item2 == v || triangles[t].Item3 == v).Take(6).Select(t => $"{triangles[t]}"))}");
                 }
+                // Each member's faces in order (soup triangle indices), then the soup's order repaired through
+                // the BVH (Repair), then each member written as a mesh.
+                var ordered = new List<List<Face>>();
                 foreach (var (member, first) in split)
                 {
                     List<(int A, int B, int C)> piece = [.. member.Select(k => triangles[k])];
-                    var materials = new List<string> { soupMaterial[member[0]] };
                     var material = new int[piece.Count];
-                    var faces = new List<(Vector3[], int, Vector2[]?)>();
-                    foreach (var (loop, m, cuts) in PolygonOrder(Polygons(piece, material, vertices), vertices, piece, first))
+                    ordered.Add([.. PolygonOrder(Polygons(piece, material, vertices), vertices, piece, first)
+                        .Select(f => new Face(f.Loop, [.. f.Triangles.Select(t => member[t])], [.. f.Starts]))]);
+                }
+                // DECOMPILE_WORLD_SEARCH=1: the BVH-driven repair (Repair); off by default, as it does not
+                // converge yet and costs a full RnMeshCreate per try (docs/DECOMPILE.md "World geometry").
+                var repaired = Environment.GetEnvironmentVariable("DECOMPILE_WORLD_SEARCH") == "1" ? Repair(ordered, triangles, vertices, notes) : null;
+                foreach (var faces in ordered)
+                {
+                    var materials = new List<string> { soupMaterial[faces[0].Triangles[0]] };
+                    var written = new List<(Vector3[], int, Vector2[]?)>();
+                    foreach (var f in faces)
                     {
                         Vector2[]? texcoords = null;
-                        if (cuts.All(t => uv.ContainsKey((member[t], piece[t].A))))
-                            texcoords = [.. loop.Select(v => uv[(member[cuts.First(t => piece[t].A == v || piece[t].B == v || piece[t].C == v)], v)])];
-                        faces.Add(([.. loop.Select(v => vertices[v])], m, texcoords));
+                        if (f.Triangles.All(t => uv.ContainsKey((t, triangles[t].A))))
+                            texcoords = [.. f.Loop.Select(v => uv[(f.Triangles.First(t => triangles[t].A == v || triangles[t].B == v || triangles[t].C == v), v)])];
+                        written.Add(([.. f.Loop.Select(v => vertices[v])], 0, texcoords));
                     }
-                    result.Add(new Mesh(materials, faces, name));
+                    result.Add(new Mesh(materials, written, name));
                 }
+                if (repaired is { } r)
+                    notes.Add($"world: soup of {triangles.Count} triangles: {r}");
             }
         // DECOMPILE_WORLDDEBUG=1: each physics vertex's nearest render position (how they relate).
         if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
@@ -116,6 +129,858 @@ internal static class WorldGeometry
         notes.Add($"world: {result.Count} mesh(es), the physics soups' connected pieces; {matched} triangles with a render face's material and texture coordinates, " +
                   $"{toolFaces} a tool material, {unknown} neither (toolsnodraw); render-only faces not rebuilt");
         return result;
+    }
+
+    /// <summary>A face as written: its loop from its start (soup vertex ids), the soup triangles it cuts into,
+    /// and its loop from every start that cuts it into them.</summary>
+    internal sealed record Face(int[] Loop, List<int> Triangles, List<int[]> Starts)
+    {
+        public int[] Loop { get; set; } = Loop;
+    }
+
+    /// <summary>
+    /// The forward's soup for these faces: each face's triangles in the triangulator's cut order from its
+    /// start (a world mesh's, on world positions), member after member, as the physics gathers them;
+    /// vertices numbered by first use (the weld keeps clusters in the order they form). Returns the input's
+    /// triangles (ids into the returned positions) and each one's face.
+    /// </summary>
+    private static (int[] Indices, Vector3[] Positions, int[] FaceOf) SoupInput(List<Face> faces, Vector3[] vertices)
+    {
+        var id = new Dictionary<int, int>();
+        var positions = new List<Vector3>();
+        var indices = new List<int>();
+        var faceOf = new List<int>();
+        for (var f = 0; f < faces.Count; f++)
+        {
+            var loop = faces[f].Loop;
+            var cut = loop.Length == 3 ? [0, 1, 2] : PolygonTriangulator.Triangulate([.. loop.Select(v => vertices[v])]);
+            for (var i = 0; i + 2 < cut.Length; i += 3)
+            {
+                foreach (var j in (int[])[cut[i], cut[i + 1], cut[i + 2]])
+                {
+                    var v = loop[j];
+                    if (!id.TryGetValue(v, out var k))
+                    {
+                        id[v] = k = positions.Count;
+                        positions.Add(vertices[v]);
+                    }
+                    indices.Add(k);
+                }
+                faceOf.Add(f);
+            }
+        }
+        return ([.. indices], [.. positions], [.. faceOf]);
+    }
+
+    /// <summary>
+    /// The soup's face order repaired until RnMeshCreate (our port, exact) gives the shipped triangles: the
+    /// faces' input is built (<see cref="SoupInput"/>) and run through the BVH, and at the first output
+    /// triangle that is not the shipped one, either the face holding both is cut from another start that
+    /// puts the shipped one first, or the shipped triangle's face is moved just before ours where it brings
+    /// no vertex in at either place (so the vertex order stays). Triangles are compared by their corners'
+    /// positions, rotation aside (RnMeshCreate turns each by its edges). Stops when the output is the
+    /// shipped list, when no repair applies, or after a bound; returns what it reached, null with no faces.
+    /// </summary>
+    /// <summary>
+    /// The ways to write these soup triangles as faces of one or two triangles: each pair sharing an edge
+    /// the other way round, in one plane (as <see cref="Polygons"/> merges), that the triangulator cuts back
+    /// into the pair from some start, or the triangle alone; each face with its cutting starts.
+    /// </summary>
+    private static IEnumerable<List<Face>> Pairings(List<int> left, List<(int A, int B, int C)> soup, Vector3[] vertices)
+    {
+        if (left.Count == 0)
+        {
+            yield return [];
+            yield break;
+        }
+        var t = left[0];
+        var rest = left.Skip(1).ToList();
+        int[] Loop(int k) => [soup[k].A, soup[k].B, soup[k].C];
+        int[][] Rotations(int[] l) => [.. Enumerable.Range(0, l.Length).Select(r => l.Skip(r).Concat(l.Take(r)).ToArray())];
+        foreach (var tail in Pairings(rest, soup, vertices))
+            yield return [new Face(Loop(t), [t], [.. Rotations(Loop(t))]), .. tail];
+        Vector3 Normal(int k) => Vector3.Normalize(Vector3.Cross(vertices[soup[k].B] - vertices[soup[k].A], vertices[soup[k].C] - vertices[soup[k].A]));
+        foreach (var u in rest)
+        {
+            var (p, q) = (Loop(t), Loop(u));
+            var (n, m) = (Normal(t), Normal(u));
+            if (!(Vector3.Dot(n, m) > 1 - 1e-5f && MathF.Abs(Vector3.Dot(n, vertices[p[0]]) - Vector3.Dot(n, vertices[q[0]])) < 1e-3f))
+                continue;
+            int[]? loop = null;
+            for (var x = 0; x < 3 && loop is null; x++)
+            {
+                int a = p[x], b = p[(x + 1) % 3];
+                var y = Array.IndexOf(q, b);
+                if (y >= 0 && q[(y + 1) % 3] == a && !p.Contains(q[(y + 2) % 3]))
+                    loop = [.. p.Take(x + 1), q[(y + 2) % 3], .. p.Skip(x + 1)];
+            }
+            if (loop is null)
+                continue;
+            var want = new HashSet<(int, int, int)> { Norm(soup[t]), Norm(soup[u]) };
+            var starts = Rotations(loop).Where(r =>
+            {
+                var cut = PolygonTriangulator.Triangulate([.. r.Select(v => vertices[v])]);
+                return cut.Length == 6 && new HashSet<(int, int, int)> { Norm((r[cut[0]], r[cut[1]], r[cut[2]])), Norm((r[cut[3]], r[cut[4]], r[cut[5]])) }.SetEquals(want);
+            }).ToList();
+            if (starts.Count == 0)
+                continue;
+            foreach (var tail in Pairings([.. rest.Where(x => x != u)], soup, vertices))
+                yield return [new Face(starts[0], [t, u], starts), .. tail];
+        }
+    }
+
+    private static IEnumerable<List<T>> Orders<T>(List<T> items)
+    {
+        if (items.Count <= 1)
+        {
+            yield return items;
+            yield break;
+        }
+        for (var i = 0; i < items.Count; i++)
+            foreach (var tail in Orders([.. items.Where((_, j) => j != i)]))
+                yield return [items[i], .. tail];
+    }
+
+    /// <summary>
+    /// An entry order for a BVH node that gives the shipped order below it, as close to our input order
+    /// (<paramref name="rank"/>) as the partition allows. A leaf keeps its entry, so its triangles in the
+    /// shipped order (<paramref name="shippedRank"/>); a split by count keeps it too (left half, right half);
+    /// a SAH split is the swap partition (the left ones keep their order, the right ones go round a queue:
+    /// one arriving joins the back, a left one arriving after any right one sends the front to the back),
+    /// which run backwards is deterministic: from the end, a left arrival is the left child's last and turns
+    /// the queue back (its back to the front), a right arrival is the queue's back. Which of the two each
+    /// step from the end takes is our order's later one. Reads <paramref name="trace"/> in pre-order.
+    /// </summary>
+    private static List<int> Preimage(List<(int[] Entry, HashSet<int>? Left, bool ByCount)> trace, ref int at,
+                                      Dictionary<int, int> shippedRank, int[] rank, int[] faceOf, Dictionary<int, List<bool>>? record = null)
+    {
+        var node = at;
+        var (entry, left, byCount) = trace[at++];
+        if (left is null)
+            return [.. entry.OrderBy(t => shippedRank.GetValueOrDefault(t, int.MaxValue))];
+        var a = Preimage(trace, ref at, shippedRank, rank, faceOf, record);
+        var q = Preimage(trace, ref at, shippedRank, rank, faceOf, record);
+        var choices = record is null ? null : record[node] = [];
+        if (byCount)
+            return [.. a, .. q];
+        var queue = new LinkedList<int>(q);
+        var backwards = new List<int>();
+        var (i, rights) = (a.Count - 1, q.Count);
+        while (i >= 0 || rights > 0)
+        {
+            // A face's other triangle first (faces stay whole), else our order's later one.
+            var glue = backwards.Count > 0 ? faceOf[backwards[^1]] : -1;
+            var takeLeft = i >= 0 && (rights == 0 || (faceOf[a[i]] == glue) != (faceOf[queue.Last!.Value] == glue)
+                ? i >= 0 && (rights == 0 || faceOf[a[i]] == glue)
+                : rank[a[i]] > rank[queue.Last!.Value]);
+            choices?.Add(takeLeft);
+            if (takeLeft)
+            {
+                backwards.Add(a[i--]);
+                if (rights > 0)
+                {
+                    var back = queue.Last!.Value;
+                    queue.RemoveLast();
+                    queue.AddFirst(back);
+                }
+            }
+            else
+            {
+                backwards.Add(queue.Last!.Value);
+                queue.RemoveLast();
+                rights--;
+            }
+        }
+        backwards.Reverse();
+        return backwards;
+    }
+
+    /// <summary>
+    /// The faces in an order following <paramref name="priority"/> (per face) as far as the soup's vertex
+    /// order allows: each step the most wanted face with a start whose cut brings in exactly the next
+    /// vertices (none for a face already met), that start cutting its triangles most nearly in
+    /// <paramref name="triangleRank"/>'s order; a face no step can take goes at the end.
+    /// </summary>
+    private static List<Face> Project(List<Face> faces, double[] priority, Func<int, int> triangleRank, Vector3[] vertices)
+    {
+        // Per face and start: the cut's corners and its triangles (soup ids).
+        var cuts = faces.Select(f => f.Starts.Select(loop =>
+        {
+            var cut = loop.Length == 3 ? [0, 1, 2] : PolygonTriangulator.Triangulate([.. loop.Select(v => vertices[v])]);
+            var corners = cut.Select(i => loop[i]).ToArray();
+            var triangles = Enumerable.Range(0, corners.Length / 3)
+                .Select(i => f.Triangles.FirstOrDefault(t => t >= 0 && Norm(TriangleOf(t)) == Norm((corners[i * 3], corners[i * 3 + 1], corners[i * 3 + 2])), -1)).ToArray();
+            return (Loop: loop, Corners: corners, Triangles: triangles);
+        }).ToList()).ToList();
+        (int, int, int) TriangleOf(int t) => soupTriangles![t];
+        var done = new bool[faces.Count];
+        var seen = new HashSet<int>();
+        var next = 0;
+        var result = new List<Face>();
+        var byPriority = Enumerable.Range(0, faces.Count).OrderBy(f => priority[f]).ToList();
+        while (result.Count < faces.Count)
+        {
+            var (pick, start) = (-1, -1);
+            foreach (var f in byPriority)
+            {
+                if (done[f])
+                    continue;
+                var bestInversions = int.MaxValue;
+                for (var s = 0; s < cuts[f].Count; s++)
+                {
+                    var fresh = cuts[f][s].Corners.Where(v => !seen.Contains(v)).Distinct().ToList();
+                    if (!fresh.Select((v, i) => v == next + i).All(x => x))
+                        continue;
+                    var ranks = cuts[f][s].Triangles.Select(triangleRank).ToList();
+                    var inversions = 0;
+                    for (var x = 0; x < ranks.Count; x++)
+                        for (var y = x + 1; y < ranks.Count; y++)
+                            if (ranks[x] > ranks[y])
+                                inversions++;
+                    if (inversions < bestInversions)
+                        (bestInversions, start) = (inversions, s);
+                }
+                if (start >= 0)
+                {
+                    pick = f;
+                    break;
+                }
+            }
+            if (pick < 0)
+            {
+                pick = byPriority.First(f => !done[f]);
+                start = 0;
+            }
+            done[pick] = true;
+            foreach (var v in cuts[pick][start].Corners)
+                if (seen.Add(v))
+                    next = Math.Max(next, v + 1);
+            result.Add(faces[pick] with { Loop = cuts[pick][start].Loop });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// The input built from its end with every BVH node's swap partition run backwards (see
+    /// <see cref="Preimage"/>), so each leaf gets the shipped order by construction; what is searched is
+    /// each SAH node's choice, step by step from the end, of a left arrival (the left child's next from its
+    /// end, turning the queue back when any right one came before) or a right one (the queue's back, pulled
+    /// from the right child's end while any is left). Each triangle the root gives must continue a face
+    /// from its end in one of its starts' cut, and a face once whole must leave the vertex order: going
+    /// backwards, a vertex whose last remaining use is placed is first used there, so it must be the
+    /// highest one not yet placed (corners from the cut's last). The inverted order's choices
+    /// (<paramref name="prefer"/>) are tried first. Returns the faces with their starts in input order, or
+    /// null when <paramref name="budget"/> steps find none.
+    /// </summary>
+    private static List<Face>? BackwardSearch(List<(int[] Entry, HashSet<int>? Left, bool ByCount)> trace, Func<int, int> soupOf,
+                                              Vector3[] vertices, List<(int A, int B, int C)> soup, Dictionary<int, List<bool>> prefer, int[] rankOfSoup, long budget, out string report)
+    {
+        var n = trace.Count;
+        var (lc, rc, leafOrder) = (new int[n], new int[n], new int[n][]);
+        var (isLeaf, byCount) = (new bool[n], new bool[n]);
+        var (remL, remR, virt, leafRem, emitted) = (new int[n], new int[n], new int[n], new int[n], new int[n]);
+        var (front, slots, gen) = (new List<int>[n], new List<int>[n], new int[n]);
+        var at = 0;
+        int Read()
+        {
+            var i = at++;
+            var (entry, left, count) = trace[i];
+            (front[i], slots[i]) = ([], []);
+            if (left is null)
+            {
+                isLeaf[i] = true;
+                leafOrder[i] = [.. entry.Select(soupOf).Order()];
+                leafRem[i] = entry.Length;
+                return i;
+            }
+            byCount[i] = count;
+            lc[i] = Read();
+            rc[i] = Read();
+            (remL[i], remR[i]) = (left.Count, entry.Length - left.Count);
+            virt[i] = remR[i];
+            return i;
+        }
+        Read();
+
+        // The faces each soup triangle can end (from the input's end, so it is the face's last one): itself
+        // alone from any corner, or a quad with a neighbour across an edge (the other way round, in one
+        // plane, as Polygons merges) that the triangulator cuts from some start into the neighbour then it.
+        var ends = new List<(int Partner, int[] Loop, int[] Corners)>[soup.Count];
+        var byEdge = new Dictionary<(int, int), int>();
+        for (var t = 0; t < soup.Count; t++)
+            foreach (var (x, y) in (ValueTuple<int, int>[])[(soup[t].A, soup[t].B), (soup[t].B, soup[t].C), (soup[t].C, soup[t].A)])
+                byEdge[(x, y)] = t;
+        Vector3 Normal(int k) => Vector3.Normalize(Vector3.Cross(vertices[soup[k].B] - vertices[soup[k].A], vertices[soup[k].C] - vertices[soup[k].A]));
+        for (var t = 0; t < soup.Count; t++)
+        {
+            int[] own = [soup[t].A, soup[t].B, soup[t].C];
+            ends[t] = [.. Enumerable.Range(0, 3).Select(r => (-1, (int[])[own[r], own[(r + 1) % 3], own[(r + 2) % 3]], (int[])[own[r], own[(r + 1) % 3], own[(r + 2) % 3]]))];
+            for (var x = 0; x < 3; x++)
+            {
+                if (!byEdge.TryGetValue((own[(x + 1) % 3], own[x]), out var u) || u == t)
+                    continue;
+                var (n1, n2) = (Normal(t), Normal(u));
+                if (!(Vector3.Dot(n1, n2) > 1 - 1e-5f && MathF.Abs(Vector3.Dot(n1, vertices[own[0]]) - Vector3.Dot(n1, vertices[soup[u].A])) < 1e-3f))
+                    continue;
+                int[] other = [soup[u].A, soup[u].B, soup[u].C];
+                var third = other.First(v => !own.Contains(v));
+                int[] loop = [.. own.Take(x + 1), third, .. own.Skip(x + 1)];
+                for (var r = 0; r < 4; r++)
+                {
+                    var rotated = loop.Skip(r).Concat(loop.Take(r)).ToArray();
+                    var cut = PolygonTriangulator.Triangulate([.. rotated.Select(v => vertices[v])]);
+                    if (cut.Length != 6)
+                        continue;
+                    var corners = cut.Select(i => rotated[i]).ToArray();
+                    if (Norm((corners[0], corners[1], corners[2])) == Norm(soup[u]) && Norm((corners[3], corners[4], corners[5])) == Norm(soup[t]))
+                        ends[t].Add((u, rotated, corners));
+                }
+            }
+        }
+        var uses = new int[vertices.Length];
+        foreach (var t in soup)
+        {
+            uses[t.A]++;
+            uses[t.B]++;
+            uses[t.C]++;
+        }
+        var unplaced = vertices.Length;
+        var total = soup.Count;
+        var chosen = new List<(int Last, int End)>();
+        var (openPartner, openLast, openEnd) = (-1, -1, -1);
+        long steps = 0;
+        var done = false;
+        var (deepest, deepestAt) = (0, "");
+        List<Face>? found = null;
+        // Debugging: DECOMPILE_TRUTH=<file of the source's input triangles, as SoupInputsOfTwoMaps dumps them>
+        // keeps the search to that order, to see where the model loses it.
+        int[]? truth = null;
+        if (Environment.GetEnvironmentVariable("DECOMPILE_TRUTH") is { Length: > 0 } truthFile && File.Exists(truthFile))
+        {
+            var lines = File.ReadAllLines(truthFile);
+            if (lines.Length == soup.Count)
+                truth = [.. lines.Select(line =>
+                {
+                    var c = line.Split(' ').Select(q => q.Split(',').Select(x => float.Parse(x, System.Globalization.CultureInfo.InvariantCulture)).ToArray()).Select(q => new Vector3(q[0], q[1], q[2])).ToArray();
+                    bool Near(Vector3 a, Vector3 b) => MathF.Max(MathF.Abs(a.X - b.X), MathF.Max(MathF.Abs(a.Y - b.Y), MathF.Abs(a.Z - b.Z))) <= 1 / 32f;
+                    return Enumerable.Range(0, soup.Count).FirstOrDefault(t => Enumerable.Range(0, 3).Any(r =>
+                        Near(c[0], vertices[(r == 0 ? soup[t].A : r == 1 ? soup[t].B : soup[t].C)]) &&
+                        Near(c[1], vertices[(r == 0 ? soup[t].B : r == 1 ? soup[t].C : soup[t].A)]) &&
+                        Near(c[2], vertices[(r == 0 ? soup[t].C : r == 1 ? soup[t].A : soup[t].B)])), -1);
+                })];
+        }
+        var truthLost = "";
+        var rankCandidates = Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_RANK") == "1";
+        if (truth is not null && truth.All(t => t >= 0))
+        {
+            // The source's own choices: its input forward through the builder, each node's entry read from
+            // the end.
+            Physics.RnMeshBuilder.Trace = [];
+            Physics.RnMeshBuilder.Create([.. truth.SelectMany(t => (int[])[soup[t].A, soup[t].B, soup[t].C])], vertices, null, new Physics.RnMeshBuilder.Options { Weld = false });
+            var truthTrace = Physics.RnMeshBuilder.Trace;
+            Physics.RnMeshBuilder.Trace = null;
+            var given = prefer;
+            prefer = [];
+            for (var i = 0; i < truthTrace.Count; i++)
+                if (truthTrace[i].Left is { } l && !truthTrace[i].ByCount)
+                    prefer[i] = [.. truthTrace[i].Entry.Reverse().Select(l.Contains)];
+            if (Environment.GetEnvironmentVariable("DECOMPILE_TRUTH_COMPARE") == "1")
+            {
+                var differ = prefer.Select(kv => (Node: kv.Key, Size: kv.Value.Count, Diff: given.TryGetValue(kv.Key, out var g) ? kv.Value.Zip(g).Count(x => x.First != x.Second) : -1)).Where(x => x.Diff != 0).ToList();
+                Console.Error.WriteLine($"truth compare: {differ.Count} of {prefer.Count} SAH nodes differ, {differ.Sum(x => x.Diff)} steps: {string.Join(" ", differ.Take(30).Select(x => $"{x.Node}({x.Size}):{x.Diff}"))}");
+                prefer = given;
+            }
+        }
+
+        // A node's queue from the back: the right child's entry not yet taken (virt, taken from its end),
+        // then front[i], what turning put at the front (front[i][0] frontmost). Turning takes the queue's
+        // back without needing to know it: from the right child's entry it reserves the next one (a
+        // placeholder, slots[i]), whose identity is drawn when a later take from that entry needs the ones
+        // before it (GenAll), or when the placeholder itself comes out.
+        void Pull(int i, Action<int> k)
+        {
+            if (done || ++steps > budget)
+                return;
+            if (isLeaf[i])
+            {
+                if (leafRem[i] == 0)
+                    return;
+                var t = leafOrder[i][--leafRem[i]];
+                k(t);
+                leafRem[i]++;
+                return;
+            }
+            if (byCount[i])
+            {
+                if (remR[i] > 0)
+                {
+                    remR[i]--;
+                    Pull(rc[i], k);
+                    remR[i]++;
+                }
+                else if (remL[i] > 0)
+                {
+                    remL[i]--;
+                    Pull(lc[i], k);
+                    remL[i]++;
+                }
+                return;
+            }
+            var step = emitted[i];
+            var leftFirst = prefer.TryGetValue(i, out var p) && step < p.Count ? p[step] : remL[i] > 0;
+            foreach (var takeLeft in leftFirst ? (bool[])[true, false] : [false, true])
+            {
+                if (done)
+                    return;
+                emitted[i]++;
+                if (takeLeft && remL[i] > 0)
+                {
+                    remL[i]--;
+                    Pull(lc[i], t =>
+                    {
+                        if (remR[i] == 0)
+                        {
+                            k(t);
+                            return;
+                        }
+                        if (virt[i] > 0)
+                        {
+                            virt[i]--;
+                            slots[i].Add(-1);
+                            front[i].Insert(0, -slots[i].Count);
+                            k(t);
+                            front[i].RemoveAt(0);
+                            slots[i].RemoveAt(slots[i].Count - 1);
+                            virt[i]++;
+                        }
+                        else if (front[i].Count > 0)
+                        {
+                            var back = front[i][^1];
+                            front[i].RemoveAt(front[i].Count - 1);
+                            front[i].Insert(0, back);
+                            k(t);
+                            front[i].RemoveAt(0);
+                            front[i].Add(back);
+                        }
+                    });
+                    remL[i]++;
+                }
+                else if (!takeLeft && remR[i] > 0)
+                {
+                    remR[i]--;
+                    PopBack(i, k);
+                    remR[i]++;
+                }
+                emitted[i]--;
+            }
+        }
+        // The reserved slots' identities, in their order, from the right child's entry.
+        void GenAll(int i, Action k)
+        {
+            if (gen[i] == slots[i].Count)
+            {
+                k();
+                return;
+            }
+            var at = gen[i];
+            Pull(rc[i], x =>
+            {
+                slots[i][at] = x;
+                gen[i]++;
+                GenAll(i, k);
+                gen[i]--;
+                slots[i][at] = -1;
+            });
+        }
+        void PopBack(int i, Action<int> k)
+        {
+            if (virt[i] > 0)
+            {
+                virt[i]--;
+                GenAll(i, () => Pull(rc[i], k));
+                virt[i]++;
+            }
+            else if (front[i].Count > 0)
+            {
+                var x = front[i][^1];
+                front[i].RemoveAt(front[i].Count - 1);
+                if (x >= 0)
+                    k(x);
+                else
+                    GenAll(i, () => k(slots[i][-x - 1]));
+                front[i].Add(x);
+            }
+        }
+        // A face is whole: its corners from the cut's last, each vertex whose last use this is must be the
+        // highest one not yet placed.
+        void Close(int last, int end, Action k)
+        {
+            var corners = ends[last][end].Corners;
+            var undo = new List<(int Vertex, bool Placed)>();
+            var ok = true;
+            for (var c = corners.Length - 1; c >= 0 && ok; c--)
+            {
+                var v = corners[c];
+                var placedHere = --uses[v] == 0 && v == unplaced - 1;
+                ok = uses[v] > 0 || placedHere;
+                if (placedHere)
+                    unplaced--;
+                undo.Add((v, placedHere));
+            }
+            if (ok)
+            {
+                chosen.Add((last, end));
+                k();
+                chosen.RemoveAt(chosen.Count - 1);
+            }
+            for (var c = undo.Count - 1; c >= 0; c--)
+            {
+                uses[undo[c].Vertex]++;
+                if (undo[c].Placed)
+                    unplaced++;
+            }
+        }
+        void Step(int placed)
+        {
+            if (placed > deepest)
+                (deepest, deepestAt) = (placed, $"triangles {string.Join(" ", chosen.TakeLast(4).Select(c => c.Last))}, {unplaced} vertices unplaced");
+            if (placed == total)
+            {
+                if (unplaced == 0)
+                {
+                    done = true;
+                    found = [.. chosen.AsEnumerable().Reverse().Select(c =>
+                    {
+                        var (partner, loop, _) = ends[c.Last][c.End];
+                        List<int> triangles = partner < 0 ? [c.Last] : [partner, c.Last];
+                        return new Face(loop, triangles, [.. ends[c.Last].Where(x => x.Partner == partner && (partner >= 0 || x.Loop.Length == 3)).Select(x => x.Loop)]);
+                    })];
+                }
+                return;
+            }
+            // DECOMPILE_SEARCH_RANK=1: the triangles the root can give next, latest in our order first, each
+            // tried down every path that gives it (listing them draws the reserved slots, which branches);
+            // otherwise each node's preferred choice first.
+            IEnumerable<int> wanted = [-1];
+            if (rankCandidates)
+            {
+                var candidates = new HashSet<int>();
+                if (openPartner >= 0)
+                    candidates.Add(openPartner);
+                else
+                    Pull(0, t => candidates.Add(t));
+                wanted = candidates.OrderByDescending(t => rankOfSoup[t]);
+            }
+            foreach (var want in wanted)
+            Pull(0, t =>
+            {
+                if (want >= 0 && t != want)
+                    return;
+                if (truth is not null && t != truth[total - 1 - placed])
+                {
+                    if (placed >= deepest)
+                        truthLost = $"at {placed} from the end the root gave {t}, the source has {truth[total - 1 - placed]}";
+                    return;
+                }
+                if (openPartner >= 0)
+                {
+                    if (t != openPartner)
+                        return;
+                    var (keep, keepLast) = (openPartner, openLast);
+                    openPartner = -1;
+                    Close(openLast, openEnd, () => Step(placed + 1));
+                    (openPartner, openLast) = (keep, keepLast);
+                    return;
+                }
+                for (var k = 0; k < ends[t].Count && !done; k++)
+                {
+                    if (ends[t][k].Partner < 0)
+                        Close(t, k, () => Step(placed + 1));
+                    else
+                    {
+                        (openPartner, openLast, openEnd) = (ends[t][k].Partner, t, k);
+                        Step(placed + 1);
+                        openPartner = -1;
+                    }
+                }
+            });
+        }
+        var thread = new Thread(() => Step(0), 1 << 30);
+        thread.Start();
+        thread.Join();
+        report = found is not null ? $"backward search found an order in {steps} steps"
+            : $"backward search found none in {steps} steps (deepest {deepest} of {total} triangles: {deepestAt}{(truth is null ? "" : $"; truth {string.Join(",", truth.TakeLast(10))}; {truthLost}")})";
+        return found;
+    }
+
+    [ThreadStatic] private static List<(int A, int B, int C)>? soupTriangles;
+
+    internal static string? Repair(List<List<Face>> members, List<(int A, int B, int C)> shipped, Vector3[] vertices, List<string> notes)
+    {
+        if (members.Sum(m => m.Count) == 0)
+            return null;
+        soupTriangles = shipped;
+        static (int, int, int) Bits(Vector3 v) => (BitConverter.SingleToInt32Bits(v.X), BitConverter.SingleToInt32Bits(v.Y), BitConverter.SingleToInt32Bits(v.Z));
+        static string Key(Vector3 a, Vector3 b, Vector3 c)
+        {
+            (int, int, int)[] k = [Bits(a), Bits(b), Bits(c)];
+            var r = Enumerable.Range(0, 3).MinBy(i => k[i]);
+            return $"{k[r]}{k[(r + 1) % 3]}{k[(r + 2) % 3]}";
+        }
+        var want = shipped.Select(t => Key(vertices[t.A], vertices[t.B], vertices[t.C])).ToList();
+        var wantAt = new Dictionary<string, int>();
+        for (var k = 0; k < want.Count; k++)
+            wantAt.TryAdd(want[k], k);
+        // The output for an order, scored by its leading run that agrees with the shipped triangles, then
+        // how many more sit in place ((run << 20) + in place; -1 when its vertices are not the shipped ones,
+        // which a reorder must keep), and the input's face per triangle key.
+        (int Score, List<string> Got, Dictionary<string, int> FaceOf) Run(List<Face> flat)
+        {
+            var (indices, positions, faceOf) = SoupInput(flat, vertices);
+            var mesh = Physics.RnMeshBuilder.Create(indices, positions, null);
+            var byKey = new Dictionary<string, int>();
+            for (var t = 0; t < faceOf.Length; t++)
+                byKey.TryAdd(Key(positions[indices[t * 3]], positions[indices[t * 3 + 1]], positions[indices[t * 3 + 2]]), faceOf[t]);
+            if (mesh is null || mesh.Vertices.Length != vertices.Length || !mesh.Vertices.Select(Bits).SequenceEqual(vertices.Select(Bits)))
+                return (-1, [], byKey);
+            var got = mesh.Triangles.Select(t => Key(mesh.Vertices[t.A], mesh.Vertices[t.B], mesh.Vertices[t.C])).ToList();
+            var (score, run) = (0, -1);
+            for (var k = 0; k < Math.Min(got.Count, want.Count); k++)
+                if (got[k] == want[k])
+                    score++;
+                else if (run < 0)
+                    run = k;
+            if (run < 0)
+                run = Math.Min(got.Count, want.Count);
+            return ((run << 20) + score, got, byKey);
+        }
+        static int InPlace(int score) => score & 0xfffff;
+        // Each face's member, kept through restarts and moves, so the members come back as runs.
+        var memberOf = new Dictionary<Face, int>(ReferenceEqualityComparer.Instance);
+        for (var m = 0; m < members.Count; m++)
+            foreach (var f in members[m])
+                memberOf[f] = m;
+        Face Keep(Face old, Face made)
+        {
+            memberOf[made] = memberOf[old];
+            return made;
+        }
+        var flat = members.SelectMany(m => m).ToList();
+        var (moves, restarts, pairings, inverted) = (0, 0, 0, 0);
+        var searched = "no search";
+        var current = Run(flat);
+        if (current.Score < 0)
+            return "the decompile's own soup input does not give the shipped vertices";
+
+        // The partitions inverted: an input that gives the shipped leaves, nearest our order, put back
+        // into faces under the vertex order; again from the result while it gets further.
+        for (var pass = 0; pass < 32 && InPlace(current.Score) < want.Count; pass++)
+        {
+            var (indices, positions, faceOf) = SoupInput(flat, vertices);
+            var shippedRank = new Dictionary<int, int>();
+            for (var t = 0; t < faceOf.Length; t++)
+                if (wantAt.TryGetValue(Key(positions[indices[t * 3]], positions[indices[t * 3 + 1]], positions[indices[t * 3 + 2]]), out var r))
+                    shippedRank[t] = r;
+            Physics.RnMeshBuilder.Trace = [];
+            Physics.RnMeshBuilder.Create(indices, positions, null);
+            var trace = Physics.RnMeshBuilder.Trace;
+            Physics.RnMeshBuilder.Trace = null;
+            var at = 0;
+            var pattern = new Dictionary<int, List<bool>>();
+            var preimage = Preimage(trace, ref at, shippedRank, [.. Enumerable.Range(0, faceOf.Length)], faceOf, pattern);
+            var position = new int[faceOf.Length];
+            for (var i = 0; i < preimage.Count; i++)
+                position[preimage[i]] = i;
+            if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
+            {
+                var raw = preimage.SelectMany(t => (int[])[indices[t * 3], indices[t * 3 + 1], indices[t * 3 + 2]]).ToArray();
+                var check = Physics.RnMeshBuilder.Create(raw, positions, null)!;
+                var rawGot = check.Triangles.Select(t => Key(check.Vertices[t.A], check.Vertices[t.B], check.Vertices[t.C])).ToList();
+                var rawRun = 0;
+                while (rawRun < rawGot.Count && rawGot[rawRun] == want[rawRun])
+                    rawRun++;
+                var split = Enumerable.Range(0, flat.Count).Count(f => Enumerable.Range(0, faceOf.Length).Where(t => faceOf[t] == f).Select(t => position[t]).ToList() is var ps && ps.Max() - ps.Min() != ps.Count - 1);
+                var firstSeen = new List<int>();
+                var met = new HashSet<int>();
+                foreach (var v in raw)
+                    if (met.Add(v))
+                        firstSeen.Add(Array.FindIndex(vertices, x => Bits(x) == Bits(positions[v])));
+                var outOfOrder = firstSeen.Where((v, i) => v != i).Count();
+                notes.Add($"world debug: pass {pass}: {outOfOrder} vertices first met out of order; raw preimage output agrees for {rawRun} of {want.Count}, in place {Enumerable.Range(0, Math.Min(rawGot.Count, want.Count)).Count(k => rawGot[k] == want[k])}; {split} faces not contiguous in it; leaves {trace.Count(x => x.Left is null)}");
+            }
+            // Soup triangle -> its input position in the preimage, through the face's cut.
+            var soupPosition = new Dictionary<int, int>();
+            var priority = new double[flat.Count];
+            Array.Fill(priority, double.MaxValue);
+            {
+                var t = 0;
+                for (var f = 0; f < flat.Count; f++)
+                {
+                    var loop = flat[f].Loop;
+                    var cut = loop.Length == 3 ? [0, 1, 2] : PolygonTriangulator.Triangulate([.. loop.Select(v => vertices[v])]);
+                    for (var i = 0; i + 2 < cut.Length; i += 3, t++)
+                    {
+                        var key = Norm((loop[cut[i]], loop[cut[i + 1]], loop[cut[i + 2]]));
+                        var soup = flat[f].Triangles.FirstOrDefault(x => Norm(shipped[x]) == key, -1);
+                        if (soup >= 0)
+                            soupPosition[soup] = position[t];
+                        priority[f] = Math.Min(priority[f], position[t]);
+                    }
+                }
+            }
+            // The search, guided by the inverted order.
+            {
+                var soupOf = new int[faceOf.Length];
+                var t = 0;
+                foreach (var face in flat)
+                {
+                    var loop = face.Loop;
+                    var cut = loop.Length == 3 ? [0, 1, 2] : PolygonTriangulator.Triangulate([.. loop.Select(v => vertices[v])]);
+                    for (var i = 0; i + 2 < cut.Length; i += 3, t++)
+                        soupOf[t] = face.Triangles.FirstOrDefault(x => Norm(shipped[x]) == Norm((loop[cut[i]], loop[cut[i + 1]], loop[cut[i + 2]])), -1);
+                }
+                var budget = long.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_BUDGET"), out var b) ? b : 5_000_000;
+                // Each node's choices first as our own order makes them (its entry read from the end), or
+                // with DECOMPILE_SEARCH_PREFER=inverted as the inverted order's.
+                var own = new Dictionary<int, List<bool>>();
+                for (var i = 0; i < trace.Count; i++)
+                    if (trace[i].Left is { } l && !trace[i].ByCount)
+                        own[i] = [.. trace[i].Entry.Reverse().Select(l.Contains)];
+                var rankOfSoup = new int[shipped.Count];
+                for (var i = 0; i < soupOf.Length; i++)
+                    if (soupOf[i] >= 0)
+                        rankOfSoup[soupOf[i]] = i;
+                var found = BackwardSearch(trace, x => soupOf[x], vertices, shipped,
+                    Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_PREFER") == "inverted" ? pattern : own, rankOfSoup, budget, out searched);
+                if (found is not null)
+                {
+                    var memberOfTriangle = flat.SelectMany(x => x.Triangles.Select(t => (t, m: memberOf[x]))).ToDictionary(x => x.t, x => x.m);
+                    foreach (var face in found)
+                        memberOf[face] = memberOfTriangle[face.Triangles[0]];
+                    var r = Run(found);
+                    if (r.Score > current.Score)
+                    {
+                        (flat, current) = (found, r);
+                        break;
+                    }
+                    searched += $" but it scores {InPlace(r.Score)}";
+                }
+            }
+            var projected = Project(flat, priority, x => soupPosition.GetValueOrDefault(x, int.MaxValue), vertices);
+            for (var f = 0; f < projected.Count; f++)
+                memberOf[projected[f]] = memberOf[flat.First(x => ReferenceEquals(x.Triangles, projected[f].Triangles))];
+            var tried = Run(projected);
+            if (tried.Score <= current.Score)
+                break;
+            (flat, current) = (projected, tried);
+            inverted++;
+        }
+
+        // Then local tries: at the mismatches in turn, the faces of the shipped and our triangle from their
+        // other starts, paired otherwise with each other, and at every place; failing those, any other face
+        // just before and after the first mismatch's two (a left-going triangle arriving between two right
+        // ones swaps them in the partition). The best try scoring more is taken.
+        for (var round = 0; round < 4 * flat.Count + 16 && InPlace(current.Score) < want.Count; round++)
+        {
+            var best = (Score: current.Score, Flat: (List<Face>?)null, Kind: "");
+            void Try(List<Face> order, string kind)
+            {
+                var r = Run(order);
+                if (r.Score > best.Score)
+                    best = (r.Score, order, kind);
+            }
+            List<Face> Moved(int from, int to)
+            {
+                var order = flat.ToList();
+                var face = order[from];
+                order.RemoveAt(from);
+                order.Insert(to, face);
+                return order;
+            }
+            var tried = new HashSet<int>();
+            for (var k = 0; k < want.Count && best.Flat is null; k++)
+            {
+                if (k < current.Got.Count && current.Got[k] == want[k])
+                    continue;
+                foreach (var key in (string[])[want[k], k < current.Got.Count ? current.Got[k] : want[k]])
+                {
+                    if (!current.FaceOf.TryGetValue(key, out var f) || !tried.Add(f))
+                        continue;
+                    foreach (var loop in flat[f].Starts.Where(l => !l.SequenceEqual(flat[f].Loop)))
+                    {
+                        var order = flat.ToList();
+                        order[f] = Keep(flat[f], flat[f] with { Loop = loop });
+                        Try(order, "restart");
+                    }
+                    var other = k < current.Got.Count && current.FaceOf.TryGetValue(key == want[k] ? current.Got[k] : want[k], out var g) ? g : f;
+                    if (other != f && flat[f].Triangles.Count + flat[other].Triangles.Count <= 4)
+                    {
+                        var (lo, hi) = (Math.Min(f, other), Math.Max(f, other));
+                        foreach (var pairing in Pairings([.. flat[f].Triangles, .. flat[other].Triangles], shipped, vertices))
+                            foreach (var faces in Orders(pairing))
+                            {
+                                var order = flat.ToList();
+                                order.RemoveAt(hi);
+                                order.RemoveAt(lo);
+                                order.InsertRange(lo, faces.Select(x => Keep(flat[lo], x)));
+                                Try(order, "pairing");
+                            }
+                    }
+                    for (var at = 0; at < flat.Count; at++)
+                        if (at != f)
+                            Try(Moved(f, at), "move");
+                }
+            }
+            if (best.Flat is null)
+            {
+                var k = 0;
+                while (k < current.Got.Count && current.Got[k] == want[k])
+                    k++;
+                if (k < current.Got.Count && current.FaceOf.TryGetValue(want[k], out var f1) && current.FaceOf.TryGetValue(current.Got[k], out var f2))
+                    for (var h = 0; h < flat.Count; h++)
+                        foreach (var at in (int[])[f1, f1 + 1, f2, f2 + 1])
+                        {
+                            var to = h < at ? at - 1 : at;
+                            if (h != f1 && h != f2 && to != h && to >= 0 && to < flat.Count)
+                                Try(Moved(h, to), "move");
+                        }
+            }
+            if (best.Flat is null)
+                break;
+            if (best.Kind == "restart") restarts++; else if (best.Kind == "pairing") pairings++; else moves++;
+            flat = best.Flat;
+            current = Run(flat);
+        }
+        if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
+        {
+            var k = 0;
+            while (k < current.Got.Count && current.Got[k] == want[k])
+                k++;
+            if (k < want.Count && k < current.Got.Count)
+            {
+                string Describe(string key)
+                {
+                    if (!current.FaceOf.TryGetValue(key, out var f))
+                        return "not in our input";
+                    var seen = new HashSet<int>(flat.Take(f).SelectMany(x => x.Loop));
+                    return $"face {f} of {flat.Count} (member {memberOf[flat[f]]}, {flat[f].Loop.Length} corners [{string.Join(",", flat[f].Loop)}], {flat[f].Starts.Count} starts, new [{string.Join(",", flat[f].Loop.Where(v => !seen.Contains(v)))}]), shipped at {want.IndexOf(key)}, ours at {current.Got.IndexOf(key)}";
+                }
+                notes.Add($"world debug: first mismatch {k}: shipped {Describe(want[k])}; ours {Describe(current.Got[k])}");
+            }
+        }
+        // Back into members: runs of one member's faces.
+        members.Clear();
+        foreach (var f in flat)
+        {
+            if (members.Count == 0 || memberOf[members[^1][0]] != memberOf[f])
+                members.Add([]);
+            members[^1].Add(f);
+        }
+        soupTriangles = null;
+        var prefix = current.Score >> 20;
+        return InPlace(current.Score) == want.Count && current.Got.Count == want.Count
+            ? $"BVH output exact ({searched}; {inverted} inversion passes, {moves} faces moved, {restarts} restarted, {pairings} paired otherwise)"
+            : $"BVH output has {InPlace(current.Score)} of {want.Count} triangles in place, the first {prefix} in a run ({searched}; {inverted} inversion passes, {moves} faces moved, {restarts} restarted, {pairings} paired otherwise)";
     }
 
     /// <summary>A face rebuilt from soup triangles: its loop (soup vertex ids), material, the triangles it cuts
@@ -268,10 +1133,10 @@ internal static class WorldGeometry
     /// keeps a leaf's triangles in input order); then every face whose corners are all met. A face no step
     /// reaches goes at the end. Returns each face's loop from its start.
     /// </summary>
-    internal static List<(int[] Loop, int Material, List<int> Triangles)> PolygonOrder(List<Polygon> polygons, Vector3[] vertices,
+    internal static List<(int[] Loop, int Material, List<int> Triangles, List<int[]> Starts)> PolygonOrder(List<Polygon> polygons, Vector3[] vertices,
                                                                                        List<(int A, int B, int C)> piece, int first = 0)
     {
-        var order = new List<(int[], int, List<int>)>();
+        var order = new List<(int[], int, List<int>, List<int[]>)>();
         var done = new bool[polygons.Count];
         var holding = new Dictionary<int, List<int>>();
         for (var f = 0; f < polygons.Count; f++)
@@ -305,7 +1170,8 @@ internal static class WorldGeometry
         {
             done[f] = true;
             var p = polygons[f];
-            order.Add(([.. p.Loop.Skip(start).Concat(p.Loop.Take(start))], p.Material, p.Triangles));
+            order.Add(([.. p.Loop.Skip(start).Concat(p.Loop.Take(start))], p.Material, p.Triangles,
+                       [.. p.Starts.Select(x => p.Loop.Skip(x).Concat(p.Loop.Take(x)).ToArray())]));
             foreach (var v in p.Loop)
                 seen.Add(v);
         }
@@ -487,6 +1353,9 @@ internal static class WorldGeometry
                         var start = call.GetInt32Property("m_nStartIndex");
                         var count = call.GetInt32Property("m_nIndexCount");
                         var bas = call.GetInt32Property("m_nBaseVertex");
+                        if (Environment.GetEnvironmentVariable("DECOMPILE_RENDER_DUMP") is { Length: > 0 } dump)
+                            File.AppendAllLines(dump, [$"# {path} {material} {start} {count}", .. Enumerable.Range(0, count / 3)
+                                .Select(k => string.Join(" ", Enumerable.Range(0, 3).Select(c => P(I(start + k * 3 + c) + bas)).Select(v => $"{v.X:R},{v.Y:R},{v.Z:R}")))]);
                         for (var i = start; i + 2 < start + count; i += 3)
                         {
                             int a = I(i) + bas, b = I(i + 1) + bas, c = I(i + 2) + bas;

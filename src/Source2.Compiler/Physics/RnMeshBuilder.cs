@@ -147,19 +147,35 @@ public static class RnMeshBuilder
         return mesh;
     }
 
+    /// <summary>
+    /// For inverting the order (the decompiler): when set, every node in pre-order, its input triangles in
+    /// entry order, the ones its split sends left (null for a leaf) and whether the split was by count.
+    /// </summary>
+    [ThreadStatic] internal static List<(int[] Entry, HashSet<int>? Left, bool ByCount)>? Trace;
+
     // FUN_1801a4070: the node for records [start, start + count), then its subtrees.
     private static int Build(Record[] records, int start, int count, List<RnMesh.Node> nodes)
     {
+        var entry = Trace is null ? null : records.Skip(start).Take(count).Select(r => r.Triangle).ToArray();
         if (count < 5)
+        {
+            Trace?.Add((entry!, null, false));
             return Leaf(records, start, count, nodes);
+        }
         var split = Sah(records, start, count);
+        var byCount = false;
         if (split == null)
         {
             if (count < 9)
+            {
+                Trace?.Add((entry!, null, false));
                 return Leaf(records, start, count, nodes);
+            }
             split = Halve(records, start, count);
+            byCount = true;
         }
         var s = split.Value;
+        Trace?.Add((entry!, [.. records.Skip(start).Take(s.Left).Select(r => r.Triangle)], byCount));
         var index = nodes.Count;
         nodes.Add(default);
         Build(records, start, s.Left, nodes);

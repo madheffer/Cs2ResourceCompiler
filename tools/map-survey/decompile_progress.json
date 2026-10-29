@@ -206,8 +206,8 @@
   "module": "World geometry",
   "subtask": "World meshes from the world node",
   "weight": 6,
-  "done": 0.35,
-  "evidence": "10-30: probe01 soup vertices exact; ze_hold_em_p runs (6 s + 4 s), counts and BVH nodes equal, input agrees 24 triangles; next: BVH-driven face order, prop_static hulls, render-only faces"
+  "done": 0.4,
+  "evidence": "10-29 late: BVH partition inverted exactly (swap partition run backwards; BackwardSearch with the source's own node choices gives probe01 PHYS-exact), free search not converging (faces bringing no vertex are free; off by default, DECOMPILE_WORLD_SEARCH=1); probe01 soup vertices exact; ze_hold_em_p runs (6 s + 4 s); next: mesh blocks for those faces, prop_static hulls, render-only faces"
  },
  {
   "module": "World geometry",

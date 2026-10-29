@@ -531,9 +531,47 @@ vertices for the first 108.
 Open, in order:
 1. **The order of faces that bring no new vertex.** At triangle 10 of probe01's main soup the source
    cuts a face whose corners were all met already before another such face; nothing in the soup's vertex
-   order tells the two apart, and the shipped triangles are in BVH order. Candidates to settle it: the
-   BVH output itself (search the faces' order so RnMeshBuilder, run on the decompile's soup input, gives
-   the shipped triangles; the port is exact), or Hammer's own face order for a mesh it makes, measured.
+   order tells the two apart, and the shipped triangles are in BVH order.
+
+   **BVH-driven search (10-29 late, behind `DECOMPILE_WORLD_SEARCH=1`; model exact, search not
+   converging).** What was measured, all on probe01 against its true input (the source .vmap through our
+   forward, which is exact; `SoupInputsOfTwoMaps` with `DECOMPILE_SOUPS_DUMP=<dir>` writes both inputs):
+   - The source's faces are quads and 8 lone triangles (fan cuts (a,b,c),(a,c,d)); 13 of its 144 faces
+     pair otherwise than ours: some coplanar neighbours are two triangle faces, and some quads pair across
+     another neighbour than the closest-index one. So pairing is part of what has to be found.
+   - Every box mesh has the same eight-quad face order, and ours parts from it where two faces can each
+     bring the next vertex (vertex 11: the source cuts [6,8,11,9] before [9,11,4,3]); the vertex order
+     cannot tell those apart.
+   - The first vertex use along the true input is the shipped vertex order (196 of 196).
+   - The render's index buffers regroup faces (pairs, permuted per draw call); they are not the source
+     order (`DECOMPILE_RENDER_DUMP=<file>`).
+   - RnMeshCreate's BVH partition (`RnMeshBuilder.Sah`) is a swap partition: the left ones keep their
+     order; the right ones go round a queue (one arriving joins the back, a left one arriving after any
+     right one sends the front to the back). Run backwards it is deterministic per choice: from the end,
+     a left arrival is the left child's last and turns the queue back, a right arrival is the queue's
+     back. `WorldGeometry.Preimage` builds an input that gives every shipped leaf (280 of 280 in place),
+     but it splits faces and breaks the vertex order. `RnMeshBuilder.Trace` gives each node's entry and
+     split.
+   - `WorldGeometry.BackwardSearch` builds the input from its end with every node's partition run
+     backwards (the leaves come out shipped by construction; a turn reserves the queue's back lazily and
+     draws it from the right child only when needed). Each triangle the root gives ends a face (alone,
+     from any corner, or a quad with a coplanar neighbour cut in that order), and a whole face must keep
+     the vertex order (backwards: a vertex whose last use is placed must be the highest not yet placed).
+     **The model is exact:** given the source's own per-node choices (`DECOMPILE_TRUTH=<source_0.txt>`)
+     it finds an order in 2194 steps, and the decompile's world physics is then PHYS-exact (RED2's piece
+     count aside). **The free search does not converge:** faces that bring no vertex are free under both
+     the face and the vertex rule, so a wrong place shows only many steps later (deepest 23 of 280 in 20M
+     steps with our order's node choices first; those differ from the source's at 228 steps over 42 of
+     75 nodes, `DECOMPILE_TRUTH_COMPARE=1`). Listing each step's candidates in our order
+     (`DECOMPILE_SEARCH_RANK=1`) branches on the reserved slots and stalls sooner.
+   - Before the search, `Repair` runs the inversion (`Preimage` put back into faces under the vertex
+     order) and local tries (restarts, re-pairings, moves; best in place 262 of 280). Neither reaches
+     exact, and both cost a full RnMeshCreate per try, so the repair is off by default.
+   Next for it: keep a face that brings no vertex inside its mesh's block (Hammer writes a mesh's faces
+   together; the blocks are what members approximate), meet the forward pass (strong vertex rule at the
+   input's start) with the backward one (exact BVH), or measure Hammer's face order for the primitives it
+   makes (CS2 closed, in Hammer). Debug switches: `DECOMPILE_SEARCH_BUDGET` (steps, default 5M),
+   `DECOMPILE_SEARCH_PREFER=inverted`, `DECOMPILE_WORLDDEBUG=1`.
 2. **Members (10-29 night): split by vertex runs; large maps run.** `WorldGeometry.Members` walks the
    soup's vertices in order: a triangle belongs to the member that introduced its highest vertex, and a
    new member starts where the triangles introducing a vertex share none with the current run or carry
