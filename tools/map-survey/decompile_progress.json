@@ -206,8 +206,8 @@
   "module": "World geometry",
   "subtask": "World meshes from the world node",
   "weight": 6,
-  "done": 0.25,
-  "evidence": "10-29: probe01's world physics from the decompile: every field exact but the soups' triangle order and RED2 piece counts (vertices exact in order); experiment flag DECOMPILE_WORLD_MESHES; next: faces back for triangle order, member ranges for big welded worlds"
+  "done": 0.3,
+  "evidence": "10-29: probe01 world physics from the decompile: vertices exact, tool soup exact, main soup triangle order exact for 10 (faces rebuilt, triangulator-checked); next: BVH-driven order of faces adding no vertex, member ranges for big welded worlds"
  },
  {
   "module": "World geometry",
