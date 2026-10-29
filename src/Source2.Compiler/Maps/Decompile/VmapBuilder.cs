@@ -401,6 +401,26 @@ public sealed class VmapBuilder
         return group;
     }
 
+    /// <summary>A node that takes one slot of an instance's id block and ships, walks and compiles nothing:
+    /// a 16-unit box all toolsskip (the baked meshes and prop_statics such slots held in the source are
+    /// not recovered). An empty group, a faceless mesh and an instance of either take none
+    /// (MapInstances.Hollow); a toolsskip mesh takes one and Valve's world render and physics are the
+    /// same without it (s2c_slotprobe8 against 9, world_physics byte for byte).</summary>
+    public DmxBinary.Element AddSlot(int nodeId, DmxBinary.Element parent)
+    {
+        Vector3 C(int x, int y, int z) => new(x * 8, y * 8, z * 8);
+        (Vector3[], int) F(params Vector3[] corners) => (corners, 0);
+        return AddMesh(parent, nodeId, Vector3.Zero, Vector3.Zero,
+        [
+            F(C(-1, -1, 1), C(1, -1, 1), C(1, 1, 1), C(-1, 1, 1)),
+            F(C(-1, 1, -1), C(1, 1, -1), C(1, -1, -1), C(-1, -1, -1)),
+            F(C(-1, -1, -1), C(1, -1, -1), C(1, -1, 1), C(-1, -1, 1)),
+            F(C(1, 1, -1), C(-1, 1, -1), C(-1, 1, 1), C(1, 1, 1)),
+            F(C(1, -1, -1), C(1, 1, -1), C(1, 1, 1), C(1, -1, 1)),
+            F(C(-1, 1, -1), C(-1, -1, -1), C(-1, -1, 1), C(-1, 1, 1)),
+        ], ["materials/tools/toolsskip.vmat"]);
+    }
+
     /// <summary>A CMapInstance of <paramref name="target"/> under <paramref name="parent"/> (the world when
     /// null). Shape: s2c_instnest's instances.</summary>
     public DmxBinary.Element AddInstance(int nodeId, DmxBinary.Element target, Vector3 origin, Vector3 angles,

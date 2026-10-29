@@ -90,6 +90,19 @@ public partial class EntityLumpAgainstValveTests(ITestOutputHelper output)
     // Hammer's lattice and bend deformers (tools/physics/deformer_probe_map.py, deformer_probe2.py).
     [InlineData("deformerprobe")]
     [InlineData("deformerprobe2")]
+    // Which nodes take a slot in an instance's block (empty groups none), and brush entities with
+    // no meshes (dropped): tools/map-survey/slot_probe_map.py, brushless_probe_map.py.
+    [InlineData("s2c_slotprobe")]
+    [InlineData("s2c_slotprobe2")]
+    [InlineData("s2c_slotprobe3")]
+    [InlineData("s2c_slotprobe4")]
+    [InlineData("s2c_slotprobe5")]
+    [InlineData("s2c_slotprobe6")]
+    [InlineData("s2c_slotprobe7")]
+    [InlineData("s2c_slotprobe8")]
+    [InlineData("s2c_slotprobe9")]
+    [InlineData("s2c_prefabslot")]
+    [InlineData("s2c_brushless")]
     public void PrefabProbe_DiffersOnlyInTheDocumentedGaps(string map)
     {
         var source = MapFixtures.VmapSource("s2c_rc_probe", map);

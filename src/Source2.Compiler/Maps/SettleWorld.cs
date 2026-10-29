@@ -298,7 +298,8 @@ public static partial class SettleWorld
     {
         foreach (var child in node.GetElements("children"))
         {
-            if (hidden.Contains(child.GetValue<int>("nodeID") ?? -1))
+            // A hollow node has no slot in the block and no body (MapInstances.Hollow).
+            if (hidden.Contains(child.GetValue<int>("nodeID") ?? -1) || MapInstances.Hollow(child))
                 continue;
             var origin = child.GetValue<Vector3>("origin") ?? Vector3.Zero;
             var angles = child.GetValue<Vector3>("angles") ?? Vector3.Zero;

@@ -507,6 +507,78 @@ and any prefab map of a map with shared prefab maps (s2c_prefabprobe9's planned 
 walk indices late). s2c_prefabprobe4 (atixref placed as a prefab at (1024, 512, 64) turned 90) is
 exact since 10-29 (Handoff, item 1).
 
+### Valve's resourcecompiler on the decompiles (2026-10-29, CS2 closed)
+
+`tools/map-survey/decompile_rc_batch.ps1 -SameOptions` decompiles each map, compiles the decompile
+with resourcecompiler `-world -fshallow`, compiles a renamed copy of the true source
+(`s2c_src_<map>.vmap`) under the same options, and compares the two packages
+(`ResourceCompilerOfTheDecompile_AgainstValve`: the `s2c_src_`/`s2c_dec_` prefix taken out of every
+value, a handshake compared as its index past its own map path's hash, which the four probe volumes
+checked land on exactly). The package's own build is the wrong yardstick: a full lit build adds the
+light step's keys, and its source may be an older revision. All five decompiles compile.
+
+With the light step's keys explained as the decompile check does (`decompile_rc_batch.ps1` passes the
+map's own package as a third path: a key counts as explained where the decompile's build holds what
+that package shipped):
+
+| Map | Lump differences (first run, then with the rules below) | Entity model PHYS | What is left |
+|---|---|---|---|
+| s2c_pinst7 | 27 (vs the package's full build), 5, now 3 | 5/5 equal | func_brush 2138 (failed model, below) and the order/count it moves |
+| s2c_prefabprobe8 | 51, 8, now 4 | 10/10 equal | as pinst7 (2138 twice) |
+| s2c_prefabinst | 38, 15, now 13 | 5 equal, 5 vertex-order hulls, 2 missing | as pinst7; its two cable_dynamic copies (not rebuilt as CMapCable: no model, no pathNodes) |
+| atixref | 2859, 2608, now 2138 | 104/142 equal | 28 failed-model or render-only brush entities; every other entity under the same id, class and origin; the rest is precomputed light bounds, traced by resourcecompiler against a world the decompile has no meshes for (plan 4) |
+| s2c_prefabprobe4 | 1117, 699, now 2135 | 96/147 equal | as atixref (29 brush entities), plus two settled props' poses (2140:477, the source settled again, which varies run to run); 4 light keys explained |
+
+Before the rules below, atixref's and probe4's copies shipped under other ids: our forward and
+Valve's resourcecompiler gave the same decompiled .vmap different blocks. Now our lump author on
+each decompiled .vmap gives Valve's ids for every entity (atixref: all 736, `DECOMPILE_IDS`).
+
+Two rules came out of it, each measured on a probe compiled by resourcecompiler:
+- **A hollow node takes no slot in an instance's block, and a hollow target's collapse no block**
+  (`MapInstances.Hollow`: a CMapGroup with only hollow nodes under it, none included, or a
+  CMapInstance of a hollow group). Measured with `tools/map-survey/slot_probe_map.py`: [light, X,
+  light] copies with B's id = A's + 1 + the slots X takes.
+
+  | X | slots | walks | probe |
+  |---|---|---|---|
+  | empty group; group holding an empty group; two empty groups | 0 | no | s2c_slotprobe |
+  | group holding an info_target (or an editor-only one) | 2 | 1 | s2c_slotprobe |
+  | info_target, editor-only info_target | 1 | yes | s2c_slotprobe |
+  | prop_static with or without its model | 1 | yes | s2c_slotprobe3 |
+  | CMapMesh with faces (two: 2) | 1 | no | s2c_slotprobe3 |
+  | CMapMesh with no faces (two: 0); group holding one | 0 | no | s2c_slotprobe8 |
+  | CMapMesh whose faces are all toolsskip | 1 | no | s2c_slotprobe8 |
+  | instance of an empty group (two: 0) | 0 | | s2c_slotprobe4 |
+  | instance of a group holding a faceless mesh | 0 | | s2c_slotprobe8 |
+  | instance of a group holding a mesh with faces / a toolsskip mesh / an info_target | 1 | | s2c_slotprobe4, 8 |
+  | group holding only an instance of an empty group | 0 | | s2c_slotprobe6 |
+  | [light, instance of a group, mesh with faces] as a whole group, no B | 4 wide | | s2c_slotprobe7 |
+
+  (s2c_slotprobe3, 4 and 7's "empty mesh" is a mesh with faces: the generator took the first mesh
+  with no node children, which every mesh is. Probe 8 has the faceless one.) A top-level instance of
+  an empty group takes no block (s2c_slotprobe5). An empty group is not removed at load:
+  s2c_slotprobe2's, 106 ids past the rest, moves the first block by as much (the map's highest node
+  id still counts it). Our forward counted every child and every collapse, so the decompile's
+  empty-group fillers and its one-id stand-ins (instances of empty groups) agreed with our forward
+  and not with Valve's. The fillers are now 16-unit toolsskip boxes (`VmapBuilder.AddSlot`: a slot,
+  no walk, and nothing in Valve's world: s2c_slotprobe8 and 9, the same map with the toolsskip meshes
+  faceless, compile to the same world_physics byte for byte and render meshes of one size). Our own
+  world builder does not drop toolsskip faces yet (open). A one-id leftover between two collapses is
+  no stand-in (none is under 2 ids) but the next group's lead, the slots before its first shipping
+  template (atixref's group of 663 leads with a prop_static): `InstancePlan` solves gap = W(c) +
+  L(next) + H with H 0 or at least 2. A prefab's block skips hollow nodes too (`PrefabSlots`;
+  s2c_prefabslot, `tools/map-survey/prefab_slot_probe_map.py`: a prefab map of a light and five empty
+  groups makes a block as wide as one of the light alone), so the decompile pads prefab maps with
+  toolsskip boxes and the main map (its highest id) with empty groups (`Pad`). SettleWorld's prefab
+  walk and MapWorldOrder skip hollow nodes the same way (no slot, no copy).
+- **A brush entity with no meshes does not ship** (s2c_brushless, `brushless_probe_map.py`):
+  func_brush, trigger_multiple, func_button, func_door, func_breakable and func_water with no
+  children are all dropped; a func_brush whose mesh names a missing material ships (its model
+  compile fails). Our forward already drops them. A decompiled brush entity whose model the
+  package lacks (the source's compile failed it) has no geometry to rebuild and so is dropped by a
+  recompile: pinst7's 2138, atixref's 22 doors, buttons and breakables. func_water's models are
+  render-only (no hulls) and come back with render meshes (plan 3).
+
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's

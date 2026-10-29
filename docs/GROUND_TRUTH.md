@@ -4615,6 +4615,33 @@ game can answer is raised with the user first, and runs with -insecure.
      - Exact: RagdollLockstepTests on the capture (62 dynamic bodies, every contact, final poses, 2700 steps, Valve's
        order) and SettleLumpTests (our order): the whole lump equals Valve's, 0 differences.
 
+182. **Hollow nodes take no id in an instance's or a prefab's block** (2026-10-29, research/vmap-decompile: probe
+     maps compiled by resourcecompiler 1.41.9.3 -world -fshallow, each read off the copies' ids; numbered past main's
+     181 so a merge does not clash).
+     - Found: Valve's resourcecompiler on our decompile of atixref gave its instance copies other ids than our forward
+       on the same .vmap (tools/map-survey/decompile_rc_batch.ps1). The decompile's fillers were empty groups and
+       instances of empty groups, which our forward counted.
+     - Measured, ported (MapInstances.Hollow, Count, Emit, Collapse, PrefabSlots; SettleWorld.PrefabWalk; MapWorldOrder):
+       a CMapGroup with only hollow nodes under it (none included), a CMapMesh with no faces and a CMapInstance of a
+       hollow group take no slot in a collapse's block, and the collapse of a hollow target takes no block.
+       [light, X, light] (tools/map-survey/slot_probe_map.py): s2c_slotprobe (empty groups 0; a group of an info_target
+       2; an editor-only info_target 1), s2c_slotprobe3 (prop_static with or without model 1 and walks; a mesh with faces
+       1, no walk), s2c_slotprobe4 and 6 (instances of empty groups 0, a group holding only one 0), s2c_slotprobe5 (a
+       top-level instance of an empty group takes no block), s2c_slotprobe7 (no position effect: a trailing mesh with
+       faces counts), s2c_slotprobe8 (faceless meshes 0; a toolsskip mesh 1, no walk); a prefab map of a light and five
+       empty groups makes the block of the light alone (s2c_prefabslot, prefab_slot_probe_map.py). Not removed at load:
+       an empty group 106 ids past the rest moves the first block by as much (s2c_slotprobe2).
+     - Measured: a toolsskip mesh leaves Valve's world unchanged (s2c_slotprobe8 against 9, the toolsskip meshes faceless:
+       world_physics byte for byte with the map name masked, render meshes of one size). Our world builder does not drop
+       toolsskip faces yet.
+     - Measured: a brush entity with no meshes does not ship, any class (s2c_brushless, brushless_probe_map.py); one
+       whose meshes fail their model compile does. Our forward already agreed.
+     - Exact: EntityLumpAgainstValveTests on all 37 pinned maps (the 11 probes above included), 94 tests over instances,
+       world order, settle and lumps; the decompile check 19/20 as before; our lump author on each decompiled .vmap gives
+       the ids Valve's resourcecompiler gives it (atixref: all 736 entities).
+     - Not found in the code: where the clone drops a hollow node (CloneObjects 180f616e0 and the node clone 180f86a90
+       copy every child; the ids are assigned after).
+
 ## Resolved
 
 - **Prop bone overrides** (ledger 45, settled 2026-10-08 by decompile).

@@ -405,11 +405,11 @@ public static class MapDecompiler
                 targets.Add((builder.AddInstance(NewId(), builder.World, c.Transform.Origin, c.Transform.Angles, holder), c.Group));
                 if (c.HiddenAfter > 0)
                 {
-                    // A stand-in for the collapses that ship nothing here: a group of empty nodes,
+                    // A stand-in for the collapses that ship nothing here: a group of empty meshes (slot fillers),
                     // as wide as their blocks, instanced once just after.
                     var standIn = builder.AddGroup(NewId());
                     for (var k = 0; k < c.HiddenAfter - 1; k++)
-                        builder.AddGroup(NewId(), standIn);
+                        builder.AddSlot(NewId(), standIn);
                     builder.AddInstance(NewId(), standIn, Vector3.Zero, Vector3.Zero, parent);
                 }
             }
@@ -454,7 +454,7 @@ public static class MapDecompiler
                     var element = builder.AddGroup(NewId(), at: g.GroupAt);
                     planGroups[g] = element;
                     for (var slot = 0; slot < g.Slots[0]; slot++)
-                        builder.AddGroup(NewId(), element);
+                        builder.AddSlot(NewId(), element);
                     for (var i = 0; i < g.SourceIds.Count; i++)
                     {
                         if (i > 0)
@@ -464,7 +464,7 @@ public static class MapDecompiler
                             var fillers = slotGap - walkGap;
                             Nested(g, i, element, ref fillers);
                             for (var k = 0; k < fillers; k++)
-                                builder.AddGroup(NewId(), element);
+                                builder.AddSlot(NewId(), element);
                             if (slotGap < walkGap)
                                 notes.Add($"instances: group of {g.SourceIds[0]} has fewer slots than walk indices between {g.SourceIds[i - 1]} and {g.SourceIds[i]}");
                         }
@@ -480,7 +480,7 @@ public static class MapDecompiler
                     var trailing = g.Count - g.Slots[^1] - 1;
                     Nested(g, g.SourceIds.Count, element, ref trailing);
                     for (var k = 0; k < trailing; k++)
-                        builder.AddGroup(NewId(), element);
+                        builder.AddSlot(NewId(), element);
                 }
             }
             foreach (var (sourceId, e, slots) in items.OrderBy(i => i.SourceId))
@@ -504,7 +504,7 @@ public static class MapDecompiler
                             at = copy.SourceId + 1;
                         }
                         else if (!slot.Walks)
-                            builder.AddGroup(NewId(), group);
+                            builder.AddSlot(NewId(), group);
                     }
                     continue;
                 }
@@ -592,6 +592,13 @@ public static class MapDecompiler
             scope.NewId = NewId;
         }
 
+        // One node more in a map: in a prefab map it widens the prefab's block, so it must take a slot
+        // (VmapBuilder.AddSlot; an empty group takes none, MapInstances.Hollow); in the main map it
+        // moves the highest node id, which an empty group does too.
+        DmxBinary.Element Pad(Scope sc) => sc == main
+            ? sc.Builder!.AddGroup(sc.NewId!())
+            : sc.Builder!.AddSlot(sc.NewId!(), sc.Builder!.World);
+
         // The copies' ids: each collapse's block starts where the ones before it end, and a
         // prefab's block is its map's copy count plus one (MapInstances.Expand). The forward is
         // run on the rebuilt maps, and a collapse whose copies come out short of their ids has
@@ -622,13 +629,13 @@ public static class MapDecompiler
                 // A node more in this map moves the copies by one for each block of it before them
                 // (one per placement); the rest comes from the map's highest node id, which moves
                 // every block by one.
-                scope.Builder!.AddGroup(scope.NewId!());
+                Pad(scope);
                 var step = Simulated(scope) - simulated;
                 var left = target - simulated - step;
                 if (step > 0 && left >= 0)
                 {
                     for (var i = 0; i < left / step; i++)
-                        scope.Builder!.AddGroup(scope.NewId!());
+                        Pad(scope);
                     if (left % step > 0)
                         main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + left % step);
                 }
@@ -683,7 +690,7 @@ public static class MapDecompiler
             var columns = new List<int[]>();
             foreach (var sc in maps)
             {
-                var probe = sc.Builder!.AddGroup(sc.NewId!());
+                var probe = Pad(sc);
                 columns.Add([.. Starts().Zip(now, (a, b) => a - b)]);
                 sc.Builder!.RemoveFromWorld(probe);
             }
@@ -716,7 +723,7 @@ public static class MapDecompiler
             }
             for (var j = 0; j < maps.Count; j++)
                 for (var k = 0; k < x[j]; k++)
-                    maps[j].Builder!.AddGroup(maps[j].NewId!());
+                    Pad(maps[j]);
             if (x[^1] > 0)
                 main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + x[^1]);
             if (!Starts().SequenceEqual(want))

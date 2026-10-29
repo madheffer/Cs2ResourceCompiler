@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 using System.Text.RegularExpressions;
 using Source2.Compiler;
 using Source2.Compiler.Maps.Decompile;
@@ -54,6 +55,9 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
 
         var files = MapDecompiler.ReadPackage(package);
         var result = MapDecompiler.Decompile(files, map, schema, StockMaterials());
+        // DECOMPILE_SAVE=<dir>: the decompile this check judges, as <dir>/<map>.vmap.
+        if (Environment.GetEnvironmentVariable("DECOMPILE_SAVE") is { Length: > 0 } saveTo)
+            File.WriteAllBytes(Path.Combine(saveTo, map + ".vmap"), result.Vmap);
         var decompiled = Maps.MapNodeAngles.Apply(DmxBinary.Read(result.Vmap));
         var truth = DmxBinary.ReadFile(source);
 
@@ -151,9 +155,27 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// <c>DECOMPILE_IDS=&lt;vmap&gt;|&lt;map&gt;[|settle]</c>: our lump author on a .vmap under that map name,
+    /// as this file's checks run it: every default_ents entity's id and class, lump order.
+    /// </summary>
+    [Fact]
+    public void LumpIdsOfAFile()
+    {
+        if (Environment.GetEnvironmentVariable("DECOMPILE_IDS") is not { Length: > 0 } spec)
+            return;
+        var p = spec.Split('|');
+        var (lumps, settled) = Lumps(DmxBinary.ReadFile(p[0]), p[1], MapFixtures.GameSchema(), p[0], settle: p.Length > 2);
+        output.WriteLine($"settled {settled}");
+        var ents = lumps.First(l => l.Key.EndsWith("default_ents.vents_c", StringComparison.OrdinalIgnoreCase));
+        foreach (var e in EntityLumpComparison.Read(ents.Value, ents.Key))
+            output.WriteLine($"    {e.HammerId,-12} {e.ClassName} @ {e.Values.GetValueOrDefault("origin").Value}");
+    }
+
+    /// <summary>
     /// <c>DECOMPILE_RC=&lt;valve.vpk&gt;|&lt;rc.vpk&gt;</c>: Valve's default_ents from a map's own
-    /// package against resourcecompiler's compile of our decompile of it, every difference
-    /// counted by key. Reports, does not assert: the two builds may differ in options.
+    /// package (or resourcecompiler's compile of a renamed copy of its source, same options)
+    /// against resourcecompiler's compile of our decompile of it, every difference counted by key.
+    /// Reports, does not assert: the two builds may differ in options.
     /// </summary>
     [Fact]
     public void ResourceCompilerOfTheDecompile_AgainstValve()
@@ -163,12 +185,66 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         var p = spec.Split('|');
         static byte[] DefaultEnts(string vpk) => MapDecompiler.ReadPackage(vpk)
             .First(f => f.Key.EndsWith("/entities/default_ents.vents_c", StringComparison.OrdinalIgnoreCase)).Value;
-        var valve = EntityLumpComparison.Read(DefaultEnts(p[0]));
-        var rc = EntityLumpComparison.Read(DefaultEnts(p[1]));
-        var report = EntityLumpComparison.Diff(valve, rc);
+        // One package: its entities' ids, classes and targetnames, lump order (a probe's raw answer).
+        if (p.Length == 1)
+        {
+            foreach (var e in EntityLumpComparison.Read(DefaultEnts(p[0])))
+                output.WriteLine($"    {e.HammerId,-12} {e.ClassName} {e.Values.GetValueOrDefault("targetname").Value} walk {e.Values.GetValueOrDefault("compile_source_id").Value} @ {e.Values.GetValueOrDefault("origin").Value}");
+            return;
+        }
+        // Both builds may be renamed copies of one map (decompile_rc_batch.ps1: s2c_src_<map> and
+        // s2c_dec_<map>): the prefix is taken out of every value (model paths, worldname), and a
+        // handshake is its map path's hash (Lighting: seed 0x3501a674) plus an index, so the
+        // index is compared.
+        static IReadOnlyList<EntityLumpComparison.Entity> Unprefixed(IReadOnlyList<EntityLumpComparison.Entity> lump, string vpk)
+        {
+            var bytes = Encoding.UTF8.GetBytes(@"maps\" + Path.GetFileNameWithoutExtension(vpk));
+            var seed = (long)(Io.ResourceNames.Hash(bytes, bytes.Length, 0x3501a674) & 0x7fffffff);
+            if (seed + 0xff > 0x7fffffff)
+                seed -= 0xff;
+            // Values render as "<type>:<value>" (EntityLumpComparison.Render).
+            string Value(string key, string value) =>
+                key.Equals("handshake", StringComparison.OrdinalIgnoreCase) && long.TryParse(value[(value.IndexOf(':') + 1)..], out var h) && h != 0
+                    ? $"{value[..value.IndexOf(':')]}:map hash + {h - seed}"
+                    : Regex.Replace(value, "s2c_(src|dec)_", "");
+            return lump.Select(e => e with
+            {
+                Values = e.Values.ToDictionary(kv => kv.Key, kv => (kv.Value.Type, Value(kv.Key, kv.Value.Value)),
+                    StringComparer.OrdinalIgnoreCase),
+            }).ToList();
+        }
+        var valve = Unprefixed(EntityLumpComparison.Read(DefaultEnts(p[0])), p[0]);
+        var rc = Unprefixed(EntityLumpComparison.Read(DefaultEnts(p[1])), p[1]);
+        var report = EntityLumpComparison.Diff(valve, rc).ToList();
+        // A third package, the map's own build: keys a lit compile's light step rewrites (as in
+        // Entities_CompileAsTheSourceDoes) are explained where the decompile's build holds what that
+        // package shipped, since the source keeps the values of an earlier placement.
+        if (p.Length > 2)
+        {
+            var shipped = EntityLumpComparison.Read(DefaultEnts(p[2])).GroupBy(e => e.HammerId).ToDictionary(g => g.Key, g => g.First());
+            var light = report.RemoveAll(line =>
+                Regex.Match(line, @"^\[(\w+)#([\d:]+)\] (precomputed\w+|directlight|bakedshadowindex|desiredstationary|light_(?:path|map)_uniqueid): value valve .*?, ours (\w+):(.*)$") is { Success: true } m
+                && shipped.TryGetValue(m.Groups[2].Value, out var e) && e.Values.TryGetValue(m.Groups[3].Value, out var v)
+                && v.Value == m.Groups[4].Value + ":" + m.Groups[5].Value);
+            output.WriteLine($"{light} light step keys as the map's own build shipped them");
+        }
         output.WriteLine($"valve {valve.Count} entities, rc of the decompile {rc.Count}; {report.Count} difference(s)");
         foreach (var g in report.GroupBy(l => Regex.Replace(l, @"^\[[^\]]+\] ", "").Split(':')[0]).OrderByDescending(g => g.Count()).Take(40))
             output.WriteLine($"  {g.Count(),5} x {g.Key}   e.g. {g.First()[..Math.Min(160, g.First().Length)]}");
+        if (Environment.GetEnvironmentVariable("DECOMPILE_ALL") == "1")
+            foreach (var line in report)
+                output.WriteLine("    " + line);
+        // DECOMPILE_RC_IDS=1: entities the two sides ship under different ids, paired by class,
+        // targetname and origin, Valve's id order (a copy block of another width shows as a step).
+        if (Environment.GetEnvironmentVariable("DECOMPILE_RC_IDS") == "1")
+        {
+            static string Where(EntityLumpComparison.Entity e) => string.Join("|", e.ClassName,
+                e.Values.GetValueOrDefault("targetname").Value, e.Values.GetValueOrDefault("origin").Value);
+            var ours = rc.GroupBy(Where).ToDictionary(g => g.Key, g => new Queue<EntityLumpComparison.Entity>(g));
+            foreach (var e in valve.OrderBy(e => int.TryParse(e.HammerId, out var n) ? n : int.MaxValue))
+                if (ours.TryGetValue(Where(e), out var q) && q.Count > 0 && q.Dequeue() is { } o && o.HammerId != e.HammerId)
+                    output.WriteLine($"    id {e.HammerId} -> {o.HammerId}  {e.ClassName} {e.Values.GetValueOrDefault("targetname").Value}");
+        }
 
         // The brush entities' models, by file name (the two maps' folders differ): PHYS against PHYS.
         static Dictionary<string, byte[]> Models(string vpk) => MapDecompiler.ReadPackage(vpk)

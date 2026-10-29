@@ -132,6 +132,9 @@ public static class MapInstances
         {
             var instance = node.Collapses!;
             node.Collapses = null;
+            // A hollow target copies nothing and takes no block (s2c_slotprobe5).
+            if (!instance.Prefab && Hollow(instance.Target))
+                return;
             var parent = node.Parent!;
             var start = next + 1;
             // A prefab's lattice locators already have their slots in its copy count.
@@ -332,7 +335,9 @@ public static class MapInstances
         var next = 0;
         void Walk(DmxBinary.Element node)
         {
-            foreach (var child in node.GetElements("children"))
+            // A hollow node takes no slot here either (s2c_prefabslot: a prefab map of a light and five
+            // empty groups makes a block as wide as one of the light alone).
+            foreach (var child in node.GetElements("children").Where(c => !Hollow(c)))
             {
                 slots.TryAdd(child, next);
                 next++;
@@ -354,10 +359,35 @@ public static class MapInstances
     private static int Count(DmxBinary.Element group)
     {
         var total = 0;
-        foreach (var child in group.GetElements("children"))
+        foreach (var child in group.GetElements("children").Where(c => !Hollow(c)))
             total += 1 + Count(child) + ClonedLocators(child);
         return total;
     }
+
+    /// <summary>
+    /// A CMapGroup with nothing but hollow nodes under it (none at all included), or a CMapInstance
+    /// of a hollow group: an instance's collapse gives it no id and its block no slot, and the
+    /// collapse of a hollow target takes no block. Measured with resourcecompiler -world
+    /// (tools/map-survey/slot_probe_map.py): [light, X, light] copies with consecutive ids for X an
+    /// empty group, a group holding an empty group, two empty groups (s2c_slotprobe), an instance
+    /// of an empty group, two of them (s2c_slotprobe4) and a group holding only such an instance
+    /// (s2c_slotprobe6); X takes one slot as an info_target, an editor-only one, a prop_static with
+    /// or without its model, a CMapMesh with or without faces (s2c_slotprobe3) and an instance of a
+    /// group holding an empty mesh. A top-level instance of an empty group takes no block
+    /// (s2c_slotprobe5). An empty group is not removed at load: s2c_slotprobe2's, 106 ids past the
+    /// rest, moves the first block by as much (the map's highest node id still counts it).
+    /// </summary>
+    internal static bool Hollow(DmxBinary.Element node)
+        => node.Type switch
+        {
+            "CMapGroup" => node.GetElements("children").All(Hollow),
+            "CMapInstance" => node.Get<DmxBinary.Element>("target") is { } target && Hollow(target),
+            // A mesh with no faces (s2c_slotprobe8: none, two, an instance of a group holding one, a
+            // group holding one all take no slot; a mesh whose faces are all toolsskip takes one).
+            "CMapMesh" => node.Get<DmxBinary.Element>("meshData") is not { } data
+                          || (data.Get<object?[]>("faceEdgeIndices") ?? []).Length == 0,
+            _ => false,
+        };
 
     /// <summary>
     /// The CMapLatticeControlPointLocator children a lattice holds in the loaded
@@ -431,7 +461,7 @@ public static class MapInstances
         Action<DmxBinary.Element, int, IReadOnlyList<DmxBinary.Element>, DmxBinary.Element[]>? placed,
         int start, ref int slot)
     {
-        foreach (var child in group.GetElements("children"))
+        foreach (var child in group.GetElements("children").Where(c => !Hollow(c)))
         {
             var index = slot++;
             var node = new BakeNode(child, copy) { Through = copy.Through, EmitAt = copy.EmitAt, Layer = copy.Layer };

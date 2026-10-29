@@ -214,33 +214,59 @@ internal sealed class InstancePlan
             }
 
         // Widths from the block chain. Blocks run back to back in collapse order, so the gap from a
-        // collapse's first copy to the next one's is its group's width plus whatever collapses ship no
-        // copy (a group of prop_statics and meshes, whose copies bake into the world): each group's
-        // width is its least gap (at least its slots), and the rest of a wider gap is a stand-in
-        // collapse of that width, a group of empty nodes instanced once. Slots count from the group's
-        // first shipping template (no lead).
-        var gaps = new Dictionary<Group, List<int>>();
-        for (var i = 0; i + 1 < plan.Collapses.Count; i++)
+        // collapse's first copy to the next one's first copy is the group's width past its lead (the
+        // slots before its first shipping template, a prop_static or mesh that bakes into the world),
+        // plus the next group's lead, plus whatever collapses ship no copy between them: gap = W(c) +
+        // L(n) + H. A collapse takes 1 + its counted nodes and a hollow target none (MapInstances.Hollow),
+        // so H is 0 or a stand-in of at least 2 (a group of empty meshes instanced once). Each group's
+        // W is its least gap less the next lead (at least its slots); a leftover of 1 is the next
+        // group's lead, which moves every collapse of that group one later, so the widths are solved
+        // again with it (atixref's group of 663 leads with a prop_static, s2c_slotprobe3).
+        var span = plan.Groups.ToDictionary(g => g, g => g.Slots[^1] + 1);
+        var lead = plan.Groups.ToDictionary(g => g, _ => 0);
+        var width = new Dictionary<Group, int>();
+        for (var round = 0; ; round++)
         {
-            var (c, n) = (plan.Collapses[i], plan.Collapses[i + 1]);
-            if (!gaps.TryGetValue(c.Group, out var list))
-                gaps[c.Group] = list = [];
-            list.Add(n.MinId - c.MinId - 1);
+            width.Clear();
+            for (var i = 0; i + 1 < plan.Collapses.Count; i++)
+            {
+                var (c, n) = (plan.Collapses[i], plan.Collapses[i + 1]);
+                var w = n.MinId - c.MinId - 1 - lead[n.Group];
+                width[c.Group] = width.TryGetValue(c.Group, out var least) ? Math.Min(least, w) : w;
+            }
+            foreach (var g in plan.Groups)
+                width.TryAdd(g, span[g]);
+            Collapse? odd = null;
+            for (var i = 0; i + 1 < plan.Collapses.Count && odd is null; i++)
+            {
+                var (c, n) = (plan.Collapses[i], plan.Collapses[i + 1]);
+                if (n.MinId - c.MinId - 1 - width[c.Group] - lead[n.Group] == 1)
+                    odd = n;
+            }
+            if (odd is null)
+                break;
+            if (odd.Group.Outer is not null || round > 4 * plan.Groups.Count)
+            {
+                notes.Add($"instances: one id before the collapse at {odd.MinId} is neither a lead nor a stand-in; not rebuilt");
+                return null;
+            }
+            lead[odd.Group]++;
         }
         foreach (var g in plan.Groups)
         {
-            var span = g.Slots[^1] + 1;
-            g.Count = gaps.TryGetValue(g, out var list) ? list.Min() : span;
-            if (g.Count < span)
+            if (width[g] < span[g])
             {
-                notes.Add($"instances: group of {g.SourceIds[0]}: its least gap {g.Count} is under its slots {span}; not rebuilt");
+                notes.Add($"instances: group of {g.SourceIds[0]}: its least gap {width[g]} is under its slots {span[g]}; not rebuilt");
                 return null;
             }
+            for (var k = 0; k < g.Slots.Count; k++)
+                g.Slots[k] += lead[g];
+            g.Count = width[g] + lead[g];
         }
         for (var i = 0; i + 1 < plan.Collapses.Count; i++)
         {
             var (c, n) = (plan.Collapses[i], plan.Collapses[i + 1]);
-            c.HiddenAfter = n.MinId - c.MinId - 1 - c.Group.Count;
+            c.HiddenAfter = n.MinId - c.MinId - 1 - width[c.Group] - lead[n.Group];
             // A stand-in is a first-round instance: blocks that ship nothing after a second-round
             // one would be a nested group that ships nothing, which is not rebuilt.
             if (c.HiddenAfter > 0 && c.Group.Outer is not null)
