@@ -602,9 +602,31 @@ Open, in order:
    | 100 | — | deepest 223 (refusals node 0: 3.1M) |
    | 0 (free) | deepest 164 | deepest 164 (refusals node 3: 6.3M, node 4: 258k) |
    It prunes millions of states but the search gets no deeper: the dead ends are not decided by any
-   one right child's entry but by the faces (pairing and vertex rule) together with the BVH. Next: a
-   constraint-solver formulation (faces, vertex rule and partitions as one model, e.g. SAT/CP), or
-   Hammer's own primitive face order (CS2 closed) as the cross-check that may make the search moot.
+   one right child's entry but by the faces (pairing and vertex rule) together with the BVH.
+   **10-30 evening: SOLVED on probe01 as one CP-SAT model** (`tools/map-survey/world_order_cpsat.py`,
+   OR-Tools; the problem dumped by `DECOMPILE_SEARCH_DUMP=<json>`, the answer read back as soup ids by
+   `DECOMPILE_TRUTH_IDS=<file>`). Free (no source data): an order in 490 s at Idle on 4 workers, **probe01
+   world PHYS 0 differences** through WPBUILD, though only 60 of its 280 slots equal the source's (orders
+   from fixed prefixes, 166 and 228 equal, are exact too: the shipped bytes do not pin one order). The
+   model:
+   - Per BVH node, p[x] = x's place in the node's entry (all different). Leaves: the shipped order. Split
+     by count: the left set's places < a, children's places the node's (minus a on the right).
+   - SAH node (swap partition), the closed form: with l[k] the place of the k-th left (increasing, through
+     the left child's inverse), a right one at place d ends in the right child at place (follow
+     d -> l[d] while d < a) - a. Why: Lomuto's left at i swaps a[i] with the right block's front, so a cell
+     d >= a is final once written, and a left at place q writes the cell of its own left rank. Encoded as
+     label[d] = label[l[d]] (d < a), label[d] = d - a (d >= a), right place = label[p[x]]. Checked equal
+     to BvhRun on 20000 random nodes (`--test-partition`).
+   - Input: root places are slots; each triangle alone or in one quad (its second in the next slot, the
+     pair's corner starts from `begins`); corner times 3·slot + corner index under the start; vertex ids
+     are first-use order: first(v) < first(v+1).
+   - Redundant/bounds: each leaf's order is a precedence chain on its left-chain top's places; each
+     connected piece takes one block of slots in vertex-range order (the soup is built mesh after mesh;
+     true on the source: 11 pieces, all contiguous); the lag window (`--lag 8`, a search bound, the source
+     needs 7, face-level: lone triangle or quad by the pair's highest corner).
+   Measured: along the source's order 2 s; source prefix 220: 15 s; halves alone 36/77 s. Without the
+   piece blocks the free solve did not finish in 500 s. Next: port to C# (Google.OrTools NuGet, or our
+   own CDCL), then ze_hold_em_p (one connected piece, so no piece blocks; prop_static hulls first).
    Debug switches: `DECOMPILE_SEARCH_BUDGET` (default 5M), `DECOMPILE_SEARCH_GUIDE=preimage` (worse:
    deepest 87), `DECOMPILE_TRUTH_PREFIX=n`, `DECOMPILE_SEARCH_PREFER=inverted`, `DECOMPILE_SEARCH_SLOTS=all`,
    `DECOMPILE_WORLDDEBUG=1`.

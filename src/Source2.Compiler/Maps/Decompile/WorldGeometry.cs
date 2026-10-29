@@ -1077,6 +1077,17 @@ internal static class WorldGeometry
                 }
             }
         }
+        // DECOMPILE_SEARCH_DUMP=<file>: the problem as JSON (soup corners, faces each triangle can begin,
+        // the BVH trace in pre-order as soup ids, the source's order when known) for an outside solver.
+        if (Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_DUMP") is { Length: > 0 } dumpFile)
+            File.WriteAllText(dumpFile, System.Text.Json.JsonSerializer.Serialize(new
+            {
+                vertices = vertices.Length,
+                soup = soup.Select(t => (int[])[t.A, t.B, t.C]),
+                begins = begins.Select(b => b.Select(x => new { partner = x.Partner, corners = x.Corners })),
+                trace = trace.Select(n => new { set = n.Entry.Select(soupOf), left = n.Left?.Select(soupOf), byCount = n.ByCount }),
+                truth,
+            }));
         var top = soup.Select(t => Math.Max(t.A, Math.Max(t.B, t.C))).ToArray();
         var byVertex = new List<int>[vertices.Length];
         for (var v = 0; v < vertices.Length; v++)
@@ -1277,6 +1288,13 @@ internal static class WorldGeometry
     private static int[]? Truth(List<(int A, int B, int C)> soup, Vector3[] vertices)
     {
         int[]? truth = null;
+        // DECOMPILE_TRUTH_IDS=<file>: an order as soup triangle ids (an outside solver's answer).
+        if (Environment.GetEnvironmentVariable("DECOMPILE_TRUTH_IDS") is { Length: > 0 } idsFile && File.Exists(idsFile))
+        {
+            var ids = File.ReadAllText(idsFile).Split((char[])[' ', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToArray();
+            if (ids.Length == soup.Count)
+                return ids;
+        }
         if (Environment.GetEnvironmentVariable("DECOMPILE_TRUTH") is { Length: > 0 } truthFile && File.Exists(truthFile))
         {
             var lines = File.ReadAllLines(truthFile);
