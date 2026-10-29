@@ -225,11 +225,17 @@ case. Its lump: every entity equal but the 8 brush entities whose models Valve's
 against world geometry (stage 3).
 
 What is left in stage 2:
-- **Vertex order within a hull** (the same-point-set rows: vertices identical, mass properties and
-  areas differ in the last bits). The compile collects a piece's points through a hash set keyed
-  on their numbering (`BrushHulls.GroupVertices`), the numbering the triangulated faces' first-meet
-  order, and the hull builder's output order follows its input's. Inverting that means choosing the
-  face and corner order that numbers the points into the hull's order.
+- **Vertex order within a hull: done 10-29.** The compile collects a piece's points through a hash
+  set keyed on their numbering (`BrushHulls.GroupVertices`), the numbering the triangulated faces'
+  first-meet order, and the hull builder lists its first tetrahedron and then each point it adds:
+  the order is mostly the geometry's, and the input order breaks ties (a box is all ties). The
+  decompile (`MapDecompiler.HullOrder`) runs the forward's chain for one mesh
+  (`EntityPhysicsModels.BrushMeshHulls`: Pieces, Inputs, the map builder's hull, ShapePoints, the
+  compile's hull and its identity transform) on the faces as read, then on a seeded search over face
+  orders and first corners (3000 tries), and keeps the first whose hull is the shipped one vertex
+  for vertex in order. Brush entity PHYS exact: probe_classes 119 of 121 (was 86), ze_doom_p2_c
+  272 of 274, ze_hold_em_p 32 of 32, s2c_prefabprobe2 21 of 23; one same-point-set hull left
+  (ze_doom), past the budget.
 - Three models with a corner no searched point places exactly (listed in the test).
 - **Render meshes**: a brush entity with visible faces gets them back from its hulls with world
   alignment; the render mesh's UVs and render-only faces are not read yet.

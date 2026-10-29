@@ -294,6 +294,32 @@ public static class EntityPhysicsModels
         return new Model(cable.NodeId, cable.ClassName, path, false, WorldPhysics.Build(pieces, entityModel: true)) { Entity = element, Cable = true };
     }
 
+    /// <summary>
+    /// One brush mesh's hulls as the entity model step makes them (the loop of <see cref="Build"/>
+    /// over a mesh: Pieces, Inputs, the map builder's hull, ShapePoints, the compile's hull), each
+    /// hull's vertex positions in order; no applied material, no deformer, no instance path.
+    /// </summary>
+    internal static List<Vector3[]> BrushMeshHulls(DmxBinary.Element mesh, DmxBinary.Element entity, string className, int formatVersion)
+    {
+        var result = new List<Vector3[]>();
+        var type = BrushHulls.Resolve(PhysicsTypeOf(mesh), true, className == "func_shatterglass", false, false);
+        if (type is BrushHulls.PhysicsType.None or BrushHulls.PhysicsType.Mesh)
+            return result;
+        var simplify = WorldCollision.SimplificationError(mesh, formatVersion);
+        foreach (var (_, positions, faces, local) in BrushHulls.Pieces(mesh, entity))
+            foreach (var input in BrushHulls.Inputs(positions, faces, type, local, simplify: simplify))
+            {
+                var qh = RnHullBuilder.BuildHull(input, RnHullBuilder.Options.MapBuilder, out _);
+                var points = qh == null ? null : BrushHulls.ShapePoints([.. qh.HullVertices.Select(v => new Vector3(v.X, v.Y, v.Z))]);
+                if (points != null && RnHullBuilder.Create(points, RnHullBuilder.Options.Compile, out _) is { } hull)
+                {
+                    RnHullBuilder.Transform(hull, RnHullBuilder.Identity);
+                    result.Add(hull.VertexPositions);
+                }
+            }
+        return result;
+    }
+
     /// <summary>A collision cable's triangle mesh in its model (see <see cref="CableModel"/>): the render
     /// tube, welded, placed, joined at the seam and simplified with the cable's error; null when the
     /// tube is empty.</summary>

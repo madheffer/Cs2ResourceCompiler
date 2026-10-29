@@ -115,8 +115,8 @@
   "module": "Brush entities",
   "subtask": "Hull vertex order (exact solver)",
   "weight": 3,
-  "done": 0,
-  "evidence": "78 same-point-set models"
+  "done": 0.95,
+  "evidence": "10-29: face order + first corner searched through the forward's one-mesh chain; 77 of 78 same-point-set models now exact (449/455 brush models), 1 left on ze_doom (budget)"
  },
  {
   "module": "Brush entities",

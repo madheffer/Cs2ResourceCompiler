@@ -798,10 +798,19 @@ public static class MapDecompiler
         var input = new BrushGeometry.Piece[count];
         for (var k = 0; k < count; k++)
             input[placedAt[k]] = geometry.Pieces[k];
+        var unordered = 0;
         foreach (var piece in input)
+        {
+            var faces = piece.Faces.Select(f => f.Select(Fit).ToArray()).ToArray();
+            var order = HullOrder(faces, [.. piece.Vertices.Select(Fit)], piece, e.Entity, entityNode);
+            if (order is null)
+                unordered++;
             builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero,
-                            [.. piece.Faces.Select(f => (f.Select(Fit).ToArray(), 0))], [piece.Material],
+                            [.. (order ?? faces).Select(f => (f, 0))], [piece.Material],
                             [.. piece.Vertices.Select(Fit)]);
+        }
+        if (unordered > 0)
+            notes.Add($"{label}: {unordered} hull(s) whose vertex order no face order searched gives (same points, other order)");
         if (geometry.HasRender)
             notes.Add($"{label}: render mesh not read (texture alignment and render-only faces are not recovered)");
         if (geometry.TriangleMeshes > 0)
@@ -810,6 +819,45 @@ public static class MapDecompiler
             notes.Add($"{label}: {geometry.UnknownMaterials.Count} hull(s) with a material hash no known material has");
         if (geometry.Pieces.Count == 0)
             notes.Add($"{label}: its model has no hulls; no geometry");
+    }
+
+    /// <summary>
+    /// A face order (and each face's first corner) whose mesh the entity model step hulls into exactly
+    /// the shipped hull, vertex for vertex in order (EntityPhysicsModels.BrushMeshHulls). The hull
+    /// builder lists its first tetrahedron and then each point it adds, so the order is mostly the
+    /// geometry's, and the input order (the mesh's numbering: its triangles' first meeting of their
+    /// corners, through the grouping's hash set, BrushHulls.GroupVertices) breaks the ties a box has
+    /// plenty of. The faces as read first, then a seeded search over orders and rotations; null when
+    /// none lands within the budget.
+    /// </summary>
+    private static Vector3[][]? HullOrder(Vector3[][] faces, Vector3[] vertexOrder, BrushGeometry.Piece piece,
+                                          MapEntities.Entity entity, DmxBinary.Element entityNode, int budget = 3000)
+    {
+        var scratch = new VmapBuilder("hullorder");
+        bool Lands(Vector3[][] candidate)
+        {
+            var mesh = scratch.AddMesh(scratch.World, 1, entity.Origin, Vector3.Zero, [.. candidate.Select(f => (f, 0))], [piece.Material], vertexOrder);
+            scratch.RemoveFromWorld(mesh);
+            var hulls = Physics.EntityPhysicsModels.BrushMeshHulls(mesh, entityNode, entity.ClassName, VmapBuilder.FormatVersion);
+            return hulls.Count == 1 && hulls[0].Length == piece.Vertices.Length
+                   && hulls[0].Zip(piece.Vertices).All(p => BitConverter.SingleToInt32Bits(p.First.X) == BitConverter.SingleToInt32Bits(p.Second.X)
+                                                         && BitConverter.SingleToInt32Bits(p.First.Y) == BitConverter.SingleToInt32Bits(p.Second.Y)
+                                                         && BitConverter.SingleToInt32Bits(p.First.Z) == BitConverter.SingleToInt32Bits(p.Second.Z));
+        }
+        if (Lands(faces))
+            return faces;
+        var random = new Random(0x5eed);
+        for (var attempt = 0; attempt < budget; attempt++)
+        {
+            var candidate = faces.OrderBy(_ => random.Next()).Select(f =>
+            {
+                var r = random.Next(f.Length);
+                return f.Skip(r).Concat(f.Take(r)).ToArray();
+            }).ToArray();
+            if (Lands(candidate))
+                return candidate;
+        }
+        return null;
     }
 
     /// <summary>
