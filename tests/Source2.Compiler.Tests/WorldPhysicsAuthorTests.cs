@@ -80,9 +80,16 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
         for (var s = 0; s < Math.Min(a.Count, b.Count); s++)
         {
             string Tri((int[] I, Vector3[] V) soup, int t) => $"{soup.V[soup.I[t * 3]]:R} {soup.V[soup.I[t * 3 + 1]]:R} {soup.V[soup.I[t * 3 + 2]]:R}";
+            // Rotation aside: RnMeshCreate turns each triangle by its edge lengths, so only the corners' cycle counts.
+            string Key((int[] I, Vector3[] V) soup, int t)
+            {
+                string[] c = [$"{soup.V[soup.I[t * 3]]:R}", $"{soup.V[soup.I[t * 3 + 1]]:R}", $"{soup.V[soup.I[t * 3 + 2]]:R}"];
+                var r = Enumerable.Range(0, 3).MinBy(k => c[k], StringComparer.Ordinal);
+                return $"{c[r]} {c[(r + 1) % 3]} {c[(r + 2) % 3]}";
+            }
             var count = Math.Min(a[s].I.Length, b[s].I.Length) / 3;
             var same = 0;
-            while (same < count && Tri(a[s], same) == Tri(b[s], same))
+            while (same < count && Key(a[s], same) == Key(b[s], same))
                 same++;
             output.WriteLine($"soup {s}: {a[s].I.Length / 3} vs {b[s].I.Length / 3} triangles, {a[s].V.Length} vs {b[s].V.Length} vertices; the first {same} triangles agree");
             for (var t = same; t < Math.Min(count, same + 6); t++)

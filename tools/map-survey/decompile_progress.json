@@ -206,8 +206,8 @@
   "module": "World geometry",
   "subtask": "World meshes from the world node",
   "weight": 6,
-  "done": 0.3,
-  "evidence": "10-29: probe01 world physics from the decompile: vertices exact, tool soup exact, main soup triangle order exact for 10 (faces rebuilt, triangulator-checked); next: BVH-driven order of faces adding no vertex, member ranges for big welded worlds"
+  "done": 0.35,
+  "evidence": "10-30: probe01 soup vertices exact; ze_hold_em_p runs (6 s + 4 s), counts and BVH nodes equal, input agrees 24 triangles; next: BVH-driven face order, prop_static hulls, render-only faces"
  },
  {
   "module": "World geometry",

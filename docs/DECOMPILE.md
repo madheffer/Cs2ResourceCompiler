@@ -537,14 +537,21 @@ Open, in order:
 2. **Members (10-29 night): split by vertex runs; large maps run.** `WorldGeometry.Members` walks the
    soup's vertices in order: a triangle belongs to the member that introduced its highest vertex, and a
    new member starts where the triangles introducing a vertex share none with the current run or carry
-   another material. Faces are merged by directed edge and ordered by vertex index, so ze_hold_em_p
-   decompiles in 6 s and its forward world physics builds in 4 s (WPBUILD had not finished in 15 minutes
-   on one connected mesh). Touching meshes still join one member (probe01: 4 against Valve's 16; only
-   RED2's piece count notices, the forward's order does not change by it). ze_hold_em_p against Valve:
-   the mesh soup's vertex and triangle counts and its BVH nodes equal, but the vertex order parts at
-   vertex 10 (the soup inputs part at the third face: ours takes a side face before the top quad, which
-   alone holds the next vertex, so a member boundary or the weld's cluster order is off there), and the
-   world's 129 prop_static hulls (not rebuilt yet) register surfaces first and shift every mesh's
+   another material. Faces are rebuilt and ordered through edge and vertex indexes, so ze_hold_em_p
+   decompiles in 6 s and its forward world physics builds in 4 s (WPBUILD had not finished in 15
+   minutes on one connected mesh). Touching meshes still join one member (probe01: 4 against Valve's
+   16; only RED2's piece count notices). Three ordering rules settled on the two maps' soup inputs
+   (`SoupInputsOfTwoMaps`, triangles compared rotation aside, as RnMeshCreate turns each by its edges):
+   - faces are quads at most (`DECOMPILE_FACE_TRIANGLES`, default 2): the triangulator check alone
+     merges neighbouring coplanar source faces (ze's strip of quads at z 153 into one long face);
+   - triangles pair into quads closest in vertex index first: a source face brings its vertices in one
+     run, and on a coplanar strip a triangle can also pair with the next quad's;
+   - of the faces that can bring the next vertex in order, the one bringing the fewest new vertices
+     (ze's first block: its top, sharing an edge with the face before, ahead of a side sharing none).
+   Now: probe01's soup vertices exact in order (its input agrees for 10 triangles, its output for 14);
+   ze_hold_em_p's input agrees for 24 triangles, its vertices for 52. Both part at a face that brings
+   no vertex the order decides: the BVH-driven search (open item 1) is what settles those. On ze the
+   world's 129 prop_static hulls (not rebuilt yet) also register surfaces first and shift every mesh's
    surface indices. The soups' names list their members' source mesh names (`[concrete_block];
    [concrete_block]`), a member count and names where a map names its meshes.
 3. Render-only faces (in no soup) and the T-junction triangles (render only, the compile's own).
