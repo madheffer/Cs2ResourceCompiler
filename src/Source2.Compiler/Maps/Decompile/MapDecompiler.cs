@@ -312,6 +312,15 @@ public static class MapDecompiler
         else if (recorded.Count > 0)
             notes.Add($"prefab maps: the compile read {string.Join(", ", recorded)}; {written.Count} written under their chains (which placement used which file is not in the package)");
         Emit(main);
+        // The world's own meshes, from the physics soups and the render nodes (WorldGeometry), only as an
+        // experiment (DECOMPILE_WORLD_MESHES=1): the soups' positions carry each source mesh's placement
+        // rounding, which a mesh at the world's origin does not give back (docs/DECOMPILE.md "World
+        // geometry"). Written after the map's nodes so they take made-up ids, before the copy ids are
+        // matched, which pads past them.
+        foreach (var mesh in Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" ? WorldGeometry.Read(files, mapName, table, notes) : [])
+            main.Builder!.AddMesh(main.Builder!.World, main.NewId!(), Vector3.Zero, Vector3.Zero,
+                                  [.. mesh.Faces.Select(f => (f.Corners, f.Material))], mesh.Materials,
+                                  cornerTexcoords: [.. mesh.Faces.Select(f => f.Texcoords)]);
         // A shared prefab map is written once, so a brush entity its first placement has no hulls for
         // has none in any placement: noted for each later one whose own model the package lacks too.
         foreach (var placements in families)

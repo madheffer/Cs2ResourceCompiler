@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Source2.Compiler;
 using Source2.Compiler.Maps.Decompile;
+using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -232,6 +233,67 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
                                  $"flip {element.GetValue<bool>("flipFaces")} mat {element.Get<string>("materialName")}: model {count} vertices ({position.Format}), {ib.ElementCount} indices; tube {tube.Length} / {tubeIndices.Length}; " +
                                  $"{inOrder} in order, {inSet} in the tube's set; first {points[0]:R} vs {tube.FirstOrDefault():R}");
             }
+        }
+    }
+
+    /// <summary>
+    /// <c>DECOMPILE_WORLD=&lt;vpk&gt;</c>: what a package keeps of the world's meshes: each world node's DATA
+    /// tree, each node model's draw calls (material, vertex and index counts, the vertex layout), and the
+    /// world physics' parts and shapes (hulls, meshes and their materials and collision attributes).
+    /// </summary>
+    [Fact]
+    public void WorldGeometrySurvey()
+    {
+        if (Environment.GetEnvironmentVariable("DECOMPILE_WORLD") is not { Length: > 0 } vpk)
+            return;
+        var files = MapDecompiler.ReadPackage(vpk);
+        foreach (var (path, bytes) in files.Where(f => f.Key.Contains("/worldnodes/", StringComparison.Ordinal)).OrderBy(f => f.Key))
+        {
+            using var res = ResourceTrees.Read(bytes, path);
+            if (path.EndsWith(".vwnod_c", StringComparison.Ordinal))
+            {
+                output.WriteLine($"== {path}");
+                foreach (var line in ResourceTrees.Render(res).Split('\n').Take(400))
+                    output.WriteLine("  " + line.TrimEnd());
+            }
+            else if (path.EndsWith(".vmdl_c", StringComparison.Ordinal) && res.DataBlock is ValveResourceFormat.ResourceTypes.Model model)
+            {
+                output.WriteLine($"== {path}");
+                foreach (var (mesh, name, _, _) in model.GetEmbeddedMeshesAndLoD())
+                    foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
+                        foreach (var call in so.GetArray("m_drawCalls"))
+                        {
+                            var vbIndex = call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer");
+                            var vb = mesh.VBIB.VertexBuffers[vbIndex];
+                            output.WriteLine($"  mesh {name} call {call.GetStringProperty("m_material")}: {call.GetInt32Property("m_nVertexCount")} vertices, " +
+                                             $"{call.GetInt32Property("m_nIndexCount")} indices, base {call.GetInt32Property("m_nBaseVertex")}; layout " +
+                                             string.Join(" ", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}")));
+                        }
+            }
+        }
+        if (files.TryGetValue(files.Keys.First(k => k.EndsWith("/world_physics.vmdl_c", StringComparison.Ordinal)), out var phys))
+        {
+            var tree = WorldPhysicsAuthorTests.Trees(phys)["PHYS"];
+            output.WriteLine("== world_physics PHYS");
+            var parts = tree["m_parts"]!;
+            for (var i = 0; i < parts.Count; i++)
+            {
+                var shape = parts[i]!["m_rnShape"]!;
+                foreach (var kind in new[] { "m_spheres", "m_capsules", "m_hulls", "m_meshes" })
+                {
+                    var list = shape[kind];
+                    output.WriteLine($"  part {i} {kind}: {list?.Count ?? 0}");
+                    for (var k = 0; k < Math.Min(list?.Count ?? 0, 12); k++)
+                    {
+                        var s = list![k]!;
+                        var body = s["m_Mesh"] ?? s["m_Hull"];
+                        var counts = body is null ? "" : $" vertices {body["m_Vertices"]?.AsBlob().Length / 12 ?? body["m_VertexPositions"]?.AsBlob().Length / 12}, " +
+                                                          $"triangles {body["m_Triangles"]?.AsBlob().Length / 12}";
+                        output.WriteLine($"    {kind}[{k}]: attr {s["m_nCollisionAttributeIndex"]}, surface {s["m_nSurfacePropertyIndex"]}, tool {s["m_nToolMaterialHash"]}, user {s["m_UserFriendlyName"]}{counts}");
+                    }
+                }
+            }
+            output.WriteLine($"  collision attributes {tree["m_collisionAttributes"]?.Count}, surfaces {tree["m_surfacePropertyHashes"]?.Count}");
         }
     }
 

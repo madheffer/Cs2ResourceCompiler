@@ -213,9 +213,11 @@ public sealed class VmapBuilder
     /// </summary>
     /// <param name="vertexOrder">The vertices' order, where it matters (a hull's, which the
     /// compile's hull builder reads them in); the rest follow by first use.</param>
+    /// <param name="cornerTexcoords">Each face's corners' texture coordinates, corner for corner, where
+    /// they are known (the world's render meshes); the world alignment's otherwise.</param>
     public DmxBinary.Element AddMesh(DmxBinary.Element parent, int nodeId, Vector3 origin, Vector3 angles,
                                      IReadOnlyList<(Vector3[] Corners, int Material)> faces, IReadOnlyList<string> materials,
-                                     IReadOnlyList<Vector3>? vertexOrder = null)
+                                     IReadOnlyList<Vector3>? vertexOrder = null, IReadOnlyList<Vector2[]?>? cornerTexcoords = null)
     {
         // Vertices welded by exact position, in the order given, then first-use order.
         var vertexOf = new Dictionary<Vector3, int>();
@@ -240,10 +242,11 @@ public sealed class VmapBuilder
         var next = new List<int>();
         var pairOf = new Dictionary<(int From, int To), int>();
         var faceFirst = new int[loops.Count];
+        var cornerEdges = new int[loops.Count][];
         for (var f = 0; f < loops.Count; f++)
         {
             var loop = loops[f];
-            var ids = new int[loop.Length];
+            var ids = cornerEdges[f] = new int[loop.Length];
             for (var i = 0; i < loop.Length; i++)
             {
                 var (a, b) = (loop[(i + loop.Length - 1) % loop.Length], loop[i]);
@@ -286,6 +289,10 @@ public sealed class VmapBuilder
             var sign = Vector3.Dot(Vector3.Cross(normals[f], u), v) < 0 ? -1f : 1f;
             tangents[e] = new Vector4(u, sign);
         }
+        for (var f = 0; f < loops.Count && cornerTexcoords is not null; f++)
+            if (f < cornerTexcoords.Count && cornerTexcoords[f] is { } uv)
+                for (var i = 0; i < cornerEdges[f].Length && i < uv.Length; i++)
+                    texcoords[cornerEdges[f][i]] = uv[i];
 
         static object?[] Ints(IEnumerable<int> xs) => xs.Select(x => (object?)x).ToArray();
         var data = New("CDmePolygonMesh", "meshData")

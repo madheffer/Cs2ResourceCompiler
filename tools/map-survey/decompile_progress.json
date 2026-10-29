@@ -206,8 +206,8 @@
   "module": "World geometry",
   "subtask": "World meshes from the world node",
   "weight": 6,
-  "done": 0,
-  "evidence": "not started"
+  "done": 0.1,
+  "evidence": "10-29: survey (soups merged per attribute; render fragments are vis clusters); WorldGeometry reader behind DECOMPILE_WORLD_MESHES; blocker: soup positions carry each mesh's placement rounding (1e-4), mesh origins to recover"
  },
  {
   "module": "World geometry",

@@ -486,6 +486,38 @@ after the path and ship nothing (`MapEntities.Walk`). The inverse
   stays at its default;
 - the nodes take the walk indices after the path, and ids after the path's where free and below
   the highest id the lump shows (otherwise from the made-up pool).
+### World geometry (2026-10-29, survey and a first reader)
+
+What a package keeps of the world's own meshes (probe01; `MapDecompilerTests.WorldGeometrySurvey`,
+`DECOMPILE_WORLD=<vpk>`):
+- **world_physics**: one triangle soup per collision attribute and surface, every world mesh merged
+  (probe01: 196 vertices and 280 triangles, and an 8-vertex tool soup with its tool hash), its
+  members' names joined (`m_UserFriendlyName`); nothing per source mesh.
+- **world nodes**: per material an aggregate model (`n0_lr0_agg_merge_<material>`) whose draw calls are
+  the compile's visibility clusters, not source meshes (probe01: 13 dev_measuregeneric01 pieces in 10
+  fragments, 2 reflectivity_30 pieces in 27); float positions and texcoords, a 16-bit lightmap UV and a
+  packed tangent frame (lossy), after the T-junction fix and the 1/32 weld.
+
+So the split into source meshes is not in the package, and the target is meshes that compile to the
+same output. `WorldGeometry` rebuilds one mesh per soup at the world's origin, its triangles in the
+soup's order, each corner's material and texcoord from a render vertex at exactly its position on a
+triangle in its plane, a tool soup's faces its tool material (`VmapBuilder.AddMesh` takes per-corner
+texcoords for it). It is an experiment only (`DECOMPILE_WORLD_MESHES=1`), because of what probe01 shows:
+- the soups' positions are not the render positions: -256.00006 against -256, 127.99994 against 128,
+  -176.00014 -943.9999 against -176 -944. Our forward gives Valve's soups exactly from the source, so the
+  rounding is each source mesh's own placement (its stored local corners plus its origin, in float),
+  and the render path rounds them otherwise. A mesh at the world's origin reproduces neither: only 27 of
+  probe01's 280 soup triangles find a render face by exact position.
+
+Next: recover each mesh's placement. Both forward transforms are ported (the physics one bit-exact on 9
+maps; the render one exact on probe01's 18 entries, `NodeMeshEntries`), so for each soup vertex the
+pair (physics q, render r) constrains (local corner, mesh origin). Group the soup into connected pieces,
+search each piece's origin (Hammer leaves a mesh's origin at its centre on the grid, often) for the one
+whose local corners land both q and r, and write each piece as its own mesh there. Then check with
+`WorldPhysicsAuthorTests.BuildsFromTheMap` (WPBUILD on the decompiled .vmap, whose package lookup by map
+name still needs the original's name passed). Render-only faces (in no soup) and the T-junction
+triangles (render only, made by the compile) come after.
+
 ### Element defaults from Hammer's map code (2026-10-29, partly)
 
 resourcecompiler's mapdoclib declares a node's attributes in its constructor, each through the attribute
