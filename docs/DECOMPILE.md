@@ -534,13 +534,19 @@ Open, in order:
    order tells the two apart, and the shipped triangles are in BVH order. Candidates to settle it: the
    BVH output itself (search the faces' order so RnMeshBuilder, run on the decompile's soup input, gives
    the shipped triangles; the port is exact), or Hammer's own face order for a mesh it makes, measured.
-2. **Members, not connected pieces.** On ze_hold_em_p the whole world is one connected piece (4548
-   triangles; the weld joins touching meshes), and WPBUILD on it ran for over 15 minutes without finishing
-   (something quadratic in the forward on one mesh that size). But the soup's vertices are its members'
-   in member order, each member's new vertices contiguous (the weld keeps clusters in the order they
-   form), so members are vertex ranges: split at boundaries such that each range's triangles (by their
-   highest vertex) meet its vertices first-use in order, the count bounded by RED2's
-   physics_shape_mesh_count.
+2. **Members (10-29 night): split by vertex runs; large maps run.** `WorldGeometry.Members` walks the
+   soup's vertices in order: a triangle belongs to the member that introduced its highest vertex, and a
+   new member starts where the triangles introducing a vertex share none with the current run or carry
+   another material. Faces are merged by directed edge and ordered by vertex index, so ze_hold_em_p
+   decompiles in 6 s and its forward world physics builds in 4 s (WPBUILD had not finished in 15 minutes
+   on one connected mesh). Touching meshes still join one member (probe01: 4 against Valve's 16; only
+   RED2's piece count notices, the forward's order does not change by it). ze_hold_em_p against Valve:
+   the mesh soup's vertex and triangle counts and its BVH nodes equal, but the vertex order parts at
+   vertex 10 (the soup inputs part at the third face: ours takes a side face before the top quad, which
+   alone holds the next vertex, so a member boundary or the weld's cluster order is off there), and the
+   world's 129 prop_static hulls (not rebuilt yet) register surfaces first and shift every mesh's
+   surface indices. The soups' names list their members' source mesh names (`[concrete_block];
+   [concrete_block]`), a member count and names where a map names its meshes.
 3. Render-only faces (in no soup) and the T-junction triangles (render only, the compile's own).
 
 ### Element defaults from Hammer's map code (2026-10-29, partly)
