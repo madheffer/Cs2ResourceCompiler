@@ -380,8 +380,12 @@ public static class FrameSolver
     /// <param name="copies">The node is an instance's template, the instance and its group both at the
     /// map's origin unturned: its copy is placed through SettleWorld.NestedPlacement (the prefab moves
     /// the instance, then the collapse moves the template by the moved instance over its group).</param>
+    /// <param name="groupAt">With <paramref name="copies"/>: where the template group stands, and its
+    /// instance at <paramref name="instanceAt"/> (by default the same place). The prefab moves the instance, and the collapse's step is the moved instance against
+    /// the group (SettleWorld.Step), whose translation rounds with the group's place: a second frame,
+    /// searched by <see cref="LocateCopies"/>.</param>
     public static (Vector3 Origin, Vector3 Angles)? Locate(Solution solution, IReadOnlyList<(Vector3 Origin, Vector3 Angles)> wants,
-                                                         bool copies = false)
+                                                         bool copies = false, Vector3 groupAt = default, Vector3? instanceAt = null)
     {
         var prefabs = solution.Later.Select(t =>
         {
@@ -391,10 +395,10 @@ public static class FrameSolver
             return e;
         }).ToArray();
         var group = DmxBinary.NewElement("CMapGroup", "", Guid.Empty);
-        group.Attributes["origin"] = Vector3.Zero;
+        group.Attributes["origin"] = groupAt;
         group.Attributes["angles"] = Vector3.Zero;
         var instance = DmxBinary.NewElement("CMapInstance", "", Guid.Empty);
-        instance.Attributes["origin"] = Vector3.Zero;
+        instance.Attributes["origin"] = instanceAt ?? groupAt;
         instance.Attributes["angles"] = Vector3.Zero;
         instance.Attributes["target"] = group;
         (Vector3, Vector3) Place(Vector3 origin, Vector3 angles, int k)
@@ -403,9 +407,10 @@ public static class FrameSolver
         var w = wants[0].Origin;
         var f = solution.FirstOrigin;
         if (copies)
-            // The first placement's step for a copy: the prefab's translation (its turn is 0) as the
-            // instance moved by it, so the preimages are still under the frame's translation.
-            f = SettleWorld.PrefabPlacement(Vector3.Zero, Vector3.Zero, [prefabs[0]]).Origin;
+            // The first placement's step for a copy: the moved instance against the group, a
+            // translation under a first placement unturned or turned a right angle, so the
+            // preimages are under that step's translation.
+            f = SettleWorld.Step([instance], [prefabs[0]]) is { } s0 ? new Vector3(s0[3], s0[7], s0[11]) : Vector3.Zero;
         var quarter = (int)MathF.Round(solution.Later[0].Angles.Y / 90f) & 3;
         var (xs, ys) = Plane(w, f, quarter);
         foreach (var x in xs)
@@ -420,6 +425,56 @@ public static class FrameSolver
         return null;
     }
 
+    /// <summary>
+    /// An instance's templates inside a shared prefab map, every copy of every placement landed. In
+    /// exact arithmetic only the instance's offset from its group matters; in floats the collapse's
+    /// step (the instance moved by the prefab, against the group) rounds with both places, so they are
+    /// searched: the instance where the first template's first copy stands in the map (as Hammer leaves
+    /// an instance placed over its copy), the group that offset D away, D by grid level within
+    /// <paramref name="radius"/> (0 first, then multiples of 4096 down to 1, z 0), at most
+    /// <paramref name="budget"/> offsets; each template then located as <see cref="Locate"/> does.
+    /// s2c_prefabprobe11's source: instance (2682, 3332, 579), group 1376 units off.
+    /// Null when no offset lands every template.
+    /// </summary>
+    /// <param name="templates">Each template's copies, one per placement.</param>
+    public static (Vector3 GroupAt, Vector3 InstanceAt, (Vector3 Origin, Vector3 Angles)[] Local)? LocateCopies(
+        Solution solution, IReadOnlyList<IReadOnlyList<(Vector3 Origin, Vector3 Angles)>> templates, int radius, long budget, out long tried)
+    {
+        tried = 0;
+        var quarter = (int)MathF.Round(solution.Later[0].Angles.Y / 90f) & 3;
+        var w = templates[0][0].Origin;
+        var (xs, ys) = Plane(w, solution.FirstOrigin, quarter);
+        var zs = Preimages(w.Z, solution.FirstOrigin.Z);
+        if (xs.Count == 0 || ys.Count == 0 || zs.Count == 0)
+            return null;
+        var instanceAt = new Vector3(xs[0], ys[0], zs[0]);
+        // By grid level, coarse first: each level the offsets on its grid not on the one above.
+        IEnumerable<Vector3> Offsets()
+        {
+            yield return Vector3.Zero;
+            for (var grid = 4096; grid >= 1; grid /= 2)
+                for (var i = -radius / grid; i <= radius / grid; i++)
+                    for (var j = -radius / grid; j <= radius / grid; j++)
+                        if ((i != 0 || j != 0) && (grid == 4096 || i % 2 != 0 || j % 2 != 0))
+                            yield return new Vector3(i * grid, j * grid, 0f);
+        }
+        foreach (var d in Offsets())
+        {
+            if (++tried > budget)
+                return null;
+            var groupAt = instanceAt - d;
+            var local = new (Vector3, Vector3)[templates.Count];
+            var all = true;
+            for (var t = 0; t < templates.Count && all; t++)
+                if (Locate(solution, templates[t], copies: true, groupAt: groupAt, instanceAt: instanceAt) is { } l)
+                    local[t] = l;
+                else
+                    all = false;
+            if (all)
+                return (groupAt, instanceAt, local);
+        }
+        return null;
+    }
     /// <summary>
     /// A node's local coordinate on one axis: every float that the first placement's translation
     /// rounds back to what the lump holds (fl(l + shift) == stored); usually one, more where the local

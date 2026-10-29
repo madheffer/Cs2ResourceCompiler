@@ -312,12 +312,22 @@ placed at 179.99995); nothing kept that `SettleWorld.PrefabPlacement` does not l
 every node of every placement. s2c_prefabprobe11: the frame found is the source's own, prefab 108 at
 (-6144, 0, 0), after 615 frames.
 
-Not yet: an instance's copies inside a turned shared prefab map (s2c_prefabprobe11's 9 lights). A
-copy's matrix there is the instance moved by the prefab against its group's placement
-(`SettleWorld.Step`), whose translation rounds with the group's offset from the instance (1376 units
-in the source): a second frame. In the map's own instances with an unturned group the copy's matrix
-is the instance's own angles and a translation, so a group rebuilt at the origin and instances at
-those translations reproduce it, the same problem `FrameSolver` solves: next.
+An instance's copies inside a turned shared prefab map (2026-10-29, s2c_prefabprobe11 and 12's 9
+lights): a copy's matrix there is the instance moved by the prefab against its group's placement
+(`SettleWorld.Step`), whose translation rounds with both places, so the instance and its group are
+not interchangeable (in exact arithmetic only their offset counts). `FrameSolver.LocateCopies`
+puts the instance where the first template's first copy stands in the map's frame (as the source
+has it: instance (2682, 3332, 579) over its copy) and searches the group's offset D from it by grid
+level (0, then multiples of 4096 down to 1), each template then located through
+`SettleWorld.NestedPlacement` for every placement; nothing kept that does not land every copy bit
+for bit. probe11: D = (4096, 0, 0) lands all 9 after 8 offsets (the source's is 1376, later in the
+search order; an offset that lands compiles the same, and the first found is taken). Before this the template writer also wrote each copy at its raw
+lump placement, not the solved local one (`TemplatePlan`'s writer), which put a shared map's copies
+one prefab origin off.
+
+A brush entity of a shared map whose model the package lacks in every placement (s2c_prefabprobe11
+and 12's func_brush 2138: no impmodel_*_2138 at all, Valve's compile failed it, the lump still
+names it) is noted as having no geometry for each placement, not only the first.
 
 Open, all the same gap, several collapses of one template: s2c_prefabprobe3, 4, 9, 11, 12 and atixref
 (nested instances, collapse rounds, and the instance transforms of every copy after the first, to be
@@ -367,6 +377,26 @@ pass, but are not rebuilt as instances yet.
   puts the first node on its own grid: atixref's templates stand at their group's origin while their
   instances are off the grid), and a turn must land the reference node's angles as well as positions
   (a node at its group's origin lands its position under any turn).
+
+One collapse (2026-10-29, s2c_pinst7): no index repeats, but its copies land where the instance's
+parent's subtree ends, after nodes walked past their template, and a lump file's walked nodes ship
+in walk order, so a node shipped after one of a higher index is a copy (the lowest such id starts
+the copies, as above). A single collapse that lands in walk order compiles the same flattened and
+is left so.
+
+Collapses in a later round (2026-10-29, s2c_prefabprobe8: an instance of a group that holds only an
+instance, beside a prefab with instances of its own): nothing in the copies' order shows it, only
+their ids, which lie past the prefab's block (the inner instance collapses in round 2, after the
+prefab took its block in round 1). Written flattened, the map's highest id is the copies' own and
+moves the prefab's copies past theirs (2360 for 2271). So when a rebuild's prefab copies come out
+past their ids, `MapDecompiler.Decompile` retries readings: the map's n highest nodes as one
+collapse (n from 1) through w wrapper groups (0 to 2; a wrapper is a group holding only the next
+instance, at the origin, instanced unturned), the main map's highest id padded so the first copy
+lands, and keeps the first whose forward (`MapInstances.Expand` on the rebuild) gives every copy of
+the map and its prefabs its id. probe8: 3 copies through 1 wrapper. A root instance whose copies
+ship ahead of a prefab's nodes is written before that prefab (the bake collapses in tree order and
+a copy lands after the maps of the prefabs collapsed before it). Not tried with shared prefab maps
+(their frame solves would run again for every reading).
 
 atixref: 199 copies rebuilt as 143 instances of 13 groups and one nested group (template 630 inside
 631's, 4 second-round collapses, blocks 7881 to 7888), every group solved on its first frame
@@ -482,7 +512,7 @@ its members), each compiled -world and full.
 ## Handoff (2026-10-29)
 
 Branch research/vmap-decompile, worktree `D:\_cursor projects\source2-compiler-wt-decompile`,
-nothing pushed. Tracker 51.3% (18 of 44 subtasks done).
+nothing pushed. Tracker 52.1% (19 of 44 subtasks done).
 
 The check is `MapDecompilerTests.Entities_CompileAsTheSourceDoes` (20 maps, about 16 minutes, most of it probe4's frame searches;
 `DECOMPILE_ALL=1` prints every difference, `DECOMPILE_LUMP=<file>` lists both sides of a lump).
@@ -493,13 +523,22 @@ of stage 2's 3 differing hulls, carousel_door01_108_27).
 
 | Map | Unexplained differences | What is left |
 |---|---|---|
-| 14 maps (probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, atixref, prefabprobe 1/2/4/5/6/7, pinst, instnest, prefabinst) | 0 | passing |
+| 18 maps (probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, atixref, prefabprobe 1/2/4/5/6/7/8/11/12, pinst, pinst7, instnest, prefabinst) | 0 | passing (10-29: pinst7, probe8, 11, 12 added) |
 | s2c_prefabprobe3 | 2 | prop 2140:2239 still falling when Valve's settle ends (no Start asleep), settled again by ours |
-| s2c_prefabprobe9 | 883 | shared prefab families nested |
-| s2c_prefabprobe11 | 22 | 9 light copies inside the turned shared prefab (origin and angles), 2 func_brush models taken from a later placement |
-| s2c_prefabprobe12 | 22 | as 11: 9 copies in turned prefabs, 2 func_brush |
-| s2c_prefabprobe8 | 7 | the main map's own instances: 3 light copies in the wrong place (ours only / missing pairs) |
-| s2c_pinst7 | 1 | the main map's own instances: lump order |
+| s2c_prefabprobe9 | 875 | shared prefab families nested |
+
+The whole check now takes about 4 minutes at Idle on 4 cores (probe4's frame searches 2 of them).
+
+CS2-closed queue for the decompiler (resourcecompiler needs CS2 closed; nothing here needs Frida or the game):
+- `tools/map-survey/decompile_rc_batch.ps1` (refuses to run with cs2.exe up): decompiles s2c_pinst7,
+  s2c_prefabprobe8, s2c_prefabprobe4, atixref and s2c_prefabinst into `s2c_dec_<map>.vmap` (prefab maps
+  beside them; `decompile-map` writes those since 10-29), compiles each with resourcecompiler
+  `-world -fshallow` and compares default_ents and entity-model PHYS with Valve's package
+  (`DECOMPILE_RC`). The check above runs our lump author on both sides; this is Valve's on ours.
+- A cable probe (cable_dynamic with non-default numSides, radius, tessellationSpacing, material,
+  collision on and off), compiled -world and full, before rebuilding cables as CMapCable (item 4):
+  their settings live only in the cable's render and collision models.
+- Hammer open-and-re-save of a decompile (item 8): needs the workshop tools.
 
 Done this session: atixref's ropes (CMapPath rebuilt, positions and tangents solved), template
 members' placement as an exact solve, light-step keys (test checks them against the package;
@@ -523,8 +562,11 @@ Next, in the order the user is likely to pick:
    into 55.66165). `VmapBuilder.AddGroup` writes the group's placement. `DECOMPILE_FRAME_LOG=1`
    prints each try, where its first node is, and what it cost. Still open: the turned copies in 11
    and 12 (shared prefab maps, item 3).
-2. The main map's own instances (probe8, pinst7): itemise with `DECOMPILE_LUMP`.
-3. Shared prefab families (9; 11 and 12's func_brush model from a later placement).
+2. The main map's own instances (probe8, pinst7): done 10-29 (one collapse; later rounds through
+   wrappers; "The map's own instances" above). `DECOMPILE_TREE=1` prints both node trees,
+   `DECOMPILE_TREE=2` with placements and the true prefab maps' trees.
+3. Shared prefab families: 11 and 12 done 10-29 (copies in turned placements, LocateCopies; their
+   func_brush had no model in any placement). Left: 9 (families nested in families).
 4. Cables: rebuild cable_dynamic as CMapCable (nodes from pathNodes as for paths, tint from
    rendercolor, the model from its nodes).
 5. A prefab map that places prefabs, with instances of its own (InstancePlan with prefab blocks).

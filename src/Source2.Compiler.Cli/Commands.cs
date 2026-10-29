@@ -647,6 +647,22 @@ internal static class Commands
 
         Console.WriteLine($"{map}: {result.Entities.Count:n0} entities, {result.Placeholders:n0} placeholders");
         Console.WriteLine($"  wrote {outPath}  ({result.Vmap.Length:n0} bytes)");
+        // The prefab maps the decompile rebuilt, at the content paths its CMapPrefab nodes name
+        // (maps/prefabs/<map>/...), under the addon's content folder: --content, or the folder
+        // holding the output's maps folder.
+        if (result.Prefabs.Count > 0)
+        {
+            var outDir = Path.GetDirectoryName(Path.GetFullPath(outPath))!;
+            var content = Opt(a, "--content")
+                          ?? (string.Equals(Path.GetFileName(outDir), "maps", StringComparison.OrdinalIgnoreCase) ? Path.GetDirectoryName(outDir)! : outDir);
+            foreach (var (prefabPath, bytes) in result.Prefabs)
+            {
+                var target = Path.Combine(content, prefabPath.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.WriteAllBytes(target, bytes);
+                Console.WriteLine($"  wrote {target}  ({bytes.Length:n0} bytes)");
+            }
+        }
         // The notes grouped by what they say, with an example each.
         foreach (var group in result.Notes.GroupBy(n => System.Text.RegularExpressions.Regex.Replace(n, @"^\S+ \S+: |\([^)]*\)", "").Trim())
                                           .OrderByDescending(g => g.Count()))

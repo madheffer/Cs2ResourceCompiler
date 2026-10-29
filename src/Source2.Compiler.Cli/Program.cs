@@ -106,12 +106,13 @@ static void Usage()
                     name; --skip-unported runs the rest and leaves those as the
                     package has them.
 
-      s2c decompile-map <maps/<map>.vpk> -o <out.vmap> [--cs2 <CS2 install dir>]
-                    A compiled map package back to a Hammer .vmap (vmap 40). This
-                    stage brings back the entities, their keys as the source held
-                    them and their outputs, in the compile's walk order; geometry,
-                    prefabs, instances and paths are not rebuilt yet, and each
-                    one left out is listed (docs/DECOMPILE.md).
+      s2c decompile-map <maps/<map>.vpk> -o <out.vmap> [--cs2 <CS2 install dir>] [--content <addon content dir>]
+                    A compiled map package back to a Hammer .vmap (vmap 40): the
+                    entities with their keys and outputs in the compile's walk
+                    order, brush entities' hulls, prefabs (their maps written under
+                    --content, by default the folder holding the output's maps/),
+                    instances and paths. World geometry is not rebuilt yet; what
+                    is left out is listed (docs/DECOMPILE.md).
 
       s2c id        <resource/path.vtex>
                     Print the 64-bit RERL id the engine looks that path up by.

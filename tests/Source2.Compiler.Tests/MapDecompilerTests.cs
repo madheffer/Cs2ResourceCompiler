@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text.RegularExpressions;
 using Source2.Compiler;
 using Source2.Compiler.Maps.Decompile;
@@ -65,6 +66,32 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
                          $"{result.Vmap.Length:n0} bytes{(settled ? "" : ", not settled")}");
         foreach (var note in result.Notes.GroupBy(n => Regex.Replace(n, @"^\S+ \S+: ", "")).Take(15))
             output.WriteLine($"  note x{note.Count()}: {note.Key}");
+        // DECOMPILE_TREE=1: both maps' node trees (type, nodeID, classname, an instance's target).
+        if (Environment.GetEnvironmentVariable("DECOMPILE_TREE") is { Length: > 0 })
+            foreach (var (side, doc) in new[] { ("truth", truth), ("ours", decompiled) })
+            {
+                output.WriteLine($"  {side} tree:");
+                // DECOMPILE_TREE=2: with each node's origin and angles, and the true prefab maps' trees.
+                var placements = Environment.GetEnvironmentVariable("DECOMPILE_TREE") == "2";
+                void Print(DmxBinary.Element e, int depth)
+                {
+                    var cls = e.Get<DmxBinary.Element>("entity_properties")?.Get<string>("classname");
+                    var target = e.Get<DmxBinary.Element>("target") is { } t ? $" -> {t.GetValue<int>("nodeID")}" : "";
+                    var at = placements && e.GetValue<Vector3>("origin") is { } o ? $" @ {o:R} {e.GetValue<Vector3>("angles") ?? Vector3.Zero:R}" : "";
+                    var map = e.Get<string>("targetMapPath") is { } m ? $" [{m}]" : "";
+                    output.WriteLine($"    {new string(' ', depth * 2)}{e.Type} {e.GetValue<int>("nodeID")}{(cls is null ? "" : " " + cls)}{target}{map}{at}");
+                    foreach (var c in e.GetElements("children")) Print(c, depth + 1);
+                }
+                if (doc.Root?.Get<DmxBinary.Element>("world") is { } world) Print(world, 0);
+                if (placements && side == "truth")
+                    foreach (var m in doc.Elements.Select(e => e.Get<string>("targetMapPath")).OfType<string>().Distinct())
+                        if (Path.Combine(Path.GetDirectoryName(source)!, "..", m) is var file && File.Exists(file)
+                            && DmxBinary.ReadFile(file).Root?.Get<DmxBinary.Element>("world") is { } inner)
+                        {
+                            output.WriteLine($"  truth {m}:");
+                            Print(inner, 0);
+                        }
+            }
 
         Assert.Equal(expected.Keys.Order(StringComparer.OrdinalIgnoreCase), ours.Keys.Order(StringComparer.OrdinalIgnoreCase));
         // A brush entity with no geometry does not ship (EntityLumpAuthor.ReachesTheLump), and the

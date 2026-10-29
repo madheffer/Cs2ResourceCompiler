@@ -29,6 +29,12 @@ public static class MapDecompiler
                                 int Placeholders, IReadOnlyList<string> Notes)
     {
         public IReadOnlyDictionary<string, byte[]> Prefabs { get; init; } = new Dictionary<string, byte[]>();
+
+        /// <summary>A prefab's copies came out past their ids with the map's own nodes all walked.</summary>
+        internal bool Overshoot { get; init; }
+
+        /// <summary>The forward on the rebuild gives every copy, the map's own and its prefabs', its id.</summary>
+        internal bool IdsMatched { get; init; }
     }
 
     private const string LayerLumpPrefix = "world_layer_";
@@ -42,6 +48,38 @@ public static class MapDecompiler
     /// game's materials; the package's own are added. Null: the package's only.</param>
     public static Result Decompile(IReadOnlyDictionary<string, byte[]> files, string mapName, FgdSchema schema,
                                    IReadOnlyDictionary<uint, string>? materials = null)
+    {
+        var first = Decompile(files, mapName, schema, materials, null);
+        if (!first.Overshoot)
+            return first;
+        // A prefab's copies come out past their ids: the map's own nodes reach too high, so its
+        // highest are copies of one collapse whose order showed nothing (they land in walk order),
+        // and their ids past a prefab's block say a later round, an instance of a group that holds
+        // the instance (MapInstances.Expand: one round per level). Each candidate is kept only when
+        // the forward on the rebuild gives every copy its id.
+        for (var count = 1; count <= MaxRetryCopies; count++)
+            for (var wraps = 0; wraps <= MaxRetryWraps; wraps++)
+                if (Decompile(files, mapName, schema, materials, new Retry(count, wraps)) is { IdsMatched: true } retried)
+                    return retried with
+                    {
+                        Notes = [.. retried.Notes, $"instances: the map's {count} highest nodes are one collapse through {wraps} wrapper group(s), the first reading (fewest copies, then wrappers) whose copy ids land"],
+                    };
+        return first;
+    }
+
+    private const int MaxRetryCopies = 16;
+    private const int MaxRetryWraps = 2;
+
+    /// <summary>How many group places a shared prefab map's copy frame search tries at most.</summary>
+    private const long CopyFrameBudget = 20_000;
+
+    /// <summary>A rebuild's forced reading of the map's own copies: its <paramref name="Copies"/>
+    /// highest-id nodes as one collapse, instanced through <paramref name="Wraps"/> groups that each
+    /// hold only the next instance.</summary>
+    private sealed record Retry(int Copies, int Wraps);
+
+    private static Result Decompile(IReadOnlyDictionary<string, byte[]> files, string mapName, FgdSchema schema,
+                                    IReadOnlyDictionary<uint, string>? materials, Retry? retry)
     {
         var notes = new List<string>();
         var lumps = files.Where(f => f.Key.EndsWith(".vents_c", StringComparison.OrdinalIgnoreCase)
@@ -168,9 +206,29 @@ public static class MapDecompiler
         // (MapInstances.Expand), so from the lowest id that carries a repeated index on, every node of
         // the map's own is a copy.
         InstancePlan? instancePlan = null;
+        List<EntityLumpAuthor.SourceEntity> mainCopies = [];
+        var wraps = retry?.Wraps ?? 0;
         {
             var own = scopes[""].Entities;
             var repeated = own.GroupBy(e => e.SourceId).Where(g => g.Count() > 1).SelectMany(g => g).ToList();
+            // One collapse repeats no index, but its copies land where their instance's parent's
+            // subtree ends, after nodes walked past their template: a lump file's walked nodes ship in
+            // walk order, so a node shipped after one of a higher index is a copy. (A collapse that
+            // lands in walk order compiles the same flattened.)
+            if (repeated.Count == 0)
+                repeated = [.. own.GroupBy(e => fileOf[e]).SelectMany(g =>
+                {
+                    var high = int.MinValue;
+                    var late = new List<EntityLumpAuthor.SourceEntity>();
+                    foreach (var e in g.OrderBy(entities.IndexOf))
+                    {
+                        if (e.SourceId < high) late.Add(e);
+                        high = Math.Max(high, e.SourceId);
+                    }
+                    return late;
+                })];
+            if (repeated.Count == 0 && retry is not null)
+                repeated = [.. own.OrderByDescending(e => e.Entity.NodeId).Take(retry.Copies)];
             if (repeated.Count > 0)
             {
                 var start = repeated.Min(e => e.Entity.NodeId);
@@ -180,6 +238,7 @@ public static class MapDecompiler
                                                   [.. walkedList.Select(w => (w, entities.IndexOf(w), fileOf[w]))], notes);
                 if (instancePlan is not null)
                 {
+                    mainCopies = copyList;
                     foreach (var c in copyList)
                         own.Remove(c);
                     notes.Add($"instances: {copyList.Count} copies rebuilt as {instancePlan.Collapses.Count} instances of {instancePlan.Groups.Count} groups");
@@ -195,7 +254,17 @@ public static class MapDecompiler
 
         var placeholders = 0;
         var at = 1;
+        var overshoot = false;
+        var matched = false;
         Emit(main);
+        // A shared prefab map is written once, so a brush entity its first placement has no hulls for
+        // has none in any placement: noted for each later one whose own model the package lacks too.
+        foreach (var placements in families)
+            foreach (var e in placements[0].Entities.Where(e => e.BrushModel is { } m && !files.ContainsKey(m + "_c")))
+                foreach (var x in placements.Skip(1).SelectMany(p => p.Entities)
+                                            .Where(x => x.IdPath[(x.IdPath.LastIndexOf(':') + 1)..] == e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..]
+                                                        && x.BrushModel is { } xm && !files.ContainsKey(xm + "_c")))
+                    notes.Add($"{x.Entity.ClassName} {x.IdPath}: placed from prefab {placements[0].Chain}'s map, and its model {x.BrushModel} is not in the package either; no geometry");
         if (placeholders > 0)
             notes.Add($"{placeholders} walk positions shipped nothing (hidden, editor-only or compile-only nodes); filled with editor-only {PlaceholderClass}");
         MatchCopyIds();
@@ -278,7 +347,20 @@ public static class MapDecompiler
             var wrapperAt = -1;
             void PlaceInstance(InstancePlan.Collapse c, DmxBinary.Element? parent)
             {
-                targets.Add((builder.AddInstance(NewId(), builder.World, c.Transform.Origin, c.Transform.Angles, parent), c.Group));
+                // Each wrapper level: a group holding only the next instance, at the origin, instanced
+                // unturned where the collapse stands, so its copy moves nothing and the copy's
+                // instance collapses a round later where the copy lands (MapInstances.Expand).
+                var holder = parent;
+                var hops = new List<(DmxBinary.Element Group, DmxBinary.Element? Parent)>();
+                for (var k = 0; k < (scope.Parent is null ? wraps : 0); k++)
+                {
+                    var wrap = builder.AddGroup(NewId());
+                    hops.Add((wrap, holder));
+                    holder = wrap;
+                }
+                for (var k = hops.Count - 1; k >= 0; k--)
+                    builder.AddInstance(NewId(), hops[k].Group, Vector3.Zero, Vector3.Zero, hops[k].Parent);
+                targets.Add((builder.AddInstance(NewId(), builder.World, c.Transform.Origin, c.Transform.Angles, holder), c.Group));
                 if (c.HiddenAfter > 0)
                 {
                     // A stand-in for the collapses that ship nothing here: a group of empty nodes,
@@ -365,14 +447,16 @@ public static class MapDecompiler
                 FillTo(sourceId);
                 if (slots is not null)
                 {
-                    group = builder.AddGroup(NewId());
+                    group = builder.AddGroup(NewId(), at: (scope.CopyGroupAt, Vector3.Zero));
                     foreach (var slot in slots)
                     {
                         if (slot.Copy is { } copy)
                         {
                             FillTo(copy.SourceId, group);
+                            // The placement is the copy's own, which a shared map's frame solve has made local
+                            // (SolveFrame); the keys are read back through the instanced key table.
                             var t = EntityLumpAuthor.Unbuild(copy.Raw!, schema, FixupOf(scope.Chain + ":0"), instanced: true).Entity;
-                            var node = builder.AddEntity(NewId(), t.Keys, t.Origin, t.Angles, t.Scales, t.Connections, parent: group);
+                            var node = builder.AddEntity(NewId(), t.Keys, copy.Entity.Origin, copy.Entity.Angles, t.Scales, t.Connections, parent: group);
                             if (copy.BrushModel is { } copyModel)
                                 AddBrushGeometry(builder, node, copy, copyModel, files, table, notes, NewId);
                             at = copy.SourceId + 1;
@@ -406,6 +490,13 @@ public static class MapDecompiler
             PlanUpTo(int.MaxValue, inclusive: false);
             foreach (var child in scope.Children.OrderBy(c => c.FirstSourceId).ThenBy(LumpIndex))
             {
+                // A root collapse whose copies ship ahead of this prefab's nodes: the bake collapses in
+                // tree order, a prefab's map lands where its parent's children end and a copy after
+                // the maps of the prefabs collapsed before it (MapInstances.EmitAt), so its instance
+                // stands before the prefab.
+                while (pending.Count > 0 && pending.Peek().EmitAt == int.MaxValue
+                       && entities.IndexOf(pending.Peek().Group.Collapses[pending.Peek().Index][0]) < child.Lump)
+                    PlaceInstance(pending.Dequeue(), null);
                 var fix = prefabs.GetValueOrDefault(child.Chain);
                 if (child.SameAs is { } first)
                 {
@@ -428,7 +519,7 @@ public static class MapDecompiler
             // its group's (both the origin, unturned) the collapse moves nothing
             // (SettleWorld.BakedPlacement), so each copy stands where its template does.
             if (group is not null)
-                scope.Instance = builder.AddInstance(NewId(), group, Vector3.Zero, Vector3.Zero);
+                scope.Instance = builder.AddInstance(NewId(), group, scope.CopyInstanceAt, Vector3.Zero);
             if (plan is not null)
             {
                 // The instances left land at the walk's end, at the root. Then the map's highest
@@ -442,10 +533,13 @@ public static class MapDecompiler
                 }
                 foreach (var (instance, g) in targets)
                     instance.Set("target", DmxBinary.AttrType.Element, planGroups[g]);
+                // Through wrappers the first block is a wrapper's, below the copies' ids: matched by
+                // running the forward once the prefabs are written (MatchCopyIds).
                 var highest = builder.NodeIds().Max();
-                if (highest < plan.Next0 - 1)
+                var wrapped = scope.Parent is null && wraps > 0;
+                if (!wrapped && highest < plan.Next0 - 1)
                     builder.AddGroup(plan.Next0 - 1);
-                else if (highest > plan.Next0 - 1)
+                else if (!wrapped && highest > plan.Next0 - 1)
                     notes.Add($"instances: the map's nodes reach id {highest}, past the first block's start {plan.Next0}");
             }
             scope.NewId = NewId;
@@ -461,6 +555,9 @@ public static class MapDecompiler
         {
             int Simulated(Scope scope) => SimulatedCopyIds(main, scopes.Values, mapName, schema)
                 .Where(c => c.Scope == scope).Select(c => c.Id).DefaultIfEmpty(int.MaxValue).Min();
+            // The map's own copies through wrappers: its highest node id moves every block by one.
+            if (wraps > 0 && mainCopies.Count > 0 && Simulated(main) is var first && first < mainCopies.Min(c => c.Entity.NodeId))
+                main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + mainCopies.Min(c => c.Entity.NodeId) - first);
             foreach (var scope in scopes.Values.Where(sc => sc.Instance is not null || (sc.Plan is not null && sc.Builder is not null)).OrderBy(sc => sc.Copies.Min(c => c.Entity.NodeId)))
             {
                 var target = scope.Copies.Min(c => c.Entity.NodeId);
@@ -469,6 +566,8 @@ public static class MapDecompiler
                     continue;
                 if (simulated == int.MaxValue || simulated > target)
                 {
+                    // Not with shared prefab maps: their frame solves would run again for every reading.
+                    overshoot |= simulated != int.MaxValue && instancePlan is null && families.Count == 0;
                     notes.Add($"prefab {scope.Chain}: its instance's copies come out at {simulated}, not {target}; not matched");
                     continue;
                 }
@@ -488,9 +587,15 @@ public static class MapDecompiler
                 if (Simulated(scope) != target)
                     notes.Add($"prefab {scope.Chain}: its instance's copies come out at {Simulated(scope)}, not {target}; not matched");
             }
+            matched = !notes.Any(n => n.EndsWith("; not matched", StringComparison.Ordinal))
+                      && (mainCopies.Count == 0 || SimulatedCopyIds(main, scopes.Values, mapName, schema).Where(c => c.Scope == main)
+                                                       .Select(c => c.Id).ToHashSet().IsSupersetOf(mainCopies.Select(c => c.Entity.NodeId)));
         }
 
-        return new Result(main.Builder!.Write(), entities, placeholders, notes) { Prefabs = prefabFiles };
+        return new Result(main.Builder!.Write(), entities, placeholders, notes)
+        {
+            Prefabs = prefabFiles, Overshoot = overshoot, IdsMatched = matched,
+        };
     }
 
     /// <summary>
@@ -643,6 +748,10 @@ public static class MapDecompiler
         /// <summary>The map's instances rebuilt from copies of more than one collapse.</summary>
         public InstancePlan? Plan { get; set; }
 
+        /// <summary>Where the copies' template group and its instance stand (a shared map's second frame).</summary>
+        public Vector3 CopyGroupAt { get; set; }
+        public Vector3 CopyInstanceAt { get; set; }
+
         /// <summary>The rebuilt instance, when the map has copies.</summary>
         public DmxBinary.Element? Instance { get; set; }
 
@@ -762,17 +871,26 @@ public static class MapDecompiler
         // placement then lands on its copy.
         if (perCollapse > 0 && copies.Count == perCollapse * placements.Count)
         {
-            var missed = 0;
-            for (var c = 0; c < perCollapse; c++)
-            {
-                var wants = Enumerable.Range(0, placements.Count).Select(k => (copies[(k * perCollapse) + c].Entity.Origin, copies[(k * perCollapse) + c].Entity.Angles)).ToList();
-                if (FrameSolver.Locate(solution, wants, copies: true) is { } at)
-                    first.Copies[first.Copies.IndexOf(copies[c])] = copies[c] with { Entity = copies[c].Entity with { Origin = at.Origin, Angles = at.Angles } };
-                else
-                    missed++;
-            }
+            var wanted = Enumerable.Range(0, perCollapse).Select(c => (IReadOnlyList<(Vector3 Origin, Vector3 Angles)>)
+                [.. Enumerable.Range(0, placements.Count).Select(k => (copies[(k * perCollapse) + c].Entity.Origin, copies[(k * perCollapse) + c].Entity.Angles))]).ToList();
+            var local = wanted.Select(w => FrameSolver.Locate(solution, w, copies: true)).ToArray();
+            var missed = local.Count(l => l is null);
             if (missed > 0)
-                notes.Add($"prefab {first.Chain}: {missed} of {perCollapse} instance templates have no local placement that lands every copy");
+            {
+                // Under a turned placement the copy's step rounds with the group's place (the moved
+                // instance against the group): searched as a second frame.
+                if (FrameSolver.LocateCopies(solution, wanted, 4096, CopyFrameBudget, out var places) is { } found)
+                {
+                    (first.CopyGroupAt, first.CopyInstanceAt) = (found.GroupAt, found.InstanceAt);
+                    local = [.. found.Local.Select(l => ((Vector3, Vector3)?)l)];
+                    notes.Add($"prefab {first.Chain}: its instance at {found.InstanceAt} over its group at {found.GroupAt} lands every copy ({places:n0} offsets tried)");
+                }
+                else
+                    notes.Add($"prefab {first.Chain}: {missed} of {perCollapse} instance templates have no local placement that lands every copy ({places:n0} group offsets tried)");
+            }
+            for (var c = 0; c < perCollapse; c++)
+                if (local[c] is { } at)
+                    first.Copies[first.Copies.IndexOf(copies[c])] = copies[c] with { Entity = copies[c].Entity with { Origin = at.Origin, Angles = at.Angles } };
         }
     }
 
@@ -826,7 +944,7 @@ public static class MapDecompiler
         var result = new List<(Scope, int)>();
         foreach (var copy in copies)
         {
-            var owner = copy.Prefabs.Length == 0 ? null
+            var owner = copy.Prefabs.Length == 0 ? main
                 : docs.Values.FirstOrDefault(d => d.Doc.OfType("CMapWorld").FirstOrDefault() is { } w && copy.Prefabs[^1].Get<DmxBinary.Element>(MapPrefabs.WorldKey) == w).Scope;
             if (owner is not null)
                 result.Add((owner, copy.NodeId));

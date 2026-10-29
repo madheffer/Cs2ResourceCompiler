@@ -150,8 +150,8 @@
   "module": "Prefabs",
   "subtask": "One prefab map placed several times",
   "weight": 3,
-  "done": 0.6,
-  "evidence": "exact frame solver: probe11 + probe9 top families exact; nested families and copies inside open"
+  "done": 0.8,
+  "evidence": "exact frame solver; probe11 + 12 exact incl. instance copies in turned placements (LocateCopies, 10-29); nested families (probe9) open"
  },
  {
   "module": "Prefabs",
@@ -185,8 +185,8 @@
   "module": "Instances",
   "subtask": "The map's own instances (ids, lump place)",
   "weight": 3,
-  "done": 0.9,
-  "evidence": "atixref: all 199 copies exact, ids and lump order (block-order layout); probe8, pinst7 main-map instances open"
+  "done": 1,
+  "evidence": "atixref 199 copies exact; pinst7 (one collapse) and probe8 (a later round through a wrapper group) exact 10-29"
  },
  {
   "module": "Instances",
@@ -277,7 +277,7 @@
   "subtask": "Entity lump round trip test",
   "weight": 2,
   "done": 1,
-  "evidence": "Entities_CompileAsTheSourceDoes, 13 of 20 maps exact (atixref 10-28)"
+  "evidence": "Entities_CompileAsTheSourceDoes, 18 of 20 maps exact (10-29)"
  },
  {
   "module": "Verification",
@@ -291,7 +291,7 @@
   "subtask": "Valve resourcecompiler on the decompile",
   "weight": 2,
   "done": 0.5,
-  "evidence": "ze_hold_em_p by hand; no harness"
+  "evidence": "ze_hold_em_p by hand; tools/map-survey/decompile_rc_batch.ps1 ready, runs when CS2 is closed"
  },
  {
   "module": "Verification",
