@@ -739,6 +739,17 @@ internal static class WorldGeometry
         private readonly int[][] sets;
         /// <summary>The leaf the last failing arrival reached.</summary>
         public int FailedLeaf = -1;
+        private readonly int[] nodeCount;
+        /// <summary>
+        /// Asked on each push into a node's queue (the node and its queue from the front): can the right
+        /// child still get an entry from it? See ForwardSearch.
+        /// </summary>
+        public Func<int, List<int>, bool>? Feasible;
+        public readonly long[] FeasibleFailures;
+        public int RightChild(int n) => rightChild[n];
+        public int[] Set(int n) => sets[n];
+        public int NodeCount(int n) => nodeCount[n];
+        public Dictionary<int, int> FirstLeafRank(int n) => firstLeafRank[n];
 
         /// <summary>
         /// The triangles whose input order a node's entry depends on: a left child's entry is its parent's
@@ -767,7 +778,8 @@ internal static class WorldGeometry
             (arrived, head, queue, leftArrived, flushed) = (new int[n], new int[n], new List<int>[n], new int[n], new bool[n]);
             (FlushFailures, CyclicFailures) = (new long[n], new long[n]);
             firstLeafRank = new Dictionary<int, int>[n];
-            (parent, isLeft, sets) = (new int[n], new bool[n], new int[n][]);
+            FeasibleFailures = new long[n];
+            (parent, isLeft, sets, nodeCount) = (new int[n], new bool[n], new int[n][], new int[n]);
             parent[0] = -1;
             var at = 0;
             int Read()
@@ -781,6 +793,7 @@ internal static class WorldGeometry
                 if (left is null)
                 {
                     leafOrder[i] = [.. entry.Select(soupOf).Order()];
+                    nodeCount[i] = 1;
                     return i;
                 }
                 leftSet[i] = [.. left.Select(soupOf)];
@@ -792,6 +805,7 @@ internal static class WorldGeometry
                 while (leftSet[leaf] is not null)
                     leaf = leftChild[leaf];
                 firstLeafRank[i] = leafOrder[leaf].Select((t, k) => (t, k)).ToDictionary(x => x.t, x => x.k);
+                nodeCount[i] = at - i;
                 return i;
             }
             Read();
@@ -881,6 +895,12 @@ internal static class WorldGeometry
                         return false;
                     }
                 }
+                if (Feasible is not null && !flushed[n] && size[rightChild[n]] >= 8 && !Feasible(n, queue[n].GetRange(head[n], queue[n].Count - head[n])))
+                {
+                    FailedLeaf = n;
+                    FeasibleFailures[n]++;
+                    return false;
+                }
                 // The last right one: the queue's cyclic order is fixed from here, and each left one still to
                 // come turns it once, so the right child's entry is known now.
                 var rights = size[n] - size[leftChild[n]];
@@ -935,6 +955,78 @@ internal static class WorldGeometry
                                              int[]? truth, out string report)
     {
         var bvh = new BvhRun(trace, soupOf);
+        // The big-node check: a queue's cyclic order is fixed once in, so whatever the right child gets will
+        // hold the queued triangles in a turn of their queue order, the ones still to come anywhere among
+        // them. Whether the right child's subtree takes some such entry is a small search of its own (no
+        // faces, no vertices: a relaxation, so its no is a real no), the turns limited to those the right
+        // child's leftmost leaf allows. Out of budget counts as yes; answers are kept per queue state. Off by default: on probe01 it rejects millions of queue states yet the search gets no deeper.
+        var oracleBudget = long.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_ORACLE"), out var ob) ? ob : 0;
+        if (oracleBudget > 0)
+        {
+            var subRuns = new Dictionary<int, BvhRun>();
+            var answers = new Dictionary<(int, ulong), bool>();
+            bvh.Feasible = (n, c) =>
+            {
+                var rank = bvh.FirstLeafRank(n);
+                if (c.Count(rank.ContainsKey) < 2)
+                    return true;
+                var h = (ulong)n * 1099511628211UL;
+                foreach (var x in c)
+                    h = (h ^ (ulong)(x + 1)) * 1099511628211UL;
+                if (answers.TryGetValue((n, h), out var known))
+                    return known;
+                var r = bvh.RightChild(n);
+                if (!subRuns.TryGetValue(r, out var sub))
+                    subRuns[r] = sub = new BvhRun(trace.GetRange(r, bvh.NodeCount(r)), soupOf);
+                var queued = c.ToHashSet();
+                var free = bvh.Set(r).Where(t => !queued.Contains(t)).ToList();
+                var used = new bool[free.Count];
+                var start = sub.Arrivals;
+                var exhausted = false;
+                bool Fit(List<int> seq, int i, int placedFree)
+                {
+                    if (i == seq.Count && placedFree == free.Count)
+                        return true;
+                    if (sub.Arrivals - start > oracleBudget)
+                    {
+                        exhausted = true;
+                        return true;
+                    }
+                    var mark = sub.Mark;
+                    if (i < seq.Count)
+                    {
+                        if (sub.Arrive(seq[i]) && Fit(seq, i + 1, placedFree))
+                            return true;
+                        sub.Undo(mark);
+                    }
+                    for (var f = 0; f < free.Count; f++)
+                    {
+                        if (used[f])
+                            continue;
+                        used[f] = true;
+                        if (sub.Arrive(free[f]) && Fit(seq, i, placedFree + 1))
+                            return true;
+                        sub.Undo(mark);
+                        used[f] = false;
+                    }
+                    return false;
+                }
+                var ok = false;
+                for (var cut = 0; cut < c.Count && !ok; cut++)
+                {
+                    var seq = c.Skip(cut).Concat(c.Take(cut)).ToList();
+                    var ranks = seq.Where(rank.ContainsKey).Select(x => rank[x]).ToList();
+                    if (ranks.Zip(ranks.Skip(1)).Any(q => q.Second < q.First))
+                        continue;
+                    ok = Fit(seq, 0, 0);
+                    sub.Undo(0);
+                    Array.Clear(used);
+                }
+                if (!exhausted)
+                    answers[(n, h)] = ok;
+                return ok;
+            };
+        }
         // DECOMPILE_TRUTH_PREFIX=n: keep to the source's order only for its first n triangles.
         var truthPrefix = int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_TRUTH_PREFIX"), out var tp) ? tp : int.MaxValue;
         if (truth is not null && Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
@@ -1173,6 +1265,7 @@ internal static class WorldGeometry
         thread.Join();
         report = found is not null ? $"forward search found an order in {bvh.Arrivals} arrivals ({jumps} backjumps)"
             : $"forward search found none in {bvh.Arrivals} arrivals ({jumps} backjumps, {repeats} repeated states; deepest {deepest} of {total}; visits by depth {string.Join(",", visits.Take(deepest + 1))}{(truthLost == "" ? "" : "; " + truthLost)})";
+        report += $"; feasibility failures {string.Join(" ", bvh.FeasibleFailures.Select((c, i) => (c, i)).Where(x => x.c > 0).OrderByDescending(x => x.c).Take(4).Select(x => $"node {x.i}: {x.c}"))}";
         report += $"; cyclic failures {string.Join(" ", bvh.CyclicFailures.Select((c, i) => (c, i)).Where(x => x.c > 0).OrderByDescending(x => x.c).Take(4).Select(x => $"node {x.i}: {x.c}"))}";
         report += $"; flush failures {string.Join(" ", bvh.FlushFailures.Select((c, i) => (c, i)).Where(x => x.c > 0).OrderByDescending(x => x.c).Take(6).Select(x => $"node {x.i} ({bvh.Size(x.i)}): {x.c}"))}";
         report = report.Replace("visits by depth " + string.Join(",", visits.Take(deepest + 1)), $"visits ending {string.Join(",", visits.Skip(Math.Max(0, deepest - 5)).Take(6))}");

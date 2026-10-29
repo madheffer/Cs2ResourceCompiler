@@ -589,9 +589,22 @@ Open, in order:
    (23 before), stuck at node 3 (54 triangles, its right side arriving in three groups). Even given the
    source's first 220 triangles it cannot finish the last 60 within 50M arrivals: what tells their orders
    apart are the flushes of nodes 1 and 2 (224 and 90 triangles), whose dependency sets are nearly every
-   decision. Next: an earlier check for a big node's right child than its last right arrival (whether
-   the queued cyclic order can still be turned into one of the right child's valid entries), or a
-   constraint-solver formulation; Hammer's own primitive face order (CS2 closed) stays a cross-check.
+   decision.
+   **10-30 later: the big-node check (`DECOMPILE_SEARCH_ORACLE=<arrivals>`, off by default).** On each
+   push into a node whose right child holds 8+ triangles, a sub-search on that right child's subtree
+   asks whether some entry still fits: the queued triangles in a turn of their queue order (turns limited
+   by the leftmost leaf), the rest anywhere. It is a relaxation (no faces, no vertices), so its no is
+   a real no; out of budget counts as yes; answers are kept per queue state. Along the source's order it
+   never refuses (PHYS-exact, 2195 arrivals). Measured on probe01 with 50M arrivals:
+   | source's first n | before | with the check |
+   |---|---|---|
+   | 220 | deepest 278, fails | deepest 277, fails (6544 s; refusals node 2: 599k, 49: 87k, 52: 42k) |
+   | 100 | — | deepest 223 (refusals node 0: 3.1M) |
+   | 0 (free) | deepest 164 | deepest 164 (refusals node 3: 6.3M, node 4: 258k) |
+   It prunes millions of states but the search gets no deeper: the dead ends are not decided by any
+   one right child's entry but by the faces (pairing and vertex rule) together with the BVH. Next: a
+   constraint-solver formulation (faces, vertex rule and partitions as one model, e.g. SAT/CP), or
+   Hammer's own primitive face order (CS2 closed) as the cross-check that may make the search moot.
    Debug switches: `DECOMPILE_SEARCH_BUDGET` (default 5M), `DECOMPILE_SEARCH_GUIDE=preimage` (worse:
    deepest 87), `DECOMPILE_TRUTH_PREFIX=n`, `DECOMPILE_SEARCH_PREFER=inverted`, `DECOMPILE_SEARCH_SLOTS=all`,
    `DECOMPILE_WORLDDEBUG=1`.
