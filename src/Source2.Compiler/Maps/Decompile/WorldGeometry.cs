@@ -68,27 +68,35 @@ internal static class WorldGeometry
                         materials.Add(m);
                     return at < 0 ? materials.Count - 1 : at;
                 }
-                var faces = new List<(Vector3[], int, Vector2[]?)>();
-                foreach (var (ia, ib, ic) in piece)
+                // Each triangle's material and its corners' texcoords, then the faces rebuilt per material
+                // (Polygons) and put in an order whose cut corners meet the vertices in the soup's order.
+                var material = new int[piece.Count];
+                var uv = new Dictionary<(int Triangle, int Vertex), Vector2>();
+                for (var k = 0; k < piece.Count; k++)
                 {
+                    var (ia, ib, ic) = piece[k];
                     Vector3[] corners = [vertices[ia], vertices[ib], vertices[ic]];
                     var normal = Vector3.Cross(corners[1] - corners[0], corners[2] - corners[0]);
                     var hits = corners.Select(c => Corner(render, c, normal)).ToArray();
                     if (hits.All(h => h is not null) && hits.Select(h => h!.Value.Material).Distinct().Count() == 1)
                     {
-                        faces.Add((corners, MaterialIndex(hits[0]!.Value.Material), [.. hits.Select(h => h!.Value.Texcoord)]));
+                        material[k] = MaterialIndex(hits[0]!.Value.Material);
+                        (uv[(k, ia)], uv[(k, ib)], uv[(k, ic)]) = (hits[0]!.Value.Texcoord, hits[1]!.Value.Texcoord, hits[2]!.Value.Texcoord);
                         matched++;
-                    }
-                    else if (toolName is not null)
-                    {
-                        faces.Add((corners, MaterialIndex(toolName), null));
-                        toolFaces++;
                     }
                     else
                     {
-                        faces.Add((corners, MaterialIndex("materials/tools/toolsnodraw.vmat"), null));
-                        unknown++;
+                        material[k] = MaterialIndex(toolName ?? "materials/tools/toolsnodraw.vmat");
+                        if (toolName is null) unknown++; else toolFaces++;
                     }
+                }
+                var faces = new List<(Vector3[], int, Vector2[]?)>();
+                foreach (var (loop, m, cuts) in PolygonOrder(Polygons(piece, material, vertices), vertices, piece))
+                {
+                    Vector2[]? texcoords = null;
+                    if (cuts.All(t => uv.ContainsKey((t, piece[t].A))))
+                        texcoords = [.. loop.Select(v => uv[(cuts.First(t => piece[t].A == v || piece[t].B == v || piece[t].C == v), v)])];
+                    faces.Add(([.. loop.Select(v => vertices[v])], m, texcoords));
                 }
                 result.Add(new Mesh(materials, faces, name));
                 }
@@ -107,6 +115,164 @@ internal static class WorldGeometry
         notes.Add($"world: {result.Count} mesh(es), the physics soups' connected pieces; {matched} triangles with a render face's material and texture coordinates, " +
                   $"{toolFaces} a tool material, {unknown} neither (toolsnodraw); render-only faces not rebuilt");
         return result;
+    }
+
+    /// <summary>A face rebuilt from soup triangles: its loop (soup vertex ids), material, the triangles it cuts
+    /// into (indices into the piece) and the loop starts at which the triangulator cuts it into them.</summary>
+    internal sealed record Polygon(int[] Loop, int Material, List<int> Triangles, List<int> Starts);
+
+    /// <summary>
+    /// The source's faces back, per material: triangles in one plane (unit normals within 1e-5, distances
+    /// within 1e-3) that share an edge, the other way round, are merged one at a time, a merge kept only
+    /// when PolygonTriangulator (the compile's own cut, on world positions as for a world mesh) cuts the
+    /// merged loop, from some start, into exactly the triangles merged, so nothing is guessed: a face the
+    /// compile would cut otherwise stays split.
+    /// </summary>
+    internal static List<Polygon> Polygons(List<(int A, int B, int C)> piece, int[] material, Vector3[] vertices)
+    {
+        static (int, int, int) Norm((int, int, int) t)
+        {
+            var (a, b, c) = t;
+            return a <= b && a <= c ? (a, b, c) : b <= a && b <= c ? (b, c, a) : (c, a, b);
+        }
+        var polygons = new List<Polygon>();
+        for (var k = 0; k < piece.Count; k++)
+            polygons.Add(new Polygon([piece[k].A, piece[k].B, piece[k].C], material[k], [k], [0, 1, 2]));
+        Vector3 Normal(int k) => Vector3.Normalize(Vector3.Cross(vertices[piece[k].B] - vertices[piece[k].A], vertices[piece[k].C] - vertices[piece[k].A]));
+        bool SamePlane(int k, int j)
+        {
+            var (n, m) = (Normal(k), Normal(j));
+            return Vector3.Dot(n, m) > 1 - 1e-5f && MathF.Abs(Vector3.Dot(n, vertices[piece[k].A]) - Vector3.Dot(n, vertices[piece[j].A])) < 1e-3f;
+        }
+        List<int> StartsCutting(int[] loop, HashSet<(int, int, int)> want)
+        {
+            var starts = new List<int>();
+            for (var r = 0; r < loop.Length; r++)
+            {
+                var rotated = loop.Skip(r).Concat(loop.Take(r)).ToArray();
+                var cut = PolygonTriangulator.Triangulate([.. rotated.Select(v => vertices[v])]);
+                if (cut.Length != (loop.Length - 2) * 3)
+                    continue;
+                var got = new HashSet<(int, int, int)>();
+                for (var i = 0; i < cut.Length; i += 3)
+                    got.Add(Norm((rotated[cut[i]], rotated[cut[i + 1]], rotated[cut[i + 2]])));
+                if (got.SetEquals(want))
+                    starts.Add(r);
+            }
+            return starts;
+        }
+        for (var merged = true; merged;)
+        {
+            merged = false;
+            for (var i = 0; i < polygons.Count && !merged; i++)
+                for (var j = i + 1; j < polygons.Count && !merged; j++)
+                {
+                    var (p, q) = (polygons[i], polygons[j]);
+                    if (p.Material != q.Material || !SamePlane(p.Triangles[0], q.Triangles[0]))
+                        continue;
+                    // A shared edge a -> b in p, b -> a in q: q's other corners go in between.
+                    for (var x = 0; x < p.Loop.Length && !merged; x++)
+                    {
+                        int a = p.Loop[x], b = p.Loop[(x + 1) % p.Loop.Length];
+                        var y = Array.IndexOf(q.Loop, b);
+                        if (y < 0 || q.Loop[(y + 1) % q.Loop.Length] != a)
+                            continue;
+                        var between = Enumerable.Range(2, q.Loop.Length - 2).Select(s => q.Loop[(y + s) % q.Loop.Length]).ToArray();
+                        if (between.Any(v => p.Loop.Contains(v)))
+                            continue;
+                        var loop = p.Loop.Take(x + 1).Concat(between).Concat(p.Loop.Skip(x + 1)).ToArray();
+                        var want = p.Triangles.Concat(q.Triangles).Select(t => Norm(piece[t])).ToHashSet();
+                        var starts = StartsCutting(loop, want);
+                        if (starts.Count == 0)
+                            continue;
+                        polygons[i] = new Polygon(loop, p.Material, [.. p.Triangles, .. q.Triangles], starts);
+                        polygons.RemoveAt(j);
+                        merged = true;
+                    }
+                }
+        }
+        return polygons;
+    }
+
+    /// <summary>
+    /// The faces in an order (each from one of its cutting starts) whose cut corners, in the triangulator's
+    /// order, meet the piece's vertices in the soup's order (<see cref="FirstUseOrder"/> over faces): for
+    /// each vertex in turn, the first unused face holding it with a start that brings its new vertices in
+    /// ascending order and no other new one; then every face whose corners are all met. A face no step
+    /// reaches goes at the end. Returns each face's loop from its start.
+    /// </summary>
+    internal static List<(int[] Loop, int Material, List<int> Triangles)> PolygonOrder(List<Polygon> polygons, Vector3[] vertices,
+                                                                                       List<(int A, int B, int C)> piece)
+    {
+        static (int, int, int) Norm((int, int, int) t)
+        {
+            var (a, b, c) = t;
+            return a <= b && a <= c ? (a, b, c) : b <= a && b <= c ? (b, c, a) : (c, a, b);
+        }
+        var order = new List<(int[], int, List<int>)>();
+        var seen = new HashSet<int>();
+        var done = new bool[polygons.Count];
+        int[] Cut(int[] loop, int start)
+        {
+            var rotated = loop.Skip(start).Concat(loop.Take(start)).ToArray();
+            var cut = loop.Length == 3 ? [0, 1, 2] : PolygonTriangulator.Triangulate([.. rotated.Select(v => vertices[v])]);
+            return [.. cut.Select(i => rotated[i])];
+        }
+        void Emit(int f, int start)
+        {
+            done[f] = true;
+            var p = polygons[f];
+            order.Add(([.. p.Loop.Skip(start).Concat(p.Loop.Take(start))], p.Material, p.Triangles));
+            foreach (var v in p.Loop)
+                seen.Add(v);
+        }
+        // Among the starts that do, the one cutting the face's triangles in their shipped order (the soup's
+        // order, which the BVH keeps within a leaf, and a face's triangles share one): the fewest
+        // inversions of their indices, the first on a tie.
+        int Inversions(Polygon p, int start)
+        {
+            var cut = Cut(p.Loop, start);
+            var indices = new List<int>();
+            for (var i = 0; i + 2 < cut.Length; i += 3)
+            {
+                var key = Norm((cut[i], cut[i + 1], cut[i + 2]));
+                indices.Add(p.Triangles.FirstOrDefault(t => Norm(piece[t]) == key, -1));
+            }
+            var count = 0;
+            for (var i = 0; i < indices.Count; i++)
+                for (var j = i + 1; j < indices.Count; j++)
+                    if (indices[i] > indices[j])
+                        count++;
+            return count;
+        }
+        var all = polygons.SelectMany(p => p.Loop).Distinct().Order().ToList();
+        foreach (var next in all)
+        {
+            if (seen.Contains(next))
+                continue;
+            for (var f = 0; f < polygons.Count; f++)
+            {
+                if (done[f] || !polygons[f].Loop.Contains(next))
+                    continue;
+                var at = polygons[f].Starts.Where(s =>
+                {
+                    var fresh = Cut(polygons[f].Loop, s).Where(v => !seen.Contains(v)).Distinct().ToList();
+                    var expected = all.SkipWhile(v => v != next).Take(fresh.Count).ToList();
+                    return fresh.Count > 0 && fresh.SequenceEqual(expected);
+                }).OrderBy(s => Inversions(polygons[f], s)).DefaultIfEmpty(-1).First();
+                if (at < 0)
+                    continue;
+                Emit(f, at);
+                for (var g = 0; g < polygons.Count; g++)
+                    if (!done[g] && polygons[g].Loop.All(seen.Contains))
+                        Emit(g, polygons[g].Starts.OrderBy(x => Inversions(polygons[g], x)).First());
+                break;
+            }
+        }
+        for (var f = 0; f < polygons.Count; f++)
+            if (!done[f])
+                Emit(f, polygons[f].Starts.OrderBy(x => Inversions(polygons[f], x)).First());
+        return order;
     }
 
     /// <summary>The soup's connected pieces (triangles sharing a vertex), ordered by their lowest vertex, each
@@ -128,8 +294,7 @@ internal static class WorldGeometry
             // Local numbering in soup order, so the piece's first vertex is its own 0.
             var used = g.SelectMany(t => new[] { t.A, t.B, t.C }).Distinct().Order().ToList();
             var local = used.Select((v, i) => (v, i)).ToDictionary(x => x.v, x => x.i);
-            var ordered = FirstUseOrder([.. g.Select(t => (local[t.A], local[t.B], local[t.C]))], used.Count);
-            result.Add([.. ordered.Select(t => (used[t.A], used[t.B], used[t.C]))]);
+            result.Add(g);
         }
         return result;
     }

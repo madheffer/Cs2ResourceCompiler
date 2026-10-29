@@ -518,11 +518,22 @@ vertices exact in order and their BVH nodes exact, but **the triangles' order** 
 the tool soup from its 5th) and RED2's physics_shape_count / physics_shape_mesh_count (16 source meshes
 against 12 pieces: touching meshes weld into one piece).
 
+Faces (10-29 night): each piece's triangles are merged back into the source's faces (`Polygons`:
+coplanar, one material, sharing an edge the other way round, a merge kept only when our port of the
+compile's triangulator cuts the merged loop, from some start, into exactly those triangles), and the
+faces ordered (`PolygonOrder`) so their cut corners meet the soup's vertices in order, choosing among the
+starts that do the one cutting its triangles in their shipped order (the BVH keeps a leaf's triangles in
+input order). `WorldPhysicsAuthorTests.SoupInputsOfTwoMaps` (`DECOMPILE_SOUPS=<addon>|<source>|<decompile>`)
+puts the RnMeshCreate input built from the true source beside the decompile's, triangle by triangle.
+probe01: the tool soup now exact; the main soup's input agrees for its first 10 triangles, its output's
+vertices for the first 108.
+
 Open, in order:
-1. **The triangles' order.** The BVH (RnMeshBuilder) keeps leaves in the input's order, and Valve's input
-   was the source's faces cut by its triangulator. Rebuilding the faces (coplanar triangles of one
-   material sharing an edge, kept only where our port of the triangulator, `PolygonTriangulator`, cuts the
-   polygon back into those triangles) should give the forward that input order.
+1. **The order of faces that bring no new vertex.** At triangle 10 of probe01's main soup the source
+   cuts a face whose corners were all met already before another such face; nothing in the soup's vertex
+   order tells the two apart, and the shipped triangles are in BVH order. Candidates to settle it: the
+   BVH output itself (search the faces' order so RnMeshBuilder, run on the decompile's soup input, gives
+   the shipped triangles; the port is exact), or Hammer's own face order for a mesh it makes, measured.
 2. **Members, not connected pieces.** On ze_hold_em_p the whole world is one connected piece (4548
    triangles; the weld joins touching meshes), and WPBUILD on it ran for over 15 minutes without finishing
    (something quadratic in the forward on one mesh that size). But the soup's vertices are its members'
