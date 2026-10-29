@@ -611,7 +611,7 @@ its members), each compiled -world and full.
 ## Handoff (2026-10-29)
 
 Branch research/vmap-decompile, worktree `D:\_cursor projects\source2-compiler-wt-decompile`,
-nothing pushed. Tracker 53.0% (21 of 44 subtasks done).
+nothing pushed. Tracker 54.3% (22 of 44 subtasks done).
 
 The check is `MapDecompilerTests.Entities_CompileAsTheSourceDoes` (20 maps, about 16 minutes, most of it probe4's frame searches;
 `DECOMPILE_ALL=1` prints every difference, `DECOMPILE_LUMP=<file>` lists both sides of a lump).
@@ -625,18 +625,32 @@ of stage 2's 3 differing hulls, carousel_door01_108_27).
 | 19 maps (probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, atixref, prefabprobe 1/2/4/5/6/7/8/9/11/12, pinst, pinst7, instnest, prefabinst) | 0 | passing (10-29: pinst7, probe8, 9, 11, 12 added) |
 | s2c_prefabprobe3 | 2 | prop 2140:2239 still falling when Valve's settle ends (no Start asleep), settled again by ours: not invertible from the package |
 
-The whole check now takes about 3 minutes at Idle on 4 cores (probe4 1 of them, probe9 and atixref 20 s each).
+The whole check now takes about 3 minutes at Idle on 4 cores (probe4 1 of them, probe9 and atixref 20 s each),
+1.5 minutes with CS2 closed. `DECOMPILE_SAVE=<dir>` writes the decompile it judges; `DECOMPILE_IDS=<vmap>|<map>`
+lists our lump author's ids on any .vmap (`LumpIdsOfAFile`).
 
-CS2-closed queue for the decompiler (resourcecompiler needs CS2 closed; nothing here needs Frida or the game):
-- `tools/map-survey/decompile_rc_batch.ps1` (refuses to run with cs2.exe up): decompiles s2c_pinst7,
-  s2c_prefabprobe8, s2c_prefabprobe4, atixref and s2c_prefabinst into `s2c_dec_<map>.vmap` (prefab maps
-  beside them; `decompile-map` writes those since 10-29), compiles each with resourcecompiler
-  `-world -fshallow` and compares default_ents and entity-model PHYS with Valve's package
-  (`DECOMPILE_RC`). The check above runs our lump author on both sides; this is Valve's on ours.
-- A cable probe (cable_dynamic with non-default numSides, radius, tessellationSpacing, material,
-  collision on and off), compiled -world and full, before rebuilding cables as CMapCable (item 4):
-  their settings live only in the cable's render and collision models.
-- Hammer open-and-re-save of a decompile (item 8): needs the workshop tools.
+CS2-closed session 10-29 evening (d167724):
+- Done: `tools/map-survey/decompile_rc_batch.ps1 -SameOptions` (refuses to run with cs2.exe up;
+  `-CompareOnly` re-reads the packages of a run): Valve's resourcecompiler on the five decompiles,
+  against its build of each true source under the same options. Results and the two rules it found
+  (hollow nodes, ledger 182; brushless brush entities) in "Valve's resourcecompiler on the
+  decompiles" above. Our forward on each decompiled .vmap now gives Valve's ids.
+- Done: the cable probes, compiled `-world`: s2c_cablecoll (17 collision cables) and the new
+  s2c_cablerender (`tools/physics/cable_render_map.py`: materials, tint, secondary material, texture
+  scale/orientation/offsets, shape settings with collision off). Packages kept at
+  `%TEMP%\fresh_compile\s2c_cablecoll.world.vpk` and `s2c_cablerender.world.vpk` (and in the addon's
+  game folder). Their full builds failed in vrad3: a GPU hang (Aftermath: MMU page fault in
+  `ray_tracing_02`, -vulkan -gpuraytracing) five times on each map, where probe_cable's full build
+  worked the same day; the cable models are in the -world builds, which is what item 4 reads.
+- Left, CS2 closed: the Hammer open-and-re-save (item 8). engine2 registers `open_asset` ("Opens an
+  asset in its primary editor"; Hammer for a .vmap) and hammer.dll `hammer_force_autosave`, so the
+  check can run over netcon without clicking Save: `cs2.exe -tools -insecure -addon s2c_rc_probe
+  -netconport 29000 -novid`, `open_asset maps/s2c_dec_s2c_pinst7.vmap`, `hammer_force_autosave`, then
+  diff the autosave against ours. Not tried yet (the user's CS2 came up first).
+- Open from it: a brush entity whose model the source compile failed (missing material) has no
+  geometry in the package; the decompile drops it, and so does a recompile, where Valve kept it. The
+  only faithful rebuild is a mesh that fails the same way; that is the user's call. Our world builder
+  does not drop toolsskip faces (the decompile's fillers are toolsskip boxes).
 
 Done this session: atixref's ropes (CMapPath rebuilt, positions and tangents solved), template
 members' placement as an exact solve, light-step keys (test checks them against the package;

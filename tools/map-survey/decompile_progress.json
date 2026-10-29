@@ -24,8 +24,8 @@
   "module": "Map file",
   "subtask": "Hammer open and re-save check",
   "weight": 3,
-  "done": 0,
-  "evidence": "not started"
+  "done": 0.1,
+  "evidence": "method found: open_asset + hammer_force_autosave over netcon (engine2/hammer.dll); not run yet (CS2 closed needed)"
  },
  {
   "module": "Entities",
@@ -74,7 +74,7 @@
   "subtask": "Paths, ropes and cables (CMapPath, CMapPathNode)",
   "weight": 3,
   "done": 0.6,
-  "evidence": "atixref's 4 ropes exact: nodes, positions and tangents solved through PathControls; CMapCable not rebuilt"
+  "evidence": "atixref's 4 ropes exact: nodes, positions and tangents solved through PathControls; CMapCable not rebuilt; cable probes s2c_cablecoll + s2c_cablerender compiled -world (10-29)"
  },
  {
   "module": "Entities",
@@ -290,8 +290,8 @@
   "module": "Verification",
   "subtask": "Valve resourcecompiler on the decompile",
   "weight": 2,
-  "done": 0.5,
-  "evidence": "ze_hold_em_p by hand; tools/map-survey/decompile_rc_batch.ps1 ready, runs when CS2 is closed"
+  "done": 1,
+  "evidence": "decompile_rc_batch.ps1 -SameOptions (10-29): 5 maps compile; vs Valve's build of the source, same options: every entity under Valve's id; left: brush entities whose model the source compile failed, cable_dynamic, light bounds (no world meshes); found hollow-node rule (ledger 182)"
  },
  {
   "module": "Verification",
