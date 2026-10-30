@@ -220,8 +220,8 @@
   "module": "World geometry",
   "subtask": "prop_static from scene objects",
   "weight": 3,
-  "done": 0,
-  "evidence": "not started"
+  "done": 0.4,
+  "evidence": "10-30: StaticProps rebuilds props from the world hulls (fit + exact placement search, vertices and planes; part type-sort inverse): ze_hold_em_p 86 props from all 129 hulls, every hull exact through our forward; open: props without physics (render), scaled/deformed, model spheres/capsules/meshes, keys"
  },
  {
   "module": "World geometry",

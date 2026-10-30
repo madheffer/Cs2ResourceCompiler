@@ -640,6 +640,37 @@ Open, in order:
    do not map 1:1 either (`agg_merge_*`: 28 draws for the 2 reflectivity meshes, 10 for the 13 boxes,
    merged and split again), so the split comes with the render-mesh port (Brush/world render item).
    Next: ze_hold_em_p (one connected piece, so no piece blocks; prop_static hulls first).
+
+### prop_static from the world's hulls (2026-10-30)
+
+A prop_static leaves the entity lump, and baked to the world (`baketoworld`) it leaves no render
+object either (ze_hold_em_p's world node: `m_sceneObjects` empty, its fixtures merged into
+`agg_merge_*`). Its hulls stay in world_physics.vmdl_c. `StaticProps` (Maps/Decompile) rebuilds them:
+- Each prop hull is the model hull cooked in the model's space and then moved vertex by vertex, in
+  order, by the node transform (`StaticPropHulls.Cook` + `RnHullBuilder.Transform`). So a shipped
+  hull pairs vertex for vertex with a model hull of as many vertices, and a least-squares fit gives
+  the placement nearly.
+- The exact placement is searched around the fit: per angle the value, its whole degree and its
+  1/1000, each ±4 float steps (and a turn away past 90); per origin axis on its own, from the
+  component the first vertex asks for, ±16 steps.
+- A placement holds when the forward's whole hull matches: vertices **and planes**. On ze, yaw 180
+  and 180 + 2 float steps round every vertex alike, but turn the planes and the inertia.
+- The models tried are the .vmap_c's RERL `models/*.vmdl`. A prop is all of its model's hulls under
+  one placement.
+- The order comes from the part's type sort (meshes 3, hulls 2, CRT qsort after every insert), which
+  shuffles the first few of a run depending on where the props stood among the meshes. The props
+  are written as one run after k world meshes, for the first k (most first) whose inverse puts each
+  prop's hulls in a row (ze: after 2 of 14).
+
+ze_hold_em_p (`DECOMPILE_WORLD_MESHES=1`, the CLI passing the game's models): 86 prop_statics from
+all 129 hulls (43 fluorescent fixtures with 2 hulls, 43 bulbs with 1). Our forward on the decompile:
+every hull exact. What still differs is the world soup's: material ids, triangle order, the mesh
+piece count (Valve 9, ours 14 connected pieces) and the surface table order with it (a world
+material's "concrete" missing).
+
+Not covered: scaled props (moved before the cook), a model's spheres, capsules and meshes, deformed
+props, props without physics (placement in the render only), and keys other than model (skin,
+baketoworld and the rest are not in the physics).
    Debug switches: `DECOMPILE_SEARCH_BUDGET` (default 5M), `DECOMPILE_SEARCH_GUIDE=preimage` (worse:
    deepest 87), `DECOMPILE_TRUTH_PREFIX=n`, `DECOMPILE_SEARCH_PREFER=inverted`, `DECOMPILE_SEARCH_SLOTS=all`,
    `DECOMPILE_WORLDDEBUG=1`.

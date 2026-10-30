@@ -558,7 +558,7 @@ public static class RnHullBuilder
     }
 
     // FUN_18125d1f0: (t + y r1) + (x r0 + z r2) per row.
-    private static Vector3 Point(float[] m, Vector3 v)
+    internal static Vector3 Point(float[] m, Vector3 v)
         => new(((m[1] * v.Y) + m[3]) + ((m[0] * v.X) + (m[2] * v.Z)),
                ((m[5] * v.Y) + m[7]) + ((m[4] * v.X) + (m[6] * v.Z)),
                ((m[9] * v.Y) + m[11]) + ((m[8] * v.X) + (m[10] * v.Z)));

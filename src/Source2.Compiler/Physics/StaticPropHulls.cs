@@ -461,17 +461,21 @@ public static class StaticPropHulls
     /// </summary>
     public static RnHull? Shape(HullNode node)
     {
-        if (Complexity(node.Points) is not { } c || c.Faces > 256 || c.HalfEdges > 256 || c.Vertices > 256)
-            return null;
-        var points = BrushHulls.ShapePoints(node.Points);
-        if (points == null)
-            return null;
-        var hull = RnHullBuilder.Create(points, RnHullBuilder.Options.Compile, out _);
-        if (hull == null)
+        if (Cook(node) is not { } hull)
             return null;
         hull.RegionSvm = RegionSvmBuilder.Build(hull);
         RnHullBuilder.Transform(hull, NodeTransform(node).Matrix());
         return hull;
+    }
+
+    /// <summary><see cref="Shape"/> before its region SVM and the node's transform: the hull cooked in
+    /// the node's own space, whose vertices the transform then moves one by one, in order.</summary>
+    internal static RnHull? Cook(HullNode node)
+    {
+        if (Complexity(node.Points) is not { } c || c.Faces > 256 || c.HalfEdges > 256 || c.Vertices > 256)
+            return null;
+        var points = BrushHulls.ShapePoints(node.Points);
+        return points == null ? null : RnHullBuilder.Create(points, RnHullBuilder.Options.Compile, out _);
     }
 
     /// <summary>

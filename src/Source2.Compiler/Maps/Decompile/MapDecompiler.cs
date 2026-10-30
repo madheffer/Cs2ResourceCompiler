@@ -46,10 +46,13 @@ public static class MapDecompiler
     /// entries) named <paramref name="mapName"/>.</summary>
     /// <param name="materials">Tool material hash to name (<see cref="BrushGeometry.MaterialTable"/>) over the
     /// game's materials; the package's own are added. Null: the package's only.</param>
+    /// <param name="modelPhysics">A game model's physics (GameContent.Physics), for the prop_statics in the
+    /// world's hulls (StaticProps); null: none rebuilt.</param>
     public static Result Decompile(IReadOnlyDictionary<string, byte[]> files, string mapName, FgdSchema schema,
-                                   IReadOnlyDictionary<uint, string>? materials = null)
+                                   IReadOnlyDictionary<uint, string>? materials = null,
+                                   Func<string, ValveResourceFormat.ResourceTypes.PhysAggregateData?>? modelPhysics = null)
     {
-        var first = Decompile(files, mapName, schema, materials, null);
+        var first = Decompile(files, mapName, schema, materials, null, modelPhysics);
         if (!first.Overshoot)
             return first;
         // A prefab's copies come out past their ids: the map's own nodes reach too high, so its
@@ -59,7 +62,7 @@ public static class MapDecompiler
         // the forward on the rebuild gives every copy its id.
         for (var count = 1; count <= MaxRetryCopies; count++)
             for (var wraps = 0; wraps <= MaxRetryWraps; wraps++)
-                if (Decompile(files, mapName, schema, materials, new Retry(count, wraps)) is { IdsMatched: true } retried)
+                if (Decompile(files, mapName, schema, materials, new Retry(count, wraps), modelPhysics) is { IdsMatched: true } retried)
                     return retried with
                     {
                         Notes = [.. retried.Notes, $"instances: the map's {count} highest nodes are one collapse through {wraps} wrapper group(s), the first reading (fewest copies, then wrappers) whose copy ids land"],
@@ -79,7 +82,8 @@ public static class MapDecompiler
     private sealed record Retry(int Copies, int Wraps);
 
     private static Result Decompile(IReadOnlyDictionary<string, byte[]> files, string mapName, FgdSchema schema,
-                                    IReadOnlyDictionary<uint, string>? materials, Retry? retry)
+                                    IReadOnlyDictionary<uint, string>? materials, Retry? retry,
+                                    Func<string, ValveResourceFormat.ResourceTypes.PhysAggregateData?>? modelPhysics)
     {
         var notes = new List<string>();
         var lumps = files.Where(f => f.Key.EndsWith(".vents_c", StringComparison.OrdinalIgnoreCase)
@@ -321,14 +325,73 @@ public static class MapDecompiler
         // one type a fixed permutation of the input), so they are written in its inverse, as a brush
         // entity's hulls are.
         var worldMeshes = Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" ? WorldGeometry.Read(files, mapName, table, notes) : [];
-        var worldAt = Physics.WorldCollision.PartOrder(Enumerable.Range(0, worldMeshes.Count), _ => 0);
-        var worldInput = new WorldGeometry.Mesh[worldMeshes.Count];
-        for (var k = 0; k < worldMeshes.Count; k++)
-            worldInput[worldAt[k]] = worldMeshes[k];
-        foreach (var mesh in worldInput)
+        // The prop_statics from the world's hulls (StaticProps), written after the world meshes. The part
+        // sorts the shapes by type after every insert, the meshes (3) and the props' hulls (2) together,
+        // so both are written in the inverse of that sort over this sequence: the meshes, then each prop's
+        // hulls in its model's order, the props in the order that inverse asks for.
+        var props = new List<StaticProps.Placed>();
+        var shippedHulls = 0;
+        if (Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" && modelPhysics is not null)
+        {
+            var (hulls, _) = StaticProps.WorldHulls(files, mapName);
+            shippedHulls = hulls.Count;
+            props = StaticProps.Find(hulls, StaticProps.Models(files, mapName), modelPhysics, notes);
+            if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
+                notes.Add($"world debug: props' shipped hulls {string.Join(" ", props.OrderBy(p => p.Hulls.Min()).Select(p => $"{Path.GetFileNameWithoutExtension(p.Model)[^5..]}[{string.Join(",", p.Hulls)}]"))}");
+        }
+        var meshCount = worldMeshes.Count;
+        var placedHulls = props.Sum(p => p.Hulls.Length);
+        // Where the props stood among the meshes changes the sort's shuffle of its first few (CRT qsort):
+        // the props are taken as one run after `before` meshes, the first count (most meshes first)
+        // whose inverse gives each prop its hulls in a row.
+        int[] ShippedAt(int before)
+        {
+            var at = Physics.WorldCollision.PartOrder(Enumerable.Range(0, meshCount + placedHulls), i => i < before || i >= before + placedHulls ? 3 : 2);
+            var inverse = new int[at.Count];
+            for (var k = 0; k < at.Count; k++)
+                inverse[at[k]] = k;
+            return inverse;
+        }
+        List<StaticProps.Placed>? PropOrder(int[] shippedAt, int before)
+        {
+            var byFirst = props.ToDictionary(p => p.Hulls[0]);
+            var ordered = new List<StaticProps.Placed>();
+            for (var slot = before; slot < before + placedHulls;)
+            {
+                if (!byFirst.TryGetValue(shippedAt[slot], out var prop)
+                    || Enumerable.Range(0, prop.Hulls.Length).Any(j => shippedAt[slot + j] != prop.Hulls[j]))
+                    return null;
+                ordered.Add(prop);
+                slot += prop.Hulls.Length;
+            }
+            return ordered;
+        }
+        var (meshesBefore, worldShippedAt, propOrder) = (meshCount, ShippedAt(meshCount), (List<StaticProps.Placed>?)null);
+        if (props.Count > 0)
+        {
+            if (placedHulls == shippedHulls)
+                for (var before = meshCount; before >= 0 && propOrder is null; before--)
+                    if (PropOrder(ShippedAt(before), before) is { } order)
+                        (meshesBefore, worldShippedAt, propOrder) = (before, ShippedAt(before), order);
+            if (propOrder is null)
+                notes.Add($"prop_static: no place among the meshes gives the shipped hull order ({placedHulls} hulls placed of {shippedHulls}); written as found");
+            else
+                notes.Add($"prop_static: {props.Count} rebuilt from {placedHulls} of the world's {shippedHulls} hulls, after {meshesBefore} of the {meshCount} world meshes");
+        }
+        void WriteMesh(int slot)
+        {
+            var mesh = worldMeshes[worldShippedAt[slot] - placedHulls];
             main.Builder!.AddMesh(main.Builder!.World, main.NewId!(), Vector3.Zero, Vector3.Zero,
                                   [.. mesh.Faces.Select(f => (f.Corners, f.Material))], mesh.Materials,
                                   cornerTexcoords: [.. mesh.Faces.Select(f => f.Texcoords)]);
+        }
+        for (var slot = 0; slot < meshesBefore; slot++)
+            WriteMesh(slot);
+        foreach (var prop in propOrder ?? props)
+            main.Builder!.AddEntity(main.NewId!(), [new("classname", "prop_static"), new("model", prop.Model)],
+                                    prop.Origin, prop.Angles, Vector3.One, []);
+        for (var slot = meshesBefore + placedHulls; slot < meshCount + placedHulls; slot++)
+            WriteMesh(slot);
         // A shared prefab map is written once, so a brush entity its first placement has no hulls for
         // has none in any placement: noted for each later one whose own model the package lacks too.
         foreach (var placements in families)
