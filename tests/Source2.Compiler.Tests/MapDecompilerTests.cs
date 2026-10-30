@@ -52,6 +52,10 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     [InlineData("s2c_rc_probe", "s2c_cablerender")]
     // Map variables: the map's own and a prefab map's, overridden and at their defaults.
     [InlineData("s2c_rc_probe", "s2c_varprobe")]
+    // Prefabs loaded at runtime: point_prefab back to CMapPrefab (runtime_prefab_probe_map.py).
+    [InlineData("s2c_rc_probe", "s2c_rtprefab")]
+    [InlineData("s2c_rc_probe", "s2c_rtprefab4")]
+    [InlineData("s2c_rc_probe", "s2c_rtprefab6")]
     public void Entities_CompileAsTheSourceDoes(string addon, string map)
     {
         var source = MapFixtures.VmapSource(addon, map);
@@ -310,6 +314,58 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// <c>DECOMPILE_PKGDIFF=&lt;a.vpk&gt;|&lt;b.vpk&gt;</c>: two builds of one probe under different map names (the
+    /// map names taken out of paths): files on one side only, files that differ, each .vmap_c's inputs and
+    /// the lumps' entity differences (a runtime prefab's probe against its base, DECOMPILE.md item 11).
+    /// </summary>
+    [Fact]
+    public void PackagesOfTwoBuilds()
+    {
+        if (Environment.GetEnvironmentVariable("DECOMPILE_PKGDIFF") is not { Length: > 0 } spec || spec.Split('|') is not [var pa, var pb])
+            return;
+        var (na, nb) = (Path.GetFileNameWithoutExtension(pa), Path.GetFileNameWithoutExtension(pb));
+        var (fa, fb) = (MapDecompiler.ReadPackage(pa), MapDecompiler.ReadPackage(pb));
+        string Key(string path, string name) => path.Replace(name, "<map>", StringComparison.OrdinalIgnoreCase);
+        var (ka, kb) = (fa.ToDictionary(f => Key(f.Key, na), f => f.Value), fb.ToDictionary(f => Key(f.Key, nb), f => f.Value));
+        foreach (var k in ka.Keys.Except(kb.Keys).Order())
+            output.WriteLine($"  only in a: {k} ({ka[k].Length} bytes)");
+        foreach (var k in kb.Keys.Except(ka.Keys).Order())
+            output.WriteLine($"  only in b: {k} ({kb[k].Length} bytes)");
+        foreach (var k in ka.Keys.Intersect(kb.Keys).Order().Where(k => !ka[k].AsSpan().SequenceEqual(kb[k])))
+            output.WriteLine($"  differs: {k} ({ka[k].Length} vs {kb[k].Length} bytes)");
+        foreach (var (side, files, name) in new[] { ("a", fa, na), ("b", fb, nb) })
+        {
+            foreach (var (file, crc) in MapDecompiler.MapInputs(files, name))
+                output.WriteLine($"  input {side}: {crc:x8} {file}");
+            // The .vmap_c's external references and edit info, as trees.
+            using var r = new ValveResourceFormat.Resource();
+            r.Read(new MemoryStream(files[$"maps/{name}.vmap_c"]));
+            foreach (var x in r.ExternalReferences?.ResourceRefInfoList ?? [])
+                output.WriteLine($"  rerl {side}: {x.Name}");
+            if (r.EditInfo is ValveResourceFormat.Blocks.ResourceEditInfo2 e2 && e2.Data?.Root is { } red2)
+                foreach (var (k, v) in red2.Children)
+                    output.WriteLine($"  red2 {side}: {k} = {Regex.Replace(v.ToString() ?? "", @"\s+", " ")[..Math.Min(300, Regex.Replace(v.ToString() ?? "", @"\s+", " ").Length)]}");
+            else if (r.EditInfo is ValveResourceFormat.Blocks.ResourceEditInfo e1)
+                foreach (var c in e1.ChildResourceList)
+                    output.WriteLine($"  child {side}: {c}");
+        }
+        static byte[]? Lump(Dictionary<string, byte[]> files) => files.FirstOrDefault(f => f.Key.EndsWith("/entities/default_ents.vents_c", StringComparison.OrdinalIgnoreCase)).Value;
+        if (Lump(fa) is { } la && Lump(fb) is { } lb)
+        {
+            IReadOnlyList<EntityLumpComparison.Entity> Plain(byte[] lump, string name) => [.. EntityLumpComparison.Read(lump).Select(e => e with
+            {
+                Values = e.Values.ToDictionary(kv => kv.Key, kv => (kv.Value.Type, kv.Value.Value.Replace(name, "<map>", StringComparison.OrdinalIgnoreCase)), StringComparer.OrdinalIgnoreCase),
+            })];
+            var (ea, eb) = (Plain(la, na), Plain(lb, nb));
+            output.WriteLine($"  lump: a {ea.Count} entities, b {eb.Count}");
+            foreach (var line in EntityLumpComparison.Diff(ea, eb).Take(60))
+                output.WriteLine("    " + line[..Math.Min(240, line.Length)]);
+            foreach (var e in eb.Where(e => e.ClassName.Contains("prefab", StringComparison.OrdinalIgnoreCase) || e.ClassName.Contains("spawngroup", StringComparison.OrdinalIgnoreCase)))
+                output.WriteLine($"    b {e.ClassName} #{e.HammerId}: " + string.Join(" ", e.Values.Select(kv => $"{kv.Key}={kv.Value.Value}")));
+        }
+    }
+
+    /// <summary>
     /// <c>DECOMPILE_CORNERS=&lt;addon&gt;|&lt;map&gt;|&lt;entity node id&gt;</c>: each corner of the true source's
     /// meshes under that entity, placed by the compile's two moves, against what CornerFor finds for
     /// the placed point: whether it lands, and how many floats the source's world point lies from the
@@ -417,7 +473,8 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
             string Value(string key, string value) =>
                 key.Equals("handshake", StringComparison.OrdinalIgnoreCase) && long.TryParse(value[(value.IndexOf(':') + 1)..], out var h) && h != 0
                     ? $"{value[..value.IndexOf(':')]}:map hash + {h - seed}"
-                    : Regex.Replace(value, "s2c_(src|dec)_", "");
+                    // Hammer's re-save of a decompile is s2c_rs_<decompile>_saved (hammer_autosave.py).
+                    : Regex.Replace(Regex.Replace(value, "s2c_(src|dec)_", ""), @"s2c_rs_(\w+?)_saved", "$1");
             return lump.Select(e => e with
             {
                 Values = e.Values.ToDictionary(kv => kv.Key, kv => (kv.Value.Type, Value(kv.Key, kv.Value.Value)),
@@ -473,6 +530,44 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         }
         output.WriteLine($"entity models: valve {va.Count}, rc of the decompile {vb.Count}; {exact} PHYS equal, {differ.Count} differ, {missing} missing");
         foreach (var line in differ.Take(15))
+            output.WriteLine("  " + line[..Math.Min(220, line.Length)]);
+
+        // Their render halves: every vertex and index buffer block byte for byte and the MDAT trees
+        // (BrushRender: the decompile's texcoords, normals, tints and faces through Valve's compile).
+        static List<(string Type, byte[] Bytes, ValveKeyValue.KVObject? Tree)> RenderBlocks(byte[] file)
+        {
+            using var r = new ValveResourceFormat.Resource();
+            r.Read(new MemoryStream(file));
+            return [.. r.Blocks.Where(b => b.Type is ValveResourceFormat.BlockType.MVTX or ValveResourceFormat.BlockType.MIDX or ValveResourceFormat.BlockType.VBIB
+                                                or ValveResourceFormat.BlockType.MDAT)
+                .Select(b =>
+                {
+                    r.Reader.BaseStream.Position = b.Offset;
+                    var raw = new byte[b.Size];
+                    r.Reader.BaseStream.ReadExactly(raw);
+                    return (b.Type.ToString(), raw, b switch
+                    {
+                        ValveResourceFormat.ResourceTypes.BinaryKV3 k => k.Data.Root,
+                        ValveResourceFormat.ResourceTypes.KeyValuesOrNTRO k => k.Data,
+                        _ => (ValveKeyValue.KVObject?)null,
+                    });
+                })];
+        }
+        int renderModels = 0, renderEqual = 0;
+        var renderDiffer = new List<string>();
+        foreach (var (name, bytes) in va)
+        {
+            if (!vb.TryGetValue(name, out var other) || RenderBlocks(bytes) is not { Count: > 0 } ra)
+                continue;
+            renderModels++;
+            var rb = RenderBlocks(other);
+            var at = ra.Count != rb.Count ? 0 : Enumerable.Range(0, ra.Count).FirstOrDefault(i => ra[i].Type != rb[i].Type || !ra[i].Bytes.AsSpan().SequenceEqual(rb[i].Bytes), -1);
+            if (at < 0) { renderEqual++; continue; }
+            var tree = ra.Count == rb.Count && ra[at].Tree is { } x && rb[at].Tree is { } y ? KvTreeDiff.Diff(x, y).FirstOrDefault() : null;
+            renderDiffer.Add($"{name}: {(ra.Count != rb.Count ? $"{ra.Count} vs {rb.Count} render blocks" : $"{ra[at].Type} {at} differs{(tree is null ? "" : ", " + tree)}")}");
+        }
+        output.WriteLine($"render models: {renderModels}; {renderEqual} render blocks equal, {renderDiffer.Count} differ");
+        foreach (var line in renderDiffer.Take(15))
             output.WriteLine("  " + line[..Math.Min(220, line.Length)]);
     }
 
@@ -729,6 +824,65 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         // the decompile's one-mesh chain does not (its physics is a known miss too).
         "maps/s2c_prefabprobe2/entities/combo_moveparent_108_115.vmdl",
     ];
+
+    /// <summary>
+    /// The nav settings (Decompile.NavSettings): the generation parameters our forward hands navsystem
+    /// (NavGenPipeline.Settings: gameinfo's NavSystem, the hull vdata, the map's CMapNavData) from the
+    /// decompile, as the block NavWriter writes, against the block in the shipped .nav and against our
+    /// forward on the true source. A map whose nav is the fixed empty one gets no CMapNavData.
+    /// </summary>
+    [Theory]
+    [InlineData("s2c_rc_probe", "probe01")]
+    [InlineData("s2c_rc_probe", "probe_classes")]
+    [InlineData("s2c_rc_probe", "atixref")]
+    [InlineData("s2c_rc_probe", "ze_hold_em_p")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe9")]
+    [InlineData("s2c_rc_probe", "s2c_varprobe")]
+    // probe01 with its own settings and hull (s2c_navprobe) and with a hull preset named (s2c_navprobe2):
+    // tools/map-survey/nav_settings_probe_map.py, full builds.
+    [InlineData("s2c_rc_probe", "s2c_navprobe")]
+    [InlineData("s2c_rc_probe", "s2c_navprobe2")]
+    public void NavSettings_CompileAsTheSourceDoes(string addon, string map)
+    {
+        var source = MapFixtures.VmapSource(addon, map);
+        var cs2 = CS2Fixtures.StockPak();
+        var package = source is null ? null : Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source)!, "..", "..", "..", "..",
+                                                                            "game", "csgo_addons", addon, "maps", map + ".vpk"));
+        if (source is null || cs2 is null || !File.Exists(package)) { MapFixtures.Skip($"the {addon}/{map} source and package"); return; }
+        var schema = MapFixtures.GameSchema();
+        var game = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(cs2)!, ".."));
+        using var content = new Maps.GameContent(cs2, Path.Combine(game, "csgo_addons", addon));
+        var files = MapDecompiler.ReadPackage(package);
+        if (!files.TryGetValue($"maps/{map}.nav", out var nav)) { output.WriteLine($"{map}: no .nav in the package"); return; }
+        var result = MapDecompiler.Decompile(files, map, schema, StockMaterials());
+        var decompiled = DmxBinary.Read(result.Vmap);
+        var truth = DmxBinary.ReadFile(source);
+        var vdata = Maps.NavGen.NavGenPipeline.HullVData(content.Read);
+        var navSystem = Maps.NavGen.NavGenPipeline.NavSystemBlock(Path.Combine(game, "csgo", "gameinfo.gi"));
+        var hasNode = decompiled.OfType("CMapNavData").Any();
+        output.WriteLine($"{map}: nav {nav.Length} bytes{(nav.AsSpan().SequenceEqual(Maps.NavFile.EmptyDefault()) ? " (the fixed empty one)" : "")}; "
+                         + $"CMapNavData in the source {truth.OfType("CMapNavData").Any()}, in the decompile {hasNode}");
+        foreach (var n in result.Notes.Where(n => n.StartsWith("nav:", StringComparison.Ordinal)))
+            output.WriteLine("  note " + n);
+        if (Environment.GetEnvironmentVariable("DECOMPILE_NAV_HEX") == "1")
+            for (var at = 0; at < Math.Min(nav.Length, 256); at += 32)
+                output.WriteLine($"  {at,4}: {Convert.ToHexString(nav, at, Math.Min(32, nav.Length - at))}");
+        if (!hasNode)
+        {
+            Assert.True(nav.AsSpan().SequenceEqual(Maps.NavFile.EmptyDefault()) || result.Notes.Any(n => n.StartsWith("nav:", StringComparison.Ordinal)),
+                        "a generated nav with no CMapNavData rebuilt and no note");
+            return;
+        }
+        var (shipped, _, why) = NavSettings.FromNav(nav);
+        Assert.True(shipped is not null, why);
+        var block = NavSettings.Block(shipped!);
+        var ours = NavSettings.Block(Maps.NavGen.NavGenPipeline.Settings(decompiled, vdata, navSystem));
+        var forward = NavSettings.Block(Maps.NavGen.NavGenPipeline.Settings(truth, vdata, navSystem));
+        output.WriteLine($"  block {block.Length} bytes; decompile's = shipped {ours.AsSpan().SequenceEqual(block)}, source's = shipped {forward.AsSpan().SequenceEqual(block)}");
+        if (!forward.AsSpan().SequenceEqual(block))
+            output.WriteLine($"  shipped {Convert.ToHexString(block)}\n  source  {Convert.ToHexString(forward)}");
+        Assert.Equal(Convert.ToHexString(block), Convert.ToHexString(ours));
+    }
 
     /// <summary>Models with a corner the fit cannot place exactly (MapDecompiler.CornerFor: no grid value
     /// and no point within the search lands on the hull's vertex), each a few float steps off.</summary>

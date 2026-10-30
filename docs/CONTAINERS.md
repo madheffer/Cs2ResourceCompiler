@@ -97,7 +97,8 @@ trees (`KvTreeDiff`) and container facts.
   - dmxconvert writes floats to 7 significant digits and upgrades the vmap
     version.
 - **Prefabs** are loaded by `MapPrefabs.Attach`: nested prefabs when
-  `loadIfNested`; `loadAtRuntime` ones are skipped.
+  `loadIfNested`; `loadAtRuntime` ones are not loaded (they ship as a point_prefab), but their map is among the
+  .vmap_c's inputs and in its RERL (GROUND_TRUTH 189).
 
 ## VPK packages
 

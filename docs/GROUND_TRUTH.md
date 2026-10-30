@@ -4686,6 +4686,60 @@ game can answer is raised with the user first, and runs with -insecure.
        subdivided face's bias only through what it changes elsewhere (the physics pieces, the render aggregates).
        Why the tessellated texcoords collapse to one density is not read from a decompile (observed only).
 
+189. **A prefab loaded at runtime ships as a point_prefab and is not merged** (2026-10-31, research/vmap-decompile:
+     resourcecompiler 1.41.9.3 on probes from `tools/map-survey/runtime_prefab_probe_map.py`, CS2 and Steam closed).
+     - Measured: s2c_prefabprobe with its one prefab (maps/s2c_propover.vmap, node 108) at loadAtRuntime 1
+       (s2c_rtprefab, full build) against the same at 0 (s2c_rtprefab0): the prefab's four spawn points are gone, and
+       the lump has a point_prefab under hammerUniqueId 108 with exactly these keys in this order: classname
+       point_prefab, prefab_load_dynamic Int64 1, fixupNames Int64 0, targetMapName "s2c_propover", origin, angles,
+       scales (the prefab's placement), hammerUniqueId; no compile_source_id. The package drops the prefab's world
+       meshes (302 KB against 705 KB); the .vmap_c's RERL gains maps/s2c_propover.vmap, which both builds list among
+       the inputs (same CRC).
+     - Measured: prefabRuntimeEntity 1 changes nothing visible, alone (s2c_rtprefab2: every file the same size as
+       the base, the lump equal) or with loadAtRuntime (s2c_rtprefab3 = s2c_rtprefab but the map name's length).
+     - Measured: an info_target after the prefab in the world's children (s2c_rtprefab4, at loadAtRuntime 1; s2c_rtprefab5
+       at 0) is compile_source_id 13 in both, and ships after the point_prefab: the point_prefab stands where the prefab
+       does in the tree and takes no walk index, where a merged prefab's map is walked after its parent's children.
+     - Measured: targetMapPath maps/prefabs/s2c_prefabslot/p0.vmap with fixupEntityNames 1 (s2c_rtprefab6) ships
+       targetMapName "prefabs/s2c_prefabslot/p0" and fixupNames 1: the path less maps/ and .vmap. A path outside
+       maps/ is not measured (MapEntities.RuntimeMapName throws).
+     - Ported: MapEntities.Walk, EntityLumpAuthor.BuildEntity, MapEntities.SourceIds, MapInstances.Survey (the walk
+       list counts it), MapAssets and MapRootFile.PrefabMaps; our lump = Valve's on s2c_rtprefab, 3, 4, 5 and 6. The
+       decompile turns a point_prefab with prefab_load_dynamic and no compile_source_id back into the CMapPrefab.
+
+190. **Hammer's save drops an empty CMapGroup** (2026-10-31, research/vmap-decompile: Hammer in cubehost,
+     `hammer_autosave.py --force-all`, Steam and CS2 closed).
+     - Measured: the atixref decompile (4993 nodes, its highest id 7266 an empty group the decompile set to raise the
+       map's highest id, which instance copies' ids start after) saved by Hammer has 4992 nodes, highest id 7244, no
+       empty group. resourcecompiler on the save ships 154 light_omni2 copies under other ids than on our file (paired by
+       id, 43 of them then read as other origins, keys and compile_source_ids). resourcecompiler itself keeps an empty group at load (ledger 182,
+       s2c_slotprobe2), so the save, not the compile, removes it.
+     - Measured: Hammer's saves of the probe01 and s2c_prefabprobe9 decompiles compile to our files' lumps but for
+       the map name in model and bake paths (probe01: 12 such lines, none else; prefabprobe9: also 700 entities whose
+       keys Hammer reorders in the prefab maps a script wrote), every entity model PHYS equal (5/5, 65/65).
+     - So the decompile raises the main map's highest id with a toolsskip box (VmapBuilder.AddSlot), which Hammer
+       keeps and which walks, ships and compiles nothing (ledger 182). A prefab map's still uses an empty group (a box
+       would take a slot of its block), so a Hammer save of a prefab map can still move its copies.
+     - Measured after the change: Hammer's save of the new atixref decompile through resourcecompiler = resourcecompiler
+       on the decompile, 0 lump differences once the map name is taken out, 142/142 entity model PHYS and 58/58 render
+       blocks equal; the same for probe01 and s2c_rtprefab4 (0).
+
+191. **The .nav keeps the generation parameters the build used; a map hull without crawl arrays takes the default
+     hull's** (2026-10-31, research/vmap-decompile: resourcecompiler 1.41.9.3 full builds of probes from
+     `tools/map-survey/nav_settings_probe_map.py`, CS2 and Steam closed).
+     - Measured: s2c_navprobe (probe01 with settingsUseProjectDefaults 0, tile 256, cell 3, cell height 1, region
+       min 6, detail distance 90, edge error 30, its hull radius 20, height 64, short height on, climb 12, slope
+       40): the .nav's generation parameters (1818d0690, after the areas) hold exactly those numbers and that hull,
+       its crawl off at 17.5. probe01's Hammer save, which the probe copies, has no settingsAgentCrawl* arrays, and
+       our forward read their absence as crawl height 0: MapHulls now keeps the default hull's crawl values then.
+     - Measured: s2c_navprobe2 (the same with settingsAgentHullPreset "default" and its own cell 3, edge error 30):
+       the block holds the project's numbers (cell 1.5, edge error 45), the preset string and the preset's hull,
+       use-project-defaults 0, as NavGenSettings.FromMap (1818c95e0) gives.
+     - So a map's effective nav settings come back from its .nav (Decompile.NavSettings): our forward on the
+       decompile's CMapNavData gives the shipped block on probe01, probe_classes, s2c_prefabprobe9, s2c_navprobe
+       and s2c_navprobe2; with use-project-defaults or a preset the map's own numbers never reach the build and are
+       not recoverable.
+
 ## Resolved
 
 - **Prop bone overrides** (ledger 45, settled 2026-10-08 by decompile).

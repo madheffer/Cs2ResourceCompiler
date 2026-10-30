@@ -68,6 +68,6 @@ foreach ($map in $Maps) {
   $env:DECOMPILE_RC = "$truth|$(Join-Path $game "maps\$dec.vpk")" + $(if ($SameOptions) { "|$(Join-Path $game "maps\$map.vpk")" } else { "" })
   dotnet test (Join-Path $repo "tests\Source2.Compiler.Tests") -c Release --no-build `
     --filter "FullyQualifiedName~ResourceCompilerOfTheDecompile_AgainstValve" --logger "console;verbosity=detailed" *> (Join-Path $Out "$map.compare.log")
-  Select-String -Path (Join-Path $Out "$map.compare.log") -Pattern "difference\(s\)|entity models:" | ForEach-Object { "  " + $_.Line.Trim() }
+  Select-String -Path (Join-Path $Out "$map.compare.log") -Pattern "difference\(s\)|entity models:|render models:" | ForEach-Object { "  " + $_.Line.Trim() }
 }
 Remove-Item Env:DECOMPILE_RC -ErrorAction SilentlyContinue

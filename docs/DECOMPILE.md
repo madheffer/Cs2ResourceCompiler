@@ -25,8 +25,9 @@ page's `subtasks` source at the new upload with `updated` set.
 
 This is the entry point. The sections after it are the dated working notes behind each line here.
 Branch `research/vmap-decompile` (worktree `D:\_cursor projects\source2-compiler-wt-decompile`),
-nothing pushed. Tracker **73.3%** (78.45 of 107 weighted points; 10-31: brush entity render meshes,
-"Brush entity render meshes" below).
+nothing pushed. Tracker **77.0%** (82.4 of 107 weighted points; 10-31: brush entity render meshes,
+runtime prefabs, nav settings, Hammer re-saves; "Brush entity render meshes" and "CS2-closed window
+10-31" below).
 
 ### Start here (next agent)
 
@@ -75,13 +76,13 @@ compiled by Valve's resourcecompiler, never VRF or our compiler's output.
 
 | Module | % | What works, and on what |
 |---|---|---|
-| Map file | 55 | Binary DMX writer (Hammer saves round trip as graphs); vmap 40 element shapes measured from Hammer saves; root and world element defaults read from hammer.dll; Hammer's own save of a decompile, run headless from cubehost (`hammer_autosave.py`), compiles to the same entities (pinst7, s2c_varprobe) |
+| Map file | 76 | Binary DMX writer (Hammer saves round trip as graphs); vmap 40 element shapes measured from Hammer saves; root and world element defaults read from hammer.dll; Hammer's own save of a decompile, run headless from cubehost (`hammer_autosave.py`), compiles to the same entities (pinst7, s2c_varprobe); 10-31 Hammer re-saves of probe01, s2c_prefabprobe9, atixref and s2c_rtprefab4 through RC = RC on the decompiles (the main map pads with a toolsskip box, which Hammer keeps) |
 | Entities | 98 | BuildEntity inverted (key tables, compile-added keys removed, outputs, `[PR#]` fixup), point templates and their removed members (placement an exact solve), world layers, walk numbering with placeholders, settled props (pose + Start asleep), ropes (CMapPath, nodes and tangents solved), cables (CMapCable; collision cables' settings exact through their physics mesh). **19 of 20 test maps exact**: probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, atixref, s2c_prefabprobe 1/2/4/5/6/7/8/9/11/12, pinst, pinst7, instnest, prefabinst, cablecoll, cablerender |
 | Brush entities | 82 | Hulls as convex meshes, materials from the tool material hash, hull order (PartOrder qsort inverted), corners and hull vertex order as exact solves through the forward's one-mesh chain: **451 of 455 brush models' PHYS exact**. Render meshes (10-31): each Hammer mesh rebuilt whole from its render pieces and hulls, texcoords, normals and tints chosen to pack to the shipped bits: **117 of 119 render models exact** through our forward (= Valve's file) |
-| Prefabs | 76 | CMapPrefab nodes and prefab maps, name fixup, one map placed many times (FrameSolver, families nested in families), prefab file names from RED2 when one map is unambiguous |
+| Prefabs | 94 | CMapPrefab nodes and prefab maps, name fixup, one map placed many times (FrameSolver, families nested in families), prefab file names from RED2 when one map is unambiguous; prefabs loaded at runtime (point_prefab, forward and back, RC on the decompile = RC on the source) |
 | Instances | 99 | Copies in prefab maps and in the map itself, copy ids through the block allocation, several collapses of one template across rounds and nesting, each later placement an exact solve (atixref's 199 copies) |
 | World geometry | 32 | probe01: world physics byte-exact from the decompile (soup vertices exact; triangle order solved as one CP-SAT model, C# in `Source2.Compiler.Solvers`, about 18 minutes). ze_hold_em_p: 86 prop_statics rebuilt from all 129 world hulls, every hull exact; every soup triangle gets its real material (split-stream render draws read) |
-| Other map data | 62 | Map variables (forward + decompile, s2c_varprobe exact both ways, through Valve's RC 13/13, and Hammer's save of the decompile keeps them). Scripts: a .vjs_c keeps its .js byte for byte (227 of 227 workshop scripts, by the CRC RED2 records); skybox_reference, info_spawngroup_load_unload and point_script links round trip and are listed |
+| Other map data | 93 | Map variables (forward + decompile, s2c_varprobe exact both ways, through Valve's RC 13/13, and Hammer's save of the decompile keeps them). Scripts: a .vjs_c keeps its .js byte for byte (227 of 227 workshop scripts, by the CRC RED2 records); skybox_reference, info_spawngroup_load_unload and point_script links round trip and are listed. Nav settings from the .nav's generation parameters (our forward on them = the shipped block on five maps) |
 | Verification | 55 | Entity round trip, brush physics round trip, Valve's resourcecompiler on 6 decompiles (every entity under Valve's id; found the hollow-node rule, ledger 182), Hammer re-saves of 2 decompiles through RC |
 
 Decisions the user made on the way: brush entities whose model the source compile failed stay out
@@ -140,7 +141,10 @@ Map file:
    `%TEMP%\hammer_autosave\<time>`), logs the agent to `%TEMP%\hammer_autosave.jsonl` and removes only the
    autosaves it wrote. Then RC (`compile_fresh.py s2c_rc_probe s2c_rs_<map>_saved -- -world -fshallow`) and
    compare with `DECOMPILE_RC="<rc of ours>|<rc of Hammer's>"` (`ResourceCompilerOfTheDecompile_AgainstValve`).
-   Done: pinst7 (80/80 entities, 5/5 brush PHYS), s2c_varprobe (13/13). **ze_hold_em_p's decompile was
+   Done: pinst7 (80/80 entities, 5/5 brush PHYS), s2c_varprobe (13/13); 10-31 probe01, s2c_prefabprobe9
+   and atixref ("CS2-closed window 10-31": Hammer drops the empty group the decompile raised atixref's
+   highest id with, now a toolsskip box; a prefab map still pads with an empty group, which a save of it
+   would drop too). Pass `--force-all`. **ze_hold_em_p's decompile was
    still loading after 10 minutes on one core** (stopped because other sessions were waiting): run it
    alone, with nothing queued behind it, and find out whether it ever finishes (if not, which node
    Hammer chokes on is itself a decompile bug). Kill a stuck run with `Stop-Process` on cubehost; the
@@ -149,8 +153,9 @@ Map file:
     attribute tables). Needs the Ghidra/ReVa connection, which can run with CS2 open.
 
 Prefabs and entities:
-11. **[closed] Prefabs loaded at runtime** (`loadAtRuntime`, their own .vpk): no map on hand uses
-    it; needs a probe compiled by RC.
+11. **Prefabs loaded at runtime: done 10-31** (ledger 189): a point_prefab in the lump, forward and
+    decompile, Valve's RC on the decompiles = on the sources. Not measured: one inside a prefab's map or
+    a world layer.
 12. Prefab file names when several prefab maps are placed (the package does not pair files with
     placements; 60%).
 13. Render-only cables' texture settings, and cable_static (in the world). A render-only cable's
@@ -164,8 +169,9 @@ Other map data:
     `%TEMP%\hammer_autosavevarprobe\prefabs\s2c_varprobe\s2c_varinner001.vmap_autosave`: compare its
     variable set's type names and variableAndChoiceOrder with what VmapBuilder writes). Left: choice
     groups, the vector transform (prefab flag +0x55f).
-16. Nav settings (CMapNavData): first find whether and where the .nav keeps the settings it was
-    built with (NAV.md has no record of it). Nav markup entities already round trip.
+16. **Nav settings: done 10-31** (ledger 191): the .nav's generation parameters back into a CMapNavData,
+    our forward on it = Valve's block on five maps. Left: navs with ladders, hiding spots or transformed
+    bounds (Decompile.NavSettings stops there and notes it). Nav markup entities already round trip.
 17. TypeScript sources (PanoramaTypescript): read the same way, but no example checks it.
 
 Verification:
@@ -1207,6 +1213,42 @@ fails on the true source mesh too (`EntityRenderProbe.RenderFilterOnTheSource`,
 step first. Render meshes inside prefabs and copies are not read (the forward moves them by the
 placement, which the one-mesh chain does not model). Debug notes: `DECOMPILE_RENDER_DEBUG=1`.
 
+### CS2-closed window 10-31
+
+Run with Steam and CS2 closed, every job through `tools/re/heavy.py`.
+
+- **Valve's RC on the render work.** `decompile_rc_batch.ps1 -SameOptions` on probe_classes, ze_hold_em_p,
+  probe01, s2c_prefabprobe9 and atixref (`ResourceCompilerOfTheDecompile_AgainstValve` now also compares each
+  render model's vertex and index buffers and MDAT): 52/52, 8/8 and 57/58 render models equal to RC on the
+  true source (atixref's valdina_button the known miss). The lump differences are the known ones (failed
+  models stay out, light bounds traced against a world the decompile has no meshes for, two settled props'
+  run-to-run poses).
+- **Prefabs loaded at runtime** (ledger 189, `tools/map-survey/runtime_prefab_probe_map.py`, probes
+  s2c_rtprefab0 to 6): a loadAtRuntime prefab ships as a point_prefab (prefab_load_dynamic 1, fixupNames,
+  targetMapName = the path less maps/ and .vmap, its placement, no compile_source_id) where it stands in the
+  tree, taking no walk index; its map is in the .vmap_c's RERL and inputs. Forward: MapEntities.Walk,
+  EntityLumpAuthor.BuildEntity, SourceIds, MapInstances.Survey, MapAssets, MapRootFile.PrefabMaps; our lump =
+  Valve's on five probes. Decompile: the point_prefab becomes the CMapPrefab again, placed before the next
+  node its map ships; RC on the decompiles of s2c_rtprefab4 and 6 = RC on their sources (0 differences), and
+  so is Hammer's re-save of rtprefab4. prefabRuntimeEntity shows in no build and stays off.
+- **Hammer re-saves** (`hammer_autosave.py --force-all`, then `compile_fresh.py` on `s2c_rs_<decompile>_saved`):
+  probe01, s2c_prefabprobe9 and atixref. Hammer's save dropped the one empty group the decompile set to
+  raise atixref's highest id (7266 to 7244), and every instance copy id after it moved (154 light_omni2):
+  ledger 190. The main map now pads with a toolsskip box (VmapBuilder.AddSlot), which Hammer keeps; RC on
+  the new decompile's re-save = RC on the decompile, 0 lump differences, PHYS 142/142, render 58/58. probe01
+  0; prefabprobe9 only key order (Hammer reorders the keys in its script-made prefab maps). Open: a prefab
+  map still pads with an empty group (a box would take a slot of its block).
+- **Nav settings** (ledger 191, `tools/map-survey/nav_settings_probe_map.py`, s2c_navprobe and 2): the .nav's
+  generation parameters (after the areas) are the settings the build used; `Decompile.NavSettings` reads
+  them into a CMapNavData (`VmapBuilder.AddNavData`, Hammer's shape), none when the nav is the fixed empty
+  one. `MapDecompilerTests.NavSettings_CompileAsTheSourceDoes`: our forward on the decompile = the shipped
+  block on probe01, probe_classes, s2c_prefabprobe9, s2c_navprobe (its own settings and hull) and
+  s2c_navprobe2 (a hull preset). The own-settings probe found a forward bug: a map hull with no crawl arrays
+  (Hammer writes none) takes the default hull's crawl height 17.5, not 0 (NavGenSettings.MapHulls fixed).
+  With use-project-defaults or a preset the map's own numbers never reach the build and are not recoverable.
+  Not read: navs with ladders, hiding spots or transformed bounds (noted).
+- Unrelated and older than this work: five NavCompileTests (CompileMapWritesNavAndBombDamage, NavAndBombDamageMatchValve
+  on probe01, cardtest, s2c_navmarkup) fail at c03c510 too.
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's

@@ -461,11 +461,14 @@ public sealed class VmapBuilder
     /// <summary>
     /// A CMapPrefab in the world, at the origin unturned (its map's nodes keep their compiled
     /// placement), naming <paramref name="targetMapPath"/>. Shape: s2c_prefabprobe9's prefabs; loaded
-    /// with the map (loadIfNested on, not at runtime), as a prefab that ships merged into its parent.
+    /// with the map (loadIfNested on, not at runtime), as a prefab that ships merged into its parent;
+    /// with <paramref name="loadAtRuntime"/>, one that ships as a point_prefab instead (MapEntities.Walk).
+    /// prefabRuntimeEntity stays off: a build shows nothing of it (s2c_rtprefab2, 3).
     /// </summary>
     public DmxBinary.Element AddPrefab(int nodeId, string targetMapPath, bool fixupEntityNames, string targetName,
                                        Vector3 origin = default, Vector3 angles = default,
-                                       IReadOnlyList<(string Variable, string Value)>? overrides = null)
+                                       IReadOnlyList<(string Variable, string Value)>? overrides = null,
+                                       bool loadAtRuntime = false, Vector3? scales = null)
     {
         var prefab = New("CMapPrefab");
         Node(prefab, nodeId, ReferenceId(nodeId));
@@ -474,7 +477,7 @@ public sealed class VmapBuilder
               .Set("target", T.Element, null)
               .Set("variableOverrideNames", T.Array(T.String), (overrides ?? []).Select(o => (object?)o.Variable).ToArray())
               .Set("variableOverrideValues", T.Array(T.String), (overrides ?? []).Select(o => (object?)o.Value).ToArray());
-        Placement(prefab, origin, angles, Vector3.One);
+        Placement(prefab, origin, angles, scales ?? Vector3.One);
         Flags(prefab);
         prefab.Set("customVisGroup", T.String, "")
               .Set("randomSeed", T.Int, 0)
@@ -486,7 +489,7 @@ public sealed class VmapBuilder
               .Set("useTargetNameAsPrefix", T.Bool, targetName.Length > 0)
               .Set("loadIfNested", T.Bool, true)
               .Set("prefabRuntimeEntity", T.Bool, false)
-              .Set("loadAtRuntime", T.Bool, false);
+              .Set("loadAtRuntime", T.Bool, loadAtRuntime);
         AddChild(World, prefab);
         return prefab;
     }
@@ -502,6 +505,57 @@ public sealed class VmapBuilder
         Flags(group);
         AddChild(parent ?? World, group);
         return group;
+    }
+
+    /// <summary>
+    /// The map's nav settings node: a CMapNavData at the origin in the world, its navData the given
+    /// settings (Decompile.NavSettings). Shape: probe01's Hammer save (CDmeNavData "navData", the
+    /// settings* fields in that order, the hull arrays without the crawl ones, which Hammer does not write
+    /// and a map hull then takes from the default hull: written here only when they differ from it).
+    /// </summary>
+    public DmxBinary.Element AddNavData(int nodeId, Maps.NavGen.NavGenSettings s)
+    {
+        var hulls = s.Hulls;
+        object?[] Each<TV>(Func<Maps.NavGen.NavHull, TV> f) => [.. hulls.Select(h => (object?)f(h))];
+        var data = New("CDmeNavData", "navData")
+            .Set("settingsUseProjectDefaults", T.Bool, s.UseProjectDefaults)
+            .Set("settingsTileSize", T.Float, s.TileSize)
+            .Set("settingsCellSize", T.Float, s.CellSize)
+            .Set("settingsCellHeight", T.Float, s.CellHeight)
+            .Set("settingsRegionMinSize", T.Int, s.RegionMinSize)
+            .Set("settingsRegionMergeSize", T.Int, s.RegionMergeSize)
+            .Set("settingsDetailSampleDist", T.Float, s.DetailSampleDist)
+            .Set("settingsDetailSampleMaxError", T.Float, s.DetailSampleMaxError)
+            .Set("settingsVertsPerPoly", T.Int, s.VertsPerPoly)
+            .Set("settingsEdgeMaxLen", T.Int, s.EdgeMaxLen)
+            .Set("settingsEdgeMaxError", T.Float, s.EdgeMaxError)
+            .Set("settingsSmallAreaOnEdgeRemovalSize", T.Float, s.SmallAreaOnEdgeRemovalSize)
+            .Set("settingsAgentHullPreset", T.String, s.HullPreset)
+            .Set("settingsAgentHullsVDataOverride", T.String, s.HullsVDataOverride)
+            .Set("settingsAgentNumHulls", T.Int, hulls.Count)
+            .Set("settingsAgentEnabled", T.Array(T.Bool), Each(h => h.Enabled))
+            .Set("settingsAgentRadius", T.Array(T.Float), Each(h => h.Radius))
+            .Set("settingsAgentHeight", T.Array(T.Float), Each(h => h.Height))
+            .Set("settingsAgentShortHeightEnabled", T.Array(T.Bool), Each(h => h.ShortHeightEnabled))
+            .Set("settingsAgentShortHeight", T.Array(T.Float), Each(h => h.ShortHeight))
+            .Set("settingsAgentMaxClimb", T.Array(T.Float), Each(h => h.MaxClimb))
+            .Set("settingsAgentMaxSlope", T.Array(T.Int), Each(h => h.MaxSlope))
+            .Set("settingsAgentMaxJumpDownDist", T.Array(T.Float), Each(h => h.MaxJumpDownDist))
+            .Set("settingsAgentMaxJumpHorizDistBase", T.Array(T.Float), Each(h => h.MaxJumpHorizDistBase))
+            .Set("settingsAgentMaxJumpUpDist", T.Array(T.Float), Each(h => h.MaxJumpUpDist))
+            .Set("settingsAgentBorderErosion", T.Array(T.Int), Each(h => h.BorderErosion));
+        var plain = new Maps.NavGen.NavHull();
+        if (!s.UseProjectDefaults && s.HullPreset.Length == 0 && hulls.Any(h => h.CrawlEnabled != plain.CrawlEnabled || h.CrawlHeight != plain.CrawlHeight))
+            data.Set("settingsAgentCrawlEnabled", T.Array(T.Bool), Each(h => h.CrawlEnabled))
+                .Set("settingsAgentCrawlHeight", T.Array(T.Float), Each(h => h.CrawlHeight));
+        data.Set("settingsVertexAttributeVertexNormal", T.Bool, false);
+        var node = New("CMapNavData");
+        Node(node, nodeId, ReferenceId(nodeId));
+        node.Set("navData", T.Element, data);
+        Placement(node, Vector3.Zero, Vector3.Zero, Vector3.One);
+        Flags(node);
+        AddChild(World, node);
+        return node;
     }
 
     /// <summary>A node that takes one slot of an instance's id block and ships, walks and compiles nothing:

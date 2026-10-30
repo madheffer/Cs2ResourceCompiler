@@ -106,6 +106,14 @@ public partial class EntityLumpAgainstValveTests(ITestOutputHelper output)
     // Map variables (tools/map-survey/variable_probe_map.py): the map's own, bound to a targetname, and a
     // prefab map's two, placed overridden and at their defaults.
     [InlineData("s2c_varprobe")]
+    // Prefabs loaded at runtime (tools/map-survey/runtime_prefab_probe_map.py): s2c_prefabprobe with its
+    // prefab's loadAtRuntime on (rtprefab), with prefabRuntimeEntity too (rtprefab3), an entity after it
+    // (rtprefab4; rtprefab5 the same merged), and a map in a subfolder with fixup (rtprefab6).
+    [InlineData("s2c_rtprefab")]
+    [InlineData("s2c_rtprefab3")]
+    [InlineData("s2c_rtprefab4")]
+    [InlineData("s2c_rtprefab5")]
+    [InlineData("s2c_rtprefab6")]
     public void PrefabProbe_DiffersOnlyInTheDocumentedGaps(string map)
     {
         var source = MapFixtures.VmapSource("s2c_rc_probe", map);

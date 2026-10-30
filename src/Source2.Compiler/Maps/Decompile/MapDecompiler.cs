@@ -101,6 +101,22 @@ public static class MapDecompiler
         foreach (var (path, bytes) in lumps.OrderBy(l => IsTemplateLump(l.Key) ? 1 : 0))
             foreach (var e in LumpEntities(bytes, path))
                 raw.Add((path, e));
+        // A prefab loaded at runtime ships as a point_prefab, which takes no walk index: each comes back as
+        // that CMapPrefab, standing before the next node its map ships after it (RuntimePrefab).
+        var runtime = new List<(string Chain, RuntimePrefab Prefab)>();
+        for (var i = 0; i < raw.Count; i++)
+        {
+            if (RuntimePrefabOf(raw[i].Entity, raw[i].Lump) is not { } r)
+                continue;
+            var chain = ChainOf(IdPath(raw[i].Entity));
+            var before = Enumerable.Range(i + 1, raw.Count - i - 1)
+                .Where(k => raw[k].Lump == raw[i].Lump && ChainOf(IdPath(raw[k].Entity)) == chain && RuntimePrefabOf(raw[k].Entity, raw[k].Lump) is null)
+                .Select(k => SourceIdOf(raw[k].Entity)).FirstOrDefault(s => s >= 0, int.MaxValue);
+            runtime.Add((chain, r with { Before = before }));
+            if (Path.GetFileNameWithoutExtension(raw[i].Lump).StartsWith(LayerLumpPrefix, StringComparison.OrdinalIgnoreCase))
+                notes.Add($"point_prefab {IdPath(raw[i].Entity)}: in {Path.GetFileName(raw[i].Lump)}; its prefab is placed in the world, not in that layer");
+        }
+        raw.RemoveAll(r => RuntimePrefabOf(r.Entity, r.Lump) is not null);
         var prefabs = PrefabFixups(raw.Select(r => (IdPath(r.Entity), Name(r.Entity))).ToList(), schema, out var mapFixup);
         string? FixupOf(string idPath)
         {
@@ -153,6 +169,8 @@ public static class MapDecompiler
         }
         foreach (var e in entities.Where(e => !e.Entity.IsWorld))
             ScopeOf(ChainOf(e.IdPath)).Entities.Add(e);
+        foreach (var (chain, prefab) in runtime)
+            ScopeOf(chain).Runtime.Add(prefab);
 
         // One prefab map placed several times is one source: every placement's nodes carry the
         // first placement's compile_source_ids (MapEntities.SourceIds), so placements under one
@@ -317,11 +335,31 @@ public static class MapDecompiler
         // under, a later placement writes none.
         bool Later(Scope? sc) => sc is not null && (families.Any(f => f.IndexOf(sc) > 0) || Later(sc.Parent));
         var written = scopes.Values.Where(sc => sc.Parent is not null && !Later(sc)).ToList();
+        // A runtime prefab's map is read too (its point_prefab names it) and is not written here; it
+        // pairs with no placement unless a merged prefab uses the same file.
+        var runtimeMaps = runtime.Select(r => r.Prefab.MapPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (recorded.Count(f => !runtimeMaps.Contains(f)) is var merged && merged < recorded.Count && (merged > 0 || written.Count == 0))
+            recorded = [.. recorded.Where(f => !runtimeMaps.Contains(f))];
         if (written.Count == 1 && recorded.Count == 1)
             written[0].FileName = Path.GetFileNameWithoutExtension(recorded[0]);
         else if (recorded.Count > 0)
             notes.Add($"prefab maps: the compile read {string.Join(", ", recorded)}; {written.Count} written under their chains (which placement used which file is not in the package)");
         Emit(main);
+        // The map's nav settings from the .nav's generation parameters (NavSettings): a CMapNavData, unless
+        // the nav is the fixed empty one a map with no CMapNavData and no walkable seed gets. A made-up id,
+        // before the copy ids are matched.
+        if (files.TryGetValue($"maps/{mapName}.nav", out var nav) && !nav.AsSpan().SequenceEqual(NavFile.EmptyDefault()))
+        {
+            var (navSettings, byte59, why) = NavSettings.FromNav(nav);
+            if (navSettings is null)
+                notes.Add($"nav: maps/{mapName}.nav not read ({why}); no CMapNavData");
+            else
+            {
+                main.Builder!.AddNavData(main.NewId!(), navSettings);
+                if (byte59 != 0)
+                    notes.Add($"nav: the generation parameters' last byte is {byte59}, which the map's settings are not known to set; left 0");
+            }
+        }
         // The world's own meshes, from the physics soups and the render nodes (WorldGeometry), only as an
         // experiment (DECOMPILE_WORLD_MESHES=1): the soups' positions carry each source mesh's placement
         // rounding, which a mesh at the world's origin does not give back (docs/DECOMPILE.md "World
@@ -427,7 +465,8 @@ public static class MapDecompiler
         void Emit(Scope scope)
         {
             var builder = scope.Builder!;
-            var used = new HashSet<int>(scope.Entities.Select(e => e.Entity.NodeId).Concat(scope.Children.Select(c => c.NodeId)));
+            var used = new HashSet<int>(scope.Entities.Select(e => e.Entity.NodeId).Concat(scope.Children.Select(c => c.NodeId))
+                                                      .Concat(scope.Runtime.Select(r => r.NodeId)));
             if (scope.Parent is null)
                 used.Add(world.Entity.NodeId);
             else
@@ -583,10 +622,21 @@ public static class MapDecompiler
                         builder.AddSlot(NewId(), element);
                 }
             }
+            // The map's runtime prefabs, each where the walk meets the node it stands before.
+            var runtimeLeft = new Queue<RuntimePrefab>(scope.Runtime);
+            void RuntimeUpTo(int sourceId)
+            {
+                while (runtimeLeft.Count > 0 && runtimeLeft.Peek().Before <= sourceId)
+                {
+                    var r = runtimeLeft.Dequeue();
+                    builder.AddPrefab(r.NodeId, r.MapPath, r.Fixup, "", r.Origin, r.Angles, loadAtRuntime: true, scales: r.Scales);
+                }
+            }
             foreach (var (sourceId, e, slots) in items.OrderBy(i => i.SourceId))
             {
                 PlanUpTo(sourceId, inclusive: true);
                 FillTo(sourceId);
+                RuntimeUpTo(sourceId);
                 if (slots is not null)
                 {
                     group = builder.AddGroup(NewId(), at: (scope.CopyGroupAt, Vector3.Zero));
@@ -648,6 +698,7 @@ public static class MapDecompiler
                     AddBrushGeometry(builder, entityNode, e, model, files, table, notes, NewId);
                 at = Math.Max(at, e.SourceId + 1);
             }
+            RuntimeUpTo(int.MaxValue);
             PlanUpTo(int.MaxValue, inclusive: false);
             foreach (var child in scope.Children.OrderBy(c => c.FirstSourceId).ThenBy(LumpIndex))
             {
@@ -705,8 +756,10 @@ public static class MapDecompiler
                 // running the forward once the prefabs are written (MatchCopyIds).
                 var highest = builder.NodeIds().Max();
                 var wrapped = scope.Parent is null && wraps > 0;
+                // The main map's highest id raised by a toolsskip box, which Hammer's save keeps (it drops an
+                // empty group, Pad); a prefab map's by an empty group, which takes no slot of its block.
                 if (!wrapped && highest < plan.Next0 - 1)
-                    builder.AddGroup(plan.Next0 - 1);
+                    _ = scope.Parent is null ? builder.AddSlot(plan.Next0 - 1, builder.World) : builder.AddGroup(plan.Next0 - 1);
                 else if (!wrapped && highest > plan.Next0 - 1)
                     notes.Add($"instances: the map's nodes reach id {highest}, past the first block's start {plan.Next0}");
             }
@@ -715,10 +768,10 @@ public static class MapDecompiler
 
         // One node more in a map: in a prefab map it widens the prefab's block, so it must take a slot
         // (VmapBuilder.AddSlot; an empty group takes none, MapInstances.Hollow); in the main map it
-        // moves the highest node id, which an empty group does too.
-        DmxBinary.Element Pad(Scope sc) => sc == main
-            ? sc.Builder!.AddGroup(sc.NewId!())
-            : sc.Builder!.AddSlot(sc.NewId!(), sc.Builder!.World);
+        // moves the highest node id, which an empty group would too, but Hammer's save drops empty groups
+        // (its re-save of the atixref decompile lost the one at 7266, every copy id 22 lower), and keeps
+        // the toolsskip box, which walks and ships nothing either.
+        DmxBinary.Element Pad(Scope sc) => sc.Builder!.AddSlot(sc.NewId!(), sc.Builder!.World);
 
         // The copies' ids: each collapse's block starts where the ones before it end, and a
         // prefab's block is its map's copy count plus one (MapInstances.Expand). The forward is
@@ -732,7 +785,7 @@ public static class MapDecompiler
                 .Where(c => c.Scope == scope).Select(c => c.Id).DefaultIfEmpty(int.MaxValue).Min();
             // The map's own copies through wrappers: its highest node id moves every block by one.
             if (wraps > 0 && mainCopies.Count > 0 && Simulated(main) is var first && first < mainCopies.Min(c => c.Entity.NodeId))
-                main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + mainCopies.Min(c => c.Entity.NodeId) - first);
+                main.Builder!.AddSlot(main.Builder!.NodeIds().Max() + mainCopies.Min(c => c.Entity.NodeId) - first, main.Builder!.World);
             // With shared prefab maps every collapse is matched at once (MatchEveryCollapse).
             foreach (var scope in scopes.Values.Where(sc => families.Count == 0 && (sc.Instance is not null || (sc.Plan is not null && sc.Builder is not null))).OrderBy(sc => sc.Copies.Min(c => c.Entity.NodeId)))
             {
@@ -758,7 +811,7 @@ public static class MapDecompiler
                     for (var i = 0; i < left / step; i++)
                         Pad(scope);
                     if (left % step > 0)
-                        main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + left % step);
+                        main.Builder!.AddSlot(main.Builder!.NodeIds().Max() + left % step, main.Builder!.World);
                 }
                 if (Simulated(scope) != target)
                     notes.Add($"prefab {scope.Chain}: its instance's copies come out at {Simulated(scope)}, not {target}; not matched");
@@ -816,7 +869,7 @@ public static class MapDecompiler
                 sc.Builder!.RemoveFromWorld(probe);
             }
             {
-                var probe = main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + 1);
+                var probe = main.Builder!.AddSlot(main.Builder!.NodeIds().Max() + 1, main.Builder!.World);
                 columns.Add([.. Starts().Zip(now, (a, b) => a - b)]);
                 main.Builder!.RemoveFromWorld(probe);
             }
@@ -846,7 +899,7 @@ public static class MapDecompiler
                 for (var k = 0; k < x[j]; k++)
                     Pad(maps[j]);
             if (x[^1] > 0)
-                main.Builder!.AddGroup(main.Builder!.NodeIds().Max() + x[^1]);
+                main.Builder!.AddSlot(main.Builder!.NodeIds().Max() + x[^1], main.Builder!.World);
             if (!Starts().SequenceEqual(want))
                 notes.Add("instances: the paddings solved do not land every collapse's copies; not matched");
         }
@@ -1756,6 +1809,37 @@ public static class MapDecompiler
     }
 
     /// <summary>One map the decompile writes: the map itself (chain "") or a prefab's.</summary>
+    /// <summary>
+    /// A prefab loaded at runtime, from its point_prefab (MapEntities.Walk): its node id, map
+    /// (maps/&lt;targetMapName&gt;.vmap, MapEntities.RuntimeMapName backwards), fixupNames and placement,
+    /// and where it stands: before the node with walk index <paramref name="Before"/>, the next one
+    /// the lump ships after it in its map (it takes no index itself), else at the map's end.
+    /// </summary>
+    private sealed record RuntimePrefab(int NodeId, string MapPath, bool Fixup, Vector3 Origin, Vector3 Angles, Vector3 Scales, int Before, string Lump);
+
+    /// <summary>A lump entity's compile_source_id, or -1.</summary>
+    private static int SourceIdOf(KVObject entity)
+        => entity.TryGetValue("keyValues3Data", out var kv) && kv.TryGetValue("values", out var values) && values.TryGetValue("compile_source_id", out var id)
+           && int.TryParse(EntityLumpAuthor.Plain(id), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : -1;
+
+    /// <summary>A lump entity that is a runtime prefab's point_prefab (prefab_load_dynamic, no compile_source_id), or null.</summary>
+    private static RuntimePrefab? RuntimePrefabOf(KVObject entity, string lump)
+    {
+        if (!entity.TryGetValue("keyValues3Data", out var kv) || !kv.TryGetValue("values", out var values))
+            return null;
+        string? Text(string key) => values.TryGetValue(key, out var v) ? EntityLumpAuthor.Plain(v) : null;
+        if (!string.Equals(Text("classname"), "point_prefab", StringComparison.OrdinalIgnoreCase) || Text("prefab_load_dynamic") is null
+            || Text("compile_source_id") is not null)
+            return null;
+        Vector3 Vector(string key, Vector3 fallback)
+            => values.TryGetValue(key, out var v) && v.Values?.Select(x => float.Parse(EntityLumpAuthor.Plain(x), System.Globalization.CultureInfo.InvariantCulture)).ToArray() is [var x, var y, var z]
+                ? new Vector3(x, y, z) : fallback;
+        var id = Text("hammerUniqueId") ?? "";
+        return new RuntimePrefab(int.Parse(id[(id.LastIndexOf(':') + 1)..], System.Globalization.CultureInfo.InvariantCulture),
+                                 $"maps/{Text("targetMapName")}.vmap", Text("fixupNames") is "1", Vector("origin", Vector3.Zero), Vector("angles", Vector3.Zero),
+                                 Vector("scales", Vector3.One), int.MaxValue, lump);
+    }
+
     private sealed class Scope(string chain, Scope? parent)
     {
         public string Chain { get; } = chain;
@@ -1766,6 +1850,9 @@ public static class MapDecompiler
 
         /// <summary>Instance copies made inside this prefab's map (plain ids, template indices in its block).</summary>
         public List<EntityLumpAuthor.SourceEntity> Copies { get; } = [];
+
+        /// <summary>The prefabs loaded at runtime that stand in this map, in lump order.</summary>
+        public List<RuntimePrefab> Runtime { get; } = [];
 
         /// <summary>The scope's first place in lump order.</summary>
         public int Lump { get; set; }

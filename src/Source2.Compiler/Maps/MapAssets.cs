@@ -40,10 +40,15 @@ public static class MapAssets
                 Add(pathMaterial, "vmat");
             else if (e.Type == "CMapSmartProp" && e.Get<string>("smartPropFilename") is { Length: > 0 } definition)
                 Add(definition, "");
+            // A prefab loaded at runtime is a point_prefab naming its map, which the RERL lists
+            // (s2c_rtprefab: maps/s2c_propover.vmap).
+            else if (e.Type == "CMapPrefab" && e.GetValue<bool>("loadAtRuntime") == true && e.Get<string>("targetMapPath") is { Length: > 0 } runtime)
+                Add(runtime, "");
         }
         foreach (var entity in walk)
         {
-            if (entity.Hidden)
+            // A runtime prefab's point_prefab carries no keys of its own; its map is added with the node above.
+            if (entity.Hidden || entity.Runtime is not null)
                 continue;
             foreach (var (key, value) in EntityLumpAuthor.KeyTable(entity, schema))
             {

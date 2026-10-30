@@ -209,6 +209,31 @@ public static partial class EntityLumpAuthor
         // with the prefab's own "<id>_" inside a prefab that asks for it.
         var fixup = entity.NamePrefix is { } own ? NameFixup + own : fixupEntityNames ? NameFixup : null;
 
+        // A prefab loaded at runtime is not merged: its node exports a point_prefab naming its map,
+        // these keys in this order and no compile_source_id (resourcecompiler on s2c_rtprefab: the
+        // prefab's contents gone, point_prefab under the prefab's id, prefab_load_dynamic 1,
+        // fixupNames from fixupEntityNames, the prefab's placement).
+        if (entity.Runtime is { } runtime)
+        {
+            values.Add("classname", new KVObject("point_prefab"));
+            values.Add("prefab_load_dynamic", Integer(1));
+            values.Add("fixupNames", Integer(runtime.FixupNames ? 1 : 0));
+            values.Add("targetMapName", new KVObject(runtime.TargetMapName));
+            values.Add("origin", Vector(entity.Origin));
+            values.Add("angles", Vector(entity.Angles));
+            values.Add("scales", Vector(entity.Scales));
+            values.Add("hammerUniqueId", new KVObject(entity.IdPath));
+            var prefabValues = KVObject.Collection();
+            prefabValues.Add("version", Integer(1));
+            prefabValues.Add("values", values);
+            prefabValues.Add("attributes", KVObject.Collection());
+            var prefab = KVObject.Collection();
+            prefab.Add("m_connections", Connections(entity, fixup, entityNames, schema));
+            prefab.Add("m_keyValuesData", KVObject.Blob([]));
+            prefab.Add("keyValues3Data", prefabValues);
+            return prefab;
+        }
+
         // worldspawn's exporter writes the compile's id before any key
         // (FUN_180fc1560); every other entity writes it after them (FUN_181004020).
         if (entity.IsWorld)

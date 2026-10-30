@@ -250,7 +250,7 @@ public static class MapInstances
             var hidden = within is not null && (within.Enclosed || within.Hidden.Contains(id));
             if (child.Type is "CMapInstance" && child.Get<DmxBinary.Element>("target") is { } target)
                 tree.Instances.Add(new Instance(child, node, target) { Prefabs = within?.Prefabs ?? [], Hidden = hidden });
-            else if (MapEntities.CarriesGameKeys(child))
+            else if (MapEntities.CarriesGameKeys(child) || MapEntities.IsRuntimePrefab(child))
                 produced++;
             if (within is not null && child.Type is "CMapPrefab" && child.Get<DmxBinary.Element>(Maps.MapPrefabs.WorldKey) is { } prefabWorld)
             {

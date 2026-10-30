@@ -89,12 +89,20 @@ public static class MapEntities
         /// exported for the second, fourth... time (<see cref="SourceIds"/>).</summary>
         public bool KeysForward { get; init; }
 
+        /// <summary>A prefab loaded at runtime, which exports as a point_prefab naming its map
+        /// (EntityLumpAuthor.BuildEntity); null for anything else.</summary>
+        public RuntimePrefab? Runtime { get; init; }
+
         /// <summary>The node's id path as the compile formats it (NodeIdPath_Format):
         /// the prefab ids, then the node's own, joined by ':'.</summary>
         public string IdPath => Prefabs.Length == 0
             ? NodeId.ToString(CultureInfo.InvariantCulture)
             : string.Join(':', Prefabs.Append(NodeId).Select(i => i.ToString(CultureInfo.InvariantCulture)));
     }
+
+    /// <summary>A prefab loaded at runtime's point_prefab: the map it names (targetMapName) and whether
+    /// its contents' names are fixed up when it loads (fixupNames, the prefab's fixupEntityNames).</summary>
+    public sealed record RuntimePrefab(string TargetMapName, bool FixupNames);
 
     /// <summary>
     /// One node of a path, as the source states it.
@@ -152,6 +160,21 @@ public static class MapEntities
         => Tier0Strings.LowerAscii((prefab.Get<string>("targetMapPath") ?? "").Replace('\\', '/'));
 
     /// <summary>
+    /// A runtime prefab's targetMapName: its targetMapPath less the leading maps/ and the .vmap
+    /// (s2c_rtprefab: maps/s2c_propover.vmap is s2c_propover; s2c_rtprefab6:
+    /// maps/prefabs/s2c_prefabslot/p0.vmap is prefabs/s2c_prefabslot/p0, case as written).
+    /// A path outside maps/ is not measured.
+    /// </summary>
+    internal static string RuntimeMapName(string targetMapPath)
+    {
+        var path = targetMapPath.Replace('\\', '/');
+        if (!path.StartsWith("maps/", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException($"a runtime prefab whose map is outside maps/ ({targetMapPath}) is not measured");
+        path = path[5..];
+        return path.EndsWith(".vmap", StringComparison.OrdinalIgnoreCase) ? path[..^5] : path;
+    }
+
+    /// <summary>
     /// Each walked entity's compile_source_id: its walk index, except that a
     /// prefab map is one source however often it is placed. The first placement
     /// in the walk numbers its nodes, and every later one reuses those numbers
@@ -172,6 +195,12 @@ public static class MapEntities
         for (var i = 0; i < entities.Count; i++)
         {
             var e = entities[i];
+            // A runtime prefab's point_prefab takes no walk index (s2c_rtprefab4).
+            if (e.Runtime is not null)
+            {
+                ids[i] = -1;
+                continue;
+            }
             if (e.PrefabMap is { } map && first.TryGetValue((map, e.NodeId), out var earlier))
             {
                 ids[i] = earlier.Id;
@@ -256,6 +285,11 @@ public static class MapEntities
 
     /// <summary>Whether the node owns an <c>EditGameClassProps</c>, and so takes a
     /// place in the compile's numbering.</summary>
+    /// <summary>Whether the node is a prefab loaded at runtime, which the walk reads as its point_prefab
+    /// (one entity, no walk index) and does not enter.</summary>
+    public static bool IsRuntimePrefab(DmxBinary.Element node)
+        => node.Type is "CMapPrefab" && node.GetValue<bool>("loadAtRuntime") == true && !node.Attributes.ContainsKey(Maps.MapPrefabs.WorldKey);
+
     public static bool CarriesGameKeys(DmxBinary.Element node)
         => node is not null && GameKeyBearer.Contains(node.Type);
 
@@ -307,6 +341,25 @@ public static class MapEntities
             if (child.Type is "CMapPrefab" && child.Get<DmxBinary.Element>(Maps.MapPrefabs.WorldKey) is { } prefabWorld)
             {
                 prefabs.Add((child, id, prefabWorld, within.Enclosed));
+                continue;
+            }
+            // A prefab loaded at runtime is not merged (MapPrefabs.Attach leaves it): its point_prefab
+            // stands where the prefab does in the tree, before the nodes after it, and takes no walk
+            // index (s2c_rtprefab4: the info_target after it is compile_source_id 13 as with the
+            // prefab merged, s2c_rtprefab5, and ships after the point_prefab).
+            if (IsRuntimePrefab(child))
+            {
+                var placed = (Origin: child.GetValue<Vector3>("origin") ?? Vector3.Zero, Angles: child.GetValue<Vector3>("angles") ?? Vector3.Zero);
+                if (prefab.Chain.Length > 0)
+                    placed = Maps.SettleWorld.PrefabPlacement(placed.Origin, placed.Angles, prefab.Chain);
+                entities.Add(new Entity("point_prefab", id, [], placed.Origin, placed.Angles, child.GetValue<Vector3>("scales") ?? Vector3.One, false,
+                                        ReadConnections(child))
+                {
+                    Layer = layer,
+                    Hidden = within.Enclosed || prefab.Hidden.Contains(id) || child.GetValue<bool>("editorOnly") == true,
+                    Prefabs = prefab.Ids, NamePrefix = prefab.NamePrefix, PrefabMap = prefab.Map,
+                    Runtime = new RuntimePrefab(RuntimeMapName(child.Get<string>("targetMapPath") ?? ""), child.GetValue<bool>("fixupEntityNames") == true),
+                });
                 continue;
             }
             Walk(child, entities, seen,

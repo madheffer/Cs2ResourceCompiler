@@ -74,7 +74,9 @@ public static class MapRootFile
 
     public static uint Crc(byte[] bytes) => Crc32.HashToUInt32(bytes);
 
-    /// <summary>The content-relative maps every loaded prefab under the document reads (MapPrefabs.Attach), depth first.</summary>
+    /// <summary>The content-relative maps every loaded prefab under the document reads (MapPrefabs.Attach), depth first,
+    /// and each prefab loaded at runtime's, which the compile reads for its inputs too without merging it
+    /// (s2c_rtprefab: maps/s2c_propover.vmap among the inputs, its CRC the file's).</summary>
     public static IEnumerable<string> PrefabMaps(DmxBinary.Document document)
     {
         foreach (var p in document.OfType("CMapPrefab"))
@@ -85,6 +87,8 @@ public static class MapRootFile
                 foreach (var nested in PrefabMaps(inner))
                     yield return nested;
             }
+            else if (p.GetValue<bool>("loadAtRuntime") == true && p.Get<string>("targetMapPath") is { Length: > 0 } runtime)
+                yield return runtime;
     }
 
     public static byte[] Write(Compile compile, IReadOnlyList<string> children, IEnumerable<string> assets,
