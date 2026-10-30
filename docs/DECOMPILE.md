@@ -686,8 +686,26 @@ tessellated to 4480 triangles, a blend material split by paint layer, hence the 
 " [concrete_block]"). Its pieces, as our tessellation path cuts them (`WORLDPHYS_PIECES`): slabs 0, 2,
 concrete_9 16, slabs 0, hr_conc 30, hr_conc 8, slabs 4480 (two empty pieces count). That gives
 Valve's 9 mesh pieces, the surface registration order (wet before concrete_block) and every
-per-triangle surface id. A flat decompiled mesh cannot give that split: it needs node 409 rebuilt as
-its subdivision cage with its paint (the inverse of the stitched subdivision bake).
+per-triangle surface id.
+
+**What the pieces need (10-30, measured):** not the cage. `TessellatedPieces` cuts one piece per
+(lightmapScaleBias, material), sorted, and a blend material's piece is cut again per paint layer
+(`SplitLayers`: a triangle averages its three vertices' paint, channel 0 at 0.5 or more is layer 1;
+empty layers stay as pieces). Node 409: slabs at bias 0 and 1 × 2 layers = 4 pieces (0, 2, 0, 4480),
+concrete_9 at one bias (16), hr_conc at two (30, 8). So a flat mesh of the tessellated triangles
+gives the same pieces if each face carries its bias and each vertex a paint value on the right side
+of 0.5. The layer per triangle is in the shipped soup (its surface id). **The bias per face is the
+open input**, and this package does not show it:
+- The lightmap texcoords (render TEXCOORD3, the same as lightmap_query_data.kv3) are near-degenerate
+  on this fixture build: area density log2 -29.25 for all 4480 slab triangles, about 1/1000 of the
+  lit faces' -20.75 (`DECOMPILE_LMDENSITY=<file>` dumps it). On a lit build, `ChartMeshes`' chart
+  scale 2^bias should show it as a 4× density step; untested.
+- The render's aggregate draws are split by place (14 slab draws of 2 to 772 triangles), not by face
+  set, and the render carries extra render-only faces.
+- In the physics the bias shows only as piece boundaries in the soup's input order, which needs the
+  order solve on ze's 4548-triangle soup (the CP model took 17 min on probe01's 280).
+Next: a lit compile of ze_hold_em_p (CS2 closed, RC) to check the density step, or a small probe map
+with known biases.
    Debug switches: `DECOMPILE_SEARCH_BUDGET` (default 5M), `DECOMPILE_SEARCH_GUIDE=preimage` (worse:
    deepest 87), `DECOMPILE_TRUTH_PREFIX=n`, `DECOMPILE_SEARCH_PREFER=inverted`, `DECOMPILE_SEARCH_SLOTS=all`,
    `DECOMPILE_WORLDDEBUG=1`.

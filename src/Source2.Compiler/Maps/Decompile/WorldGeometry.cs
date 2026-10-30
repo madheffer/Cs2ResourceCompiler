@@ -2086,6 +2086,25 @@ internal static class WorldGeometry
                         if (Environment.GetEnvironmentVariable("DECOMPILE_RENDER_DUMP") is { Length: > 0 } dump)
                             File.AppendAllLines(dump, [$"# {path} {material} {start} {count}", .. Enumerable.Range(0, count / 3)
                                 .Select(k => string.Join(" ", Enumerable.Range(0, 3).Select(c => P(I(start + k * 3 + c) + bas)).Select(v => $"{v.X:R},{v.Y:R},{v.Z:R}")))]);
+                        // DECOMPILE_LMDENSITY=<file>: each triangle's world and lightmap-texcoord areas (TEXCOORD3).
+                        if (Environment.GetEnvironmentVariable("DECOMPILE_LMDENSITY") is { Length: > 0 } density
+                            && buffers.Select(b => (b, f: b.Buffer.InputLayoutFields.FirstOrDefault(f => f.SemanticName.Equals("TEXCOORD", StringComparison.OrdinalIgnoreCase) && f.SemanticIndex == 3)))
+                                      .FirstOrDefault(x => x.f.Format.ToString() == "R16G16_UNORM") is { b.Buffer.Data: not null } lm)
+                        {
+                            Vector2 L(int v) => new(BitConverter.ToUInt16(lm.b.Buffer.Data, lm.b.Offset + v * (int)lm.b.Buffer.ElementSizeInBytes + (int)lm.f.Offset) / 65535f,
+                                                    BitConverter.ToUInt16(lm.b.Buffer.Data, lm.b.Offset + v * (int)lm.b.Buffer.ElementSizeInBytes + (int)lm.f.Offset + 2) / 65535f);
+                            var lines = new List<string>();
+                            for (var i = start; i + 2 < start + count; i += 3)
+                            {
+                                int a = I(i) + bas, b = I(i + 1) + bas, c = I(i + 2) + bas;
+                                var world = Vector3.Cross(P(b) - P(a), P(c) - P(a)).Length() / 2;
+                                var (la, lb, lc) = (L(a), L(b), L(c));
+                                var uvArea = MathF.Abs(((lb.X - la.X) * (lc.Y - la.Y)) - ((lc.X - la.X) * (lb.Y - la.Y))) / 2;
+                                var centre = (P(a) + P(b) + P(c)) / 3;
+                                lines.Add($"{Path.GetFileNameWithoutExtension(material)} {centre.X:F1} {centre.Y:F1} {centre.Z:F1} {world:G6} {uvArea:G6}");
+                            }
+                            File.AppendAllLines(density, lines);
+                        }
                         for (var i = start; i + 2 < start + count; i += 3)
                         {
                             int a = I(i) + bas, b = I(i + 1) + bas, c = I(i + 2) + bas;
