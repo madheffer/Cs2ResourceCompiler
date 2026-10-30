@@ -46,13 +46,14 @@ public static class MapDecompiler
     /// entries) named <paramref name="mapName"/>.</summary>
     /// <param name="materials">Tool material hash to name (<see cref="BrushGeometry.MaterialTable"/>) over the
     /// game's materials; the package's own are added. Null: the package's only.</param>
-    /// <param name="modelPhysics">A game model's physics (GameContent.Physics), for the prop_statics in the
-    /// world's hulls (StaticProps); null: none rebuilt.</param>
+    /// <param name="content">The game's models and materials: the prop_statics in the world's hulls
+    /// (StaticProps), and world faces the render does not show, by their surface (WorldGeometry); null:
+    /// neither.</param>
     public static Result Decompile(IReadOnlyDictionary<string, byte[]> files, string mapName, FgdSchema schema,
                                    IReadOnlyDictionary<uint, string>? materials = null,
-                                   Func<string, ValveResourceFormat.ResourceTypes.PhysAggregateData?>? modelPhysics = null)
+                                   GameContent? content = null)
     {
-        var first = Decompile(files, mapName, schema, materials, null, modelPhysics);
+        var first = Decompile(files, mapName, schema, materials, null, content);
         if (!first.Overshoot)
             return first;
         // A prefab's copies come out past their ids: the map's own nodes reach too high, so its
@@ -62,7 +63,7 @@ public static class MapDecompiler
         // the forward on the rebuild gives every copy its id.
         for (var count = 1; count <= MaxRetryCopies; count++)
             for (var wraps = 0; wraps <= MaxRetryWraps; wraps++)
-                if (Decompile(files, mapName, schema, materials, new Retry(count, wraps), modelPhysics) is { IdsMatched: true } retried)
+                if (Decompile(files, mapName, schema, materials, new Retry(count, wraps), content) is { IdsMatched: true } retried)
                     return retried with
                     {
                         Notes = [.. retried.Notes, $"instances: the map's {count} highest nodes are one collapse through {wraps} wrapper group(s), the first reading (fewest copies, then wrappers) whose copy ids land"],
@@ -83,7 +84,7 @@ public static class MapDecompiler
 
     private static Result Decompile(IReadOnlyDictionary<string, byte[]> files, string mapName, FgdSchema schema,
                                     IReadOnlyDictionary<uint, string>? materials, Retry? retry,
-                                    Func<string, ValveResourceFormat.ResourceTypes.PhysAggregateData?>? modelPhysics)
+                                    GameContent? content)
     {
         var notes = new List<string>();
         var lumps = files.Where(f => f.Key.EndsWith(".vents_c", StringComparison.OrdinalIgnoreCase)
@@ -324,18 +325,19 @@ public static class MapDecompiler
         // The pieces reach the soups through PartOrder (a CRT qsort on shape type after every insert: with
         // one type a fixed permutation of the input), so they are written in its inverse, as a brush
         // entity's hulls are.
-        var worldMeshes = Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" ? WorldGeometry.Read(files, mapName, table, notes) : [];
+        var worldMeshes = Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" ? WorldGeometry.Read(files, mapName, table, notes,
+            content is null ? null : name => Physics.WorldCollision.ReadMaterial(name, content.Material, content.CollisionProperty).SurfaceKey) : [];
         // The prop_statics from the world's hulls (StaticProps), written after the world meshes. The part
         // sorts the shapes by type after every insert, the meshes (3) and the props' hulls (2) together,
         // so both are written in the inverse of that sort over this sequence: the meshes, then each prop's
         // hulls in its model's order, the props in the order that inverse asks for.
         var props = new List<StaticProps.Placed>();
         var shippedHulls = 0;
-        if (Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" && modelPhysics is not null)
+        if (Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" && content is not null)
         {
             var (hulls, _) = StaticProps.WorldHulls(files, mapName);
             shippedHulls = hulls.Count;
-            props = StaticProps.Find(hulls, StaticProps.Models(files, mapName), modelPhysics, notes);
+            props = StaticProps.Find(hulls, StaticProps.Models(files, mapName), content.Physics, notes);
             if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
                 notes.Add($"world debug: props' shipped hulls {string.Join(" ", props.OrderBy(p => p.Hulls.Min()).Select(p => $"{Path.GetFileNameWithoutExtension(p.Model)[^5..]}[{string.Join(",", p.Hulls)}]"))}");
         }

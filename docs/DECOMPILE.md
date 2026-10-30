@@ -671,6 +671,23 @@ material's "concrete" missing).
 Not covered: scaled props (moved before the cook), a model's spheres, capsules and meshes, deformed
 props, props without physics (placement in the render only), and keys other than model (skin,
 baketoworld and the rest are not in the physics).
+
+**World faces' materials (10-30, later).** ze's 50 "toolsnodraw" faces were hr_conc_i_tintdark: its
+aggregate draw splits its streams (SplitDepthStream: positions alone in the first vertex buffer,
+texcoords and the rest in the second, one vertex numbering), and `RenderCorners` read only the first.
+It now takes each stream from the buffer that has it: all 4548 of ze's soup triangles get a render
+material, and "concrete" is back in the surface list. A fallback by surface (the soup's per-triangle
+`m_Materials` into the part's `m_surfacePropertyHashes`, a neighbour's material of that surface first,
+else the only render material with it) covers faces no render shows; ze needs none of it now.
+
+**Left on ze's world physics: node 409.** The source's world is three meshes: nodes 12 and 13 (6
+triangles each) and node 409, a subdivided, vertex-painted mesh of three materials (36 slab faces
+tessellated to 4480 triangles, a blend material split by paint layer, hence the soup's name
+" [concrete_block]"). Its pieces, as our tessellation path cuts them (`WORLDPHYS_PIECES`): slabs 0, 2,
+concrete_9 16, slabs 0, hr_conc 30, hr_conc 8, slabs 4480 (two empty pieces count). That gives
+Valve's 9 mesh pieces, the surface registration order (wet before concrete_block) and every
+per-triangle surface id. A flat decompiled mesh cannot give that split: it needs node 409 rebuilt as
+its subdivision cage with its paint (the inverse of the stitched subdivision bake).
    Debug switches: `DECOMPILE_SEARCH_BUDGET` (default 5M), `DECOMPILE_SEARCH_GUIDE=preimage` (worse:
    deepest 87), `DECOMPILE_TRUTH_PREFIX=n`, `DECOMPILE_SEARCH_PREFER=inverted`, `DECOMPILE_SEARCH_SLOTS=all`,
    `DECOMPILE_WORLDDEBUG=1`.

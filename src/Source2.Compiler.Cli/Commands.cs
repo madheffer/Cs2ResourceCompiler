@@ -646,7 +646,7 @@ internal static class Commands
         var map = Maps.Decompile.MapDecompiler.MapNameOf(files);
         // The game's models, for the prop_statics in the world's hulls.
         var gameContent = new Maps.GameContent(Path.Combine(game, "csgo", "pak01_dir.vpk"));
-        var result = Maps.Decompile.MapDecompiler.Decompile(files, map, schema, Maps.Decompile.BrushGeometry.GameMaterials(game), gameContent.Physics);
+        var result = Maps.Decompile.MapDecompiler.Decompile(files, map, schema, Maps.Decompile.BrushGeometry.GameMaterials(game), gameContent);
         File.WriteAllBytes(outPath, result.Vmap);
 
         Console.WriteLine($"{map}: {result.Entities.Count:n0} entities, {result.Placeholders:n0} placeholders");

@@ -25,8 +25,10 @@ internal static class WorldGeometry
 {
     public sealed record Mesh(List<string> Materials, List<(Vector3[] Corners, int Material, Vector2[]? Texcoords)> Faces, string Name);
 
+    /// <param name="surfaceOf">A material's surface property hash (its physics); with it a face the render
+    /// does not show takes a render material of the surface the soup gives its triangle.</param>
     public static List<Mesh> Read(IReadOnlyDictionary<string, byte[]> files, string mapName, IReadOnlyDictionary<uint, string> toolMaterials,
-                                  List<string> notes)
+                                  List<string> notes, Func<string, uint>? surfaceOf = null)
     {
         var result = new List<Mesh>();
         if (!files.TryGetValue($"maps/{mapName}/world_physics.vmdl_c", out var physicsBytes))
@@ -42,7 +44,9 @@ internal static class WorldGeometry
         };
         static KVObject? Child(KVObject? parent, string key)
             => parent is not null && parent.IsCollection && parent.TryGetValue(key, out var child) ? child : null;
-        var (matched, toolFaces, unknown) = (0, 0, 0);
+        var (matched, toolFaces, unknown, bySurface) = (0, 0, 0, 0);
+        var surfaceHashes = Child(phys, "m_surfacePropertyHashes")?.Values.Select(v => (uint)v.ToInt64(null)).ToArray() ?? [];
+        var renderMaterials = render.Values.SelectMany(l => l.Select(c => c.Material)).Distinct().Order(StringComparer.Ordinal).ToList();
         foreach (var part in Child(phys, "m_parts")?.Values ?? [])
             foreach (var shape in Child(Child(part, "m_rnShape"), "m_meshes")?.Values ?? [])
             {
@@ -76,6 +80,56 @@ internal static class WorldGeometry
                         soupMaterial[k] = toolName ?? "materials/tools/toolsnodraw.vmat";
                         if (toolName is null) unknown++; else toolFaces++;
                     }
+                }
+                // A face the render does not show (hidden against another, or render-only cut away) still
+                // has its surface in the soup (m_Materials per triangle, else the shape's): it takes a
+                // render material of that surface, a neighbour's across an edge first, else the only one
+                // the map's render has. Its physics is the material's surface and settings, the same for
+                // any material of that surface the map uses.
+                if (surfaceOf is not null && toolName is null)
+                {
+                    var perTriangle = Child(body, "m_Materials")?.Values.Select(v => (int)v.ToInt64(null)).ToArray();
+                    var shapeSurface = (int)(Child(shape, "m_nSurfacePropertyIndex")?.ToInt64(null) ?? 0);
+                    uint? SurfaceAt(int k) => (perTriangle is { } pt && k < pt.Length ? pt[k] : shapeSurface) is var i && i >= 0 && i < surfaceHashes.Length ? surfaceHashes[i] : null;
+                    var byEdge = new Dictionary<(int, int), List<int>>();
+                    for (var k = 0; k < triangles.Count; k++)
+                        foreach (var (x, y) in (ValueTuple<int, int>[])[(triangles[k].A, triangles[k].B), (triangles[k].B, triangles[k].C), (triangles[k].C, triangles[k].A)])
+                        {
+                            var key = (Math.Min(x, y), Math.Max(x, y));
+                            if (!byEdge.TryGetValue(key, out var list))
+                                byEdge[key] = list = [];
+                            list.Add(k);
+                        }
+                    var shown = Enumerable.Range(0, triangles.Count).Select(k => uv.ContainsKey((k, triangles[k].A))).ToArray();
+                    var surfaceCache = new Dictionary<string, uint>(StringComparer.Ordinal);
+                    uint Surface(string m) => surfaceCache.TryGetValue(m, out var h) ? h : surfaceCache[m] = surfaceOf(m);
+                    // Neighbours first, spreading through faces resolved here.
+                    var pending = new Queue<int>(Enumerable.Range(0, triangles.Count).Where(k => !shown[k]));
+                    var resolved = new bool[triangles.Count];
+                    var stalls = 0;
+                    while (pending.Count > 0 && stalls <= pending.Count)
+                    {
+                        var k = pending.Dequeue();
+                        if (SurfaceAt(k) is not { } want)
+                            continue;
+                        var (a, b, c) = triangles[k];
+                        var neighbour = ((ValueTuple<int, int>[])[(a, b), (b, c), (c, a)])
+                            .SelectMany(e => byEdge[(Math.Min(e.Item1, e.Item2), Math.Max(e.Item1, e.Item2))])
+                            .Where(n => n != k && (shown[n] || resolved[n]) && Surface(soupMaterial[n]) == want)
+                            .Select(n => soupMaterial[n]).FirstOrDefault();
+                        var only = renderMaterials.Where(m => Surface(m) == want).Take(2).ToList();
+                        var pick = neighbour ?? (only.Count == 1 ? only[0] : null);
+                        if (pick is null)
+                        {
+                            pending.Enqueue(k);
+                            stalls++;
+                            continue;
+                        }
+                        (soupMaterial[k], resolved[k], stalls) = (pick, true, 0);
+                        (bySurface, unknown) = (bySurface + 1, unknown - 1);
+                    }
+                    if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
+                        notes.Add($"world debug: surfaces wanted {string.Join(" ", pending.Select(SurfaceAt).Distinct())}; table {string.Join(" ", surfaceHashes)}; per-triangle {perTriangle?.Length ?? -1} shape {shapeSurface}; render {string.Join(" ", renderMaterials.Select(m => $"{Path.GetFileNameWithoutExtension(m)}={Surface(m)}"))}");
                 }
                 // The soup is its members' pieces one after another, each in its own weld order (Members),
                 // each written as a mesh of its own in that order.
@@ -127,7 +181,7 @@ internal static class WorldGeometry
                 }
         }
         notes.Add($"world: {result.Count} mesh(es), the physics soups' connected pieces; {matched} triangles with a render face's material and texture coordinates, " +
-                  $"{toolFaces} a tool material, {unknown} neither (toolsnodraw); render-only faces not rebuilt");
+                  $"{toolFaces} a tool material, {bySurface} by their surface (no render face), {unknown} neither (toolsnodraw); render-only faces not rebuilt");
         return result;
     }
 
@@ -2002,17 +2056,29 @@ internal static class WorldGeometry
                     foreach (var call in so.GetArray("m_drawCalls"))
                     {
                         var material = call.GetStringProperty("m_material") ?? "";
-                        var vb = mesh.VBIB.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                        // A map mesh's draw may split its streams (SplitDepthStream: positions in one buffer,
+                        // the rest in the next, one vertex numbering): each stream from the buffer that has it.
+                        var buffers = call.GetArray("m_vertexBuffers").Select(b => (Buffer: mesh.VBIB.VertexBuffers[b.GetInt32Property("m_hBuffer")],
+                                                                                        Offset: (int)(b.ContainsKey("m_nBindOffsetBytes") ? b.GetInt32Property("m_nBindOffsetBytes") : 0))).ToList();
                         var ib = mesh.VBIB.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
-                        var position = vb.InputLayoutFields.FirstOrDefault(f => f.SemanticName.Equals("POSITION", StringComparison.OrdinalIgnoreCase));
-                        var texcoord = vb.InputLayoutFields.FirstOrDefault(f => f.SemanticName.Equals("TEXCOORD", StringComparison.OrdinalIgnoreCase) && f.SemanticIndex == 0);
-                        if (position.Format.ToString() != "R32G32B32_FLOAT" || texcoord.Format.ToString() != "R32G32_FLOAT")
+                        var withPosition = buffers.FirstOrDefault(b => b.Buffer.InputLayoutFields.Any(f => f.SemanticName.Equals("POSITION", StringComparison.OrdinalIgnoreCase)));
+                        var withTexcoord = buffers.FirstOrDefault(b => b.Buffer.InputLayoutFields.Any(f => f.SemanticName.Equals("TEXCOORD", StringComparison.OrdinalIgnoreCase) && f.SemanticIndex == 0));
+                        if (withPosition.Buffer.InputLayoutFields is null || withTexcoord.Buffer.InputLayoutFields is null)
                             continue;
-                        Vector3 P(int v) => new(BitConverter.ToSingle(vb.Data, v * (int)vb.ElementSizeInBytes + (int)position.Offset),
-                                                BitConverter.ToSingle(vb.Data, v * (int)vb.ElementSizeInBytes + (int)position.Offset + 4),
-                                                BitConverter.ToSingle(vb.Data, v * (int)vb.ElementSizeInBytes + (int)position.Offset + 8));
-                        Vector2 T(int v) => new(BitConverter.ToSingle(vb.Data, v * (int)vb.ElementSizeInBytes + (int)texcoord.Offset),
-                                                BitConverter.ToSingle(vb.Data, v * (int)vb.ElementSizeInBytes + (int)texcoord.Offset + 4));
+                        var (pb, tb) = (withPosition.Buffer, withTexcoord.Buffer);
+                        var position = pb.InputLayoutFields.First(f => f.SemanticName.Equals("POSITION", StringComparison.OrdinalIgnoreCase));
+                        var texcoord = tb.InputLayoutFields.First(f => f.SemanticName.Equals("TEXCOORD", StringComparison.OrdinalIgnoreCase) && f.SemanticIndex == 0);
+                        if (position.Format.ToString() != "R32G32B32_FLOAT" || texcoord.Format.ToString() != "R32G32_FLOAT")
+                        {
+                            if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
+                                Console.Error.WriteLine($"world debug: render draw {path} {material} skipped: {string.Join(" | ", buffers.Select(b => string.Join(", ", b.Buffer.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}@{f.Offset}"))))}");
+                            continue;
+                        }
+                        Vector3 P(int v) => new(BitConverter.ToSingle(pb.Data, withPosition.Offset + v * (int)pb.ElementSizeInBytes + (int)position.Offset),
+                                                BitConverter.ToSingle(pb.Data, withPosition.Offset + v * (int)pb.ElementSizeInBytes + (int)position.Offset + 4),
+                                                BitConverter.ToSingle(pb.Data, withPosition.Offset + v * (int)pb.ElementSizeInBytes + (int)position.Offset + 8));
+                        Vector2 T(int v) => new(BitConverter.ToSingle(tb.Data, withTexcoord.Offset + v * (int)tb.ElementSizeInBytes + (int)texcoord.Offset),
+                                                BitConverter.ToSingle(tb.Data, withTexcoord.Offset + v * (int)tb.ElementSizeInBytes + (int)texcoord.Offset + 4));
                         int I(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
                         var start = call.GetInt32Property("m_nStartIndex");
                         var count = call.GetInt32Property("m_nIndexCount");
