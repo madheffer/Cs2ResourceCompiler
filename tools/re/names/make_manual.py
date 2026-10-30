@@ -3316,6 +3316,15 @@ BC7E = [
     ("180169300", "bc7e_init_params", BAKE, "export (level 0..6, perceptual, params): a jump table onto the ISPC params initialisers; level 6 is slowest"),
 ]
 
+# hammer.dll 20261029 (installed; tools/re/binaries/hammer_20261029.dll): Hammer's autosave and recovery prompt,
+# driven from cubehost by tools/map-survey/hammer_autosave.py (docs/DECOMPILE.md "CS2-closed captures 10-30 evening").
+HAMMER_1029 = [
+    ("180128660", "ConCommand_hammer_force_autosave", CM, "times 181497970(autosave manager +0x98, force = 1)"),
+    ("181497970", "HammerAutosave_Run", CM, "(this, force): each open document ([this]+0x60, count +0x58): vfunc +0x80 (needs an autosave) unless force; always skipped when byte +0x11 is set; vfunc +0x90 (doc, path, autosave path, 1, force) writes; marks the file's record +9; prunes the folder to the size limit"),
+    ("181497d40", "HammerAutosave_RecoveryPrompt", CM, "\"Recover Files?\" QMessageBox Yes|No (IAT 18169bfb0, called at 181497e74) when 181496bd0 lists files or the pending list ([this]+0x28, count +0x20) is not empty; Yes reloads (1814982c0), No marks the records handled (+8 = 1, +9 = 0) and empties the pending list, deleting nothing"),
+    ("181496bd0", "HammerAutosave_FilesToRecover", CM, "records ([this]+0x10, 16 bytes: path, +8 handled, +9 has autosave) with +8 clear and +9 set"),
+]
+
 if __name__ == "__main__":
     write("resourcecompiler_20260923.manual.json", RESOURCECOMPILER)
     write("vphysics2_20260924.manual.json", VPHYSICS2)
@@ -3345,4 +3354,5 @@ if __name__ == "__main__":
     write("client_20261023.manual.json", CLIENT_1023)
     write("worldrenderer_20261023.manual.json", WORLDRENDERER_1023)
     write("server_20261021.manual.json", SERVER_1021)
+    write("hammer_20261029.manual.json", HAMMER_1029)
     print(len(RESOURCECOMPILER), len(VPHYSICS2), len(PHYSICSBUILDER), len(VISBUILDER), len(SMARTPROPS), len(TIER0), len(HAMMER))

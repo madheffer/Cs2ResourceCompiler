@@ -1045,9 +1045,29 @@ folders kept in `%TEMP%resh_compile`).
   all the map name in paths. Quitting over netcon left cs2 waiting (a save prompt for the dirty map);
   it had to be killed.
 
-Queued for the next CS2-closed window: a lit compile of ze_hold_em_p (node 409's biases); RC on the
-decompiled s2c_varprobe; a Hammer save with a map variable (open s2c_varinner, touch the set, save) if
-a way to dirty a document over netcon turns up.
+### CS2-closed captures 10-30 evening (Steam closed too)
+
+- **RC on the decompiled s2c_varprobe** (`decompile_rc_batch.ps1 -Maps s2c_varprobe -SameOptions`):
+  13/13 entities, 0 differences against RC's build of the source.
+- **ze_hold_em_p lit** and **node 409 at bias 0** (ledger 188): node 409's tessellated triangles read one
+  lightmap density whatever their bias (log2 -29.2/-29.1), its flat faces show the bias as a 4x step. So
+  the lightmap gives the bias of flat faces only; the subdivided faces' bias shows in the physics pieces
+  and the render aggregates. `tools/map-survey/bias_zero_map.py` (with its round-trip control: dmxconvert
+  upgrades vmap 37 -> 40 and that alone changes brush entity models).
+- **Hammer saves without Steam or key presses:** `tools/map-survey/hammer_autosave.py` + `hammer_autosave.js`.
+  cs2.exe -tools stops with Steam closed ("Failed to connect with local Steam Client process"), and key
+  presses to Hammer's window lose to whatever the user has in front, so the tools run in cubehost
+  (spawned suspended under Frida) and `hammer_force_autosave` writes the open documents. hammer.dll
+  (10-29): the command (180128660) calls 181497970 with force = 1, which skips the document's vfunc +0x80
+  "needs autosave" test but not byte +0x11; the write is vfunc +0x90. Nested prefab maps are autosaved
+  too (`prefabs/<map>/`). A killed session leaves Hammer's recovery prompt (181497d40, QMessageBox Yes|No);
+  No only marks the files handled and deletes nothing, so the agent answers No when every listed file is
+  in the s2c_rc_probe addon's maps, otherwise it leaves the prompt up.
+  - s2c_varprobe's decompile: Hammer's save (24211 bytes, and s2c_varinner with its map variables under
+    prefabs/) compiles to our decompile's entities, 13/13, the only difference the map name.
+  - ze_hold_em_p's decompile: Hammer was still loading it after 10 minutes on one core; stopped (other
+    sessions were waiting). atixref, probe01 and prefabprobe9 not reached. Next window: those three first,
+    ze alone with a longer wait.
 
 ### Scripts and map links (2026-10-30, CS2 open)
 

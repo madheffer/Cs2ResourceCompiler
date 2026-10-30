@@ -136,6 +136,22 @@ names (asserts, RTTI, log strings; tens of thousands per DLL) are in
 | `1800df660` | `HammerBuild_CopyOutPreviousBuild` |  |  |
 | `1800e2990` | `HammerBuild_SteamAudioWidget` |  |  |
 
+## hammer.dll, build 20261029
+
+- file: `hammer.dll`, 39,611,544 bytes, PE time 2026-10-28 15:42 UTC
+- SHA-256 `0102b4af254fb0c06f391b51441f2e70dee077bffc0eb6d26ce27166c0599f5b`
+- installed: this build
+- 4 addresses
+
+### s2c:containers/compile-map
+
+| address | name | what | cited in |
+|---|---|---|---|
+| `180128660` | `ConCommand_hammer_force_autosave` | times 181497970(autosave manager +0x98, force = 1) |  |
+| `181496bd0` | `HammerAutosave_FilesToRecover` | records ([this]+0x10, 16 bytes: path, +8 handled, +9 has autosave) with +8 clear and +9 set |  |
+| `181497970` | `HammerAutosave_Run` | (this, force): each open document ([this]+0x60, count +0x58): vfunc +0x80 (needs an autosave) unless force; always skipped when byte +0x11 is set; vfunc +0x90 (doc, path, autosave path, 1, force) writes; marks the file's record +9; prunes the folder to the size limit |  |
+| `181497d40` | `HammerAutosave_RecoveryPrompt` | "Recover Files?" QMessageBox Yes\|No (IAT 18169bfb0, called at 181497e74) when 181496bd0 lists files or the pending list ([this]+0x28, count +0x20) is not empty; Yes reloads (1814982c0), No marks the records handled (+8 = 1, +9 = 0) and empties the pending list, deleting nothing |  |
+
 ## materialsystem2.dll, build 20261001
 
 - file: `materialsystem2.dll`, 1,428,632 bytes, PE time 2026-10-23 21:51 UTC

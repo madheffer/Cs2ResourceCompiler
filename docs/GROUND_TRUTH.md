@@ -4669,6 +4669,23 @@ game can answer is raised with the user first, and runs with -insecure.
        the first's value, overridden by that placement (MapDecompiler.PlanVariables); MapDecompilerTests s2c_varprobe
        exact. A top-level bound key is indistinguishable from a plain one and comes back plain.
 
+188. **A subdivided face's lightmap texcoords do not show its lightmapScaleBias; a flat face's do** (2026-10-30,
+     research/vmap-decompile: resourcecompiler 1.41.9.3 lit builds, CS2 and Steam closed).
+     - Measured: ze_hold_em_p lit (`compile_fresh.py --full`): every tessellated triangle of node 409 (4480 slab, 570
+       hr_conc_i_tintdark, 15 concrete_9) reads log2(lightmap texcoord area / world area) -29.2 or -29.1, the flat
+       world faces -20.8 (`DECOMPILE_LMDENSITY`).
+     - Measured: s2c_zebias1 (ze_hold_em_p.vmap through dmxconvert's keyvalues2 round trip, unchanged; the round trip
+       alone upgrades vmap 37 -> 40 and changes the end_breakable_475-481 models, so it is the control) against
+       s2c_zebias0 (the same with node 409's 63 faces all at bias 0, 13 were 0 and 50 were 1; `bias_zero_map.py`),
+       both lit: the tessellated triangles read the same -29.2/-29.1 in both; 4 flat hr_conc triangles read -18.8 in
+       the control and -20.8 at bias 0, one bias step (x4 in area, as s2c_biasprobe4). The bias also changes the four
+       lightmap textures and lightmap_query_data.kv3, world_physics.vmdl_c, world_visibility.vvis_c, world.vwrld_c,
+       n0.vwnod_c, the concrete_9 / slabs / hr_conc / light housing aggregates (hr_conc 19 draws against 18, the
+       other draw splits equal) and 3 bytes of default_ents.
+     - So a decompile reads a flat face's bias as density steps (log2 area density = c + 2*bias, c per map), but a
+       subdivided face's bias only through what it changes elsewhere (the physics pieces, the render aggregates).
+       Why the tessellated texcoords collapse to one density is not read from a decompile (observed only).
+
 ## Resolved
 
 - **Prop bone overrides** (ledger 45, settled 2026-10-08 by decompile).
