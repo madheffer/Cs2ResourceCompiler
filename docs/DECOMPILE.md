@@ -5,8 +5,8 @@ in Hammer, fix, and compile again, as close as possible to what the author saved
 author has left CS2, fixing a map after a CS2 update breaks it, and a large supply of real maps for
 testing our compiler (decompile, compile with ours, compare with the shipped package).
 
-This file is the 2026-10-28 measurement of VRF's decompiler (`MapExtract`) against maps whose
-Hammer source we have, and what is missing for the goal above. Branch `research/vmap-decompile`.
+This file started as the 2026-10-28 measurement of VRF's decompiler (`MapExtract`) and is now the
+record of our own decompiler. Start at "Status and what is left" below. Branch `research/vmap-decompile`.
 
 ## Progress tracker
 
@@ -20,6 +20,115 @@ is checked: the decompiled map compiled by our compiler or Valve's resourcecompi
 Valve's compile of the true Hammer source. To update: edit the rows in
 `tools/map-survey/decompile_progress.json`, upload the file to the page as an asset, and point the
 page's `subtasks` source at the new upload with `updated` set.
+
+## Status and what is left (2026-10-30)
+
+This is the entry point. The sections after it are the dated working notes behind each line here.
+Branch `research/vmap-decompile` (worktree `D:\_cursor projects\source2-compiler-wt-decompile`),
+nothing pushed. Tracker **67.9%** (72.6 of 107 weighted points).
+
+### How to run it
+
+```
+s2c decompile-map <maps/<map>.vpk> -o <out.vmap> [--cs2 <CS2 dir>] [--content <addon content dir>]
+s2c decompile-scripts <addon _dir.vpk | .vjs_c ...> --content <addon content dir>
+```
+
+decompile-map writes the .vmap, every prefab map it rebuilt (under `--content`), its notes (what was
+left out and why) and the levels and scripts the map links to. By default it writes entities, brush
+entities, prefabs, instances, paths and cables. World geometry is behind switches because it is not
+finished: `DECOMPILE_WORLD_MESHES=1` (world meshes from the physics soups, and prop_statics from the
+world's hulls) and `DECOMPILE_WORLD_SEARCH=1` (the world triangle order, CP-SAT;
+`DECOMPILE_SEARCH_SECONDS` caps it, default 1800).
+
+How it is checked: `MapDecompilerTests` (about 3 minutes at Idle on 4 cores with CS2 open):
+- `Entities_CompileAsTheSourceDoes`: our lump author on the decompile must equal it on the true
+  Hammer source, on 20 maps;
+- `BrushPhysics_CompilesAsTheSourceDoes`: each brush model's PHYS through our forward against Valve's;
+- `Scripts_KeepTheirSource`: every workshop .vjs_c gives back its source.
+
+Last run (10-30): 33 passed, 2 failed, both known (s2c_prefabprobe3's falling prop,
+s2c_prefabprobe2's carousel_door01 hull). Ground truth is always a map authored in Hammer and
+compiled by Valve's resourcecompiler, never VRF or our compiler's output.
+
+### Done
+
+| Module | % | What works, and on what |
+|---|---|---|
+| Map file | 52 | Binary DMX writer (Hammer saves round trip as graphs); vmap 40 element shapes measured from Hammer saves; root and world element defaults read from hammer.dll |
+| Entities | 98 | BuildEntity inverted (key tables, compile-added keys removed, outputs, `[PR#]` fixup), point templates and their removed members (placement an exact solve), world layers, walk numbering with placeholders, settled props (pose + Start asleep), ropes (CMapPath, nodes and tangents solved), cables (CMapCable; collision cables' settings exact through their physics mesh). **19 of 20 test maps exact**: probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, atixref, s2c_prefabprobe 1/2/4/5/6/7/8/9/11/12, pinst, pinst7, instnest, prefabinst, cablecoll, cablerender |
+| Brush entities | 66 | Hulls as convex meshes, materials from the tool material hash, hull order (PartOrder qsort inverted), corners and hull vertex order as exact solves through the forward's one-mesh chain: **451 of 455 brush models' PHYS exact** |
+| Prefabs | 76 | CMapPrefab nodes and prefab maps, name fixup, one map placed many times (FrameSolver, families nested in families), prefab file names from RED2 when one map is unambiguous |
+| Instances | 99 | Copies in prefab maps and in the map itself, copy ids through the block allocation, several collapses of one template across rounds and nesting, each later placement an exact solve (atixref's 199 copies) |
+| World geometry | 32 | probe01: world physics byte-exact from the decompile (soup vertices exact; triangle order solved as one CP-SAT model, C# in `Source2.Compiler.Solvers`, about 18 minutes). ze_hold_em_p: 86 prop_statics rebuilt from all 129 world hulls, every hull exact; every soup triangle gets its real material (split-stream render draws read) |
+| Other map data | 50 | Scripts: a .vjs_c keeps its .js byte for byte (227 of 227 workshop scripts, by the CRC RED2 records); skybox_reference, info_spawngroup_load_unload and point_script links round trip and are listed |
+| Verification | 55 | Entity round trip, brush physics round trip, Valve's resourcecompiler on 5 decompiles (every entity under Valve's id; found the hollow-node rule, ledger 182) |
+
+Decisions the user made on the way: brush entities whose model the source compile failed stay out
+(10-29); seeds and nondeterministic outputs that do not affect the map are out of scope (10-28);
+our own decompiler, not VRF's MapExtract (10-28).
+
+### What is left
+
+Ordered roughly by what unblocks most. **[closed]** means it needs CS2 and Steam closed
+(resourcecompiler, Hammer, Frida). Everything else can run with CS2 open, as decompiles, ports and
+Idle offline tests.
+
+World geometry (the largest gap, 32%):
+1. **[closed] Lightmap scale bias per face.** ze_hold_em_p's remaining world physics differences
+   (mesh pieces 9 vs 14, surface order wet/concrete_block, m_Materials, the soup's name) all come
+   from source node 409, a subdivided, painted blend mesh. Its pieces are (lightmapScaleBias,
+   material) groups split by paint layer, so a flat mesh with per-face bias and per-vertex paint
+   would do, but each face's bias is not readable from the fixture build. Compile
+   `content/csgo_addons/s2c_rc_probe/maps/s2c_biasprobe.vmap` lit with Valve's RC, then read the
+   lightmap density per bias (`DECOMPILE_LMDENSITY`) and node 134's pieces (`WORLDPHYS_PIECES`).
+   Recipe in the Handoff below.
+2. **The source's mesh split** (RED2 physics_shape_count 16 vs 4 on probe01): the physics cannot
+   decide it; it waits on the render-mesh port (render aggregates merge and re-split meshes).
+3. **Render meshes**: texture alignment (UV projection back to Hammer's face axes and scale),
+   render-only faces, lightmap settings. Shared with brush entities' render meshes (0%).
+4. **The soup triangle order on large maps**: the CP-SAT model solves probe01; ze_hold_em_p's
+   world is one connected piece of 4548 triangles and has not been run end to end.
+5. prop_statics without physics (render-only), scaled or deformed props, props whose model has
+   spheres, capsules or meshes, and their keys (40% so far).
+6. Not started: overlays and decals, smart props and clutter, deformers (path, lattice, simple).
+
+Brush entities:
+7. Render meshes (above) and triangle-mesh physics shapes (0%).
+8. The 4 hulls left: one corner and one vertex order on ze_doom (search budget), two in
+   s2c_prefabprobe2's prefab (placement not modelled by the one-mesh chain).
+
+Map file:
+9. **[closed] Hammer open and re-save check**: `cs2.exe -tools -insecure -addon s2c_rc_probe
+   -netconport 29000 -novid`, `open_asset maps/s2c_dec_s2c_pinst7.vmap`, `hammer_force_autosave`,
+   then diff the autosave against ours. Not run yet.
+10. Element defaults for node placement, flags and class fields (declared in Hammer's tool
+    attribute tables). Needs the Ghidra/ReVa connection, which can run with CS2 open.
+
+Prefabs and entities:
+11. **[closed] Prefabs loaded at runtime** (`loadAtRuntime`, their own .vpk): no map on hand uses
+    it; needs a probe compiled by RC.
+12. Prefab file names when several prefab maps are placed (the package does not pair files with
+    placements; 60%).
+13. Render-only cables' texture settings, and cable_static (in the world). A render-only cable's
+    radius is only as exact as its render mesh.
+14. s2c_prefabprobe3's prop that is still falling when Valve's settle ends: not invertible from the
+    package; it stays a note.
+
+Other map data:
+15. **[closed] Map variables**: every source has a CMapVariableSet, but none of the 232 on this
+    machine fills one. Needs a probe map with variables compiled by RC to see where they land.
+16. Nav settings (CMapNavData): first find whether and where the .nav keeps the settings it was
+    built with (NAV.md has no record of it). Nav markup entities already round trip.
+17. TypeScript sources (PanoramaTypescript): read the same way, but no example checks it.
+
+Verification:
+18. A whole-package parity report per map: decompile, compile the decompile, compare every file
+    of the package with Valve's (the ParityReport the compiler already has).
+19. A workshop corpus sweep: decompile every subscribed map and count what fails or is left out.
+
+After each milestone: update `tools/map-survey/decompile_progress.json`, upload it as an asset of the
+tracker page and point `datasets/subtasks` at it (Progress tracker above), then update this section.
 
 ## How it was measured
 
@@ -927,24 +1036,28 @@ its members), each compiled -world and full.
 
 ## Plan
 
-1. Done: `s2c decompile-map`, our own vmap 40 writer.
-2. Done for point entities, world layers, templates, prefabs, instances (multi-copy and nested),
-   paths and settled props (stages 1 and 3 above); left: cables, shared prefab families, turned
-   prefabs with instances.
-3. Brush entities from their entity models: hulls done (stage 2); left the hull vertex order,
-   render meshes (UVs, render-only faces) and triangle-mesh shapes.
-4. World meshes from the world node, split by whatever per-source-mesh identity the compile
-   keeps, not by connectivity. Which ids survive (draw call / fragment indices, node ids) is not
-   known yet: settle it from the decompile of the world builder before writing this step.
-5. Recover what can be recovered of Hammer-only nodes: cables from the lump's cable entities and
-   their render models, prop_static baked to world from the world node, prefabs from the
-   hammeruniqueid id path. VRF reads `a:b:c` as instance nesting; our port of the writer
-   (`MapEntities.Entity.IdPath`, NodeIdPath_Format) says it is the CMapPrefab node ids, then the
-   node's own. Instances leave no id path: their copies are new entities.
-6. A round-trip test per map: decompile, compile with ours, `map-diff` against the shipped
-   package; the parity matrix's maps first, then the workshop corpus.
+The original plan (2026-10-28), with where each step stands. The live list is "What is left" in
+"Status and what is left" at the top.
 
-## Handoff (2026-10-29)
+1. `s2c decompile-map`, our own vmap 40 writer: done.
+2. Point entities, world layers, templates, prefabs, instances, paths, settled props, cables: done
+   (19 of 20 maps exact).
+3. Brush entities from their entity models: hulls done (451 of 455 exact); render meshes and
+   triangle-mesh shapes left.
+4. World meshes from the world node: no per-source-mesh identity survives the compile, so the target
+   is meshes that compile to the same output. probe01's world physics is exact; ze needs each face's
+   lightmap scale bias; the mesh split waits on render meshes.
+5. Hammer-only nodes: cables done, prop_statics from the world's hulls done on ze, prefabs from the
+   id path done.
+6. A round trip per map with ours and Valve's compiler: entities and brush physics done, RC on 5
+   decompiles done; whole-package parity and the workshop sweep left.
+
+## Handoff (2026-10-29, with the 10-30 additions)
+
+Superseded as a to-do list by "Status and what is left" at the top; kept for the run recipes and
+the per-map detail. 10-30 added: the world triangle order as a CP-SAT model and its C# port,
+prop_statics from the world's hulls, world face materials from split-stream draws, node 409's
+analysis and the bias probe map, scripts and map links (sections above).
 
 Branch research/vmap-decompile, worktree `D:\_cursor projects\source2-compiler-wt-decompile`,
 nothing pushed. Tracker 59.7% (22 of 44 subtasks done, most others partly).
