@@ -249,9 +249,15 @@ public sealed class VmapBuilder
     /// compile's hull builder reads them in); the rest follow by first use.</param>
     /// <param name="cornerTexcoords">Each face's corners' texture coordinates, corner for corner, where
     /// they are known (the world's render meshes); the world alignment's otherwise.</param>
+    /// <param name="cornerNormals">Each face's corners' normals where known (a brush entity's render
+    /// mesh); the face's own normal otherwise.</param>
+    /// <param name="cornerTints">Each face's corners' VertexPaintTintColor where known; given for any
+    /// face, the mesh gets the stream (white where not given), as Hammer writes it after a paint.</param>
     public DmxBinary.Element AddMesh(DmxBinary.Element parent, int nodeId, Vector3 origin, Vector3 angles,
                                      IReadOnlyList<(Vector3[] Corners, int Material)> faces, IReadOnlyList<string> materials,
-                                     IReadOnlyList<Vector3>? vertexOrder = null, IReadOnlyList<Vector2[]?>? cornerTexcoords = null)
+                                     IReadOnlyList<Vector3>? vertexOrder = null, IReadOnlyList<Vector2[]?>? cornerTexcoords = null,
+                                     IReadOnlyList<Vector3[]?>? cornerNormals = null, IReadOnlyList<Vector4[]?>? cornerTints = null,
+                                     string physicsType = "default")
     {
         // Vertices welded by exact position, in the order given, then first-use order.
         var vertexOf = new Dictionary<Vector3, int>();
@@ -311,7 +317,7 @@ public sealed class VmapBuilder
         var normals = faces.Select(f => Vector3.Normalize(Newell(f.Corners))).ToArray();
         var axes = normals.Select(WorldAxes).ToArray();
         var texcoords = new object?[to.Count];
-        var cornerNormals = new object?[to.Count];
+        var normalData = new object?[to.Count];
         var tangents = new object?[to.Count];
         for (var e = 0; e < to.Count; e++)
         {
@@ -319,7 +325,7 @@ public sealed class VmapBuilder
             var (u, v) = axes[f];
             var p = positions[to[e]];
             texcoords[e] = new Vector2(Vector3.Dot(p, u) / (TextureScale * 512f), Vector3.Dot(p, v) / (TextureScale * 512f));
-            cornerNormals[e] = normals[f];
+            normalData[e] = normals[f];
             var sign = Vector3.Dot(Vector3.Cross(normals[f], u), v) < 0 ? -1f : 1f;
             tangents[e] = new Vector4(u, sign);
         }
@@ -327,8 +333,30 @@ public sealed class VmapBuilder
             if (f < cornerTexcoords.Count && cornerTexcoords[f] is { } uv)
                 for (var i = 0; i < cornerEdges[f].Length && i < uv.Length; i++)
                     texcoords[cornerEdges[f][i]] = uv[i];
+        for (var f = 0; f < loops.Count && cornerNormals is not null; f++)
+            if (f < cornerNormals.Count && cornerNormals[f] is { } n)
+                for (var i = 0; i < cornerEdges[f].Length && i < n.Length; i++)
+                    normalData[cornerEdges[f][i]] = n[i];
+        object?[]? tints = null;
+        if (cornerTints?.Any(t => t is not null) == true)
+        {
+            tints = Enumerable.Repeat((object?)Vector4.One, to.Count).ToArray();
+            for (var f = 0; f < loops.Count && f < cornerTints.Count; f++)
+                if (cornerTints[f] is { } t)
+                    for (var i = 0; i < cornerEdges[f].Length && i < t.Length; i++)
+                        tints[cornerEdges[f][i]] = t[i];
+        }
 
         static object?[] Ints(IEnumerable<int> xs) => xs.Select(x => (object?)x).ToArray();
+        var cornerStreams = new List<DmxBinary.Element>
+        {
+            Stream("texcoord", 1, T.Vector2, texcoords),
+            Stream("normal", 1, T.Vector3, normalData),
+            Stream("tangent", 1, T.Vector4, tangents),
+        };
+        // Hammer's paint stream: no standard attribute, in the second vertex buffer (ze_hold_em_p's breakables).
+        if (tints is not null)
+            cornerStreams.Add(Stream("VertexPaintTintColor", 1, T.Vector4, tints, standard: "", bufferLocation: 1));
         var data = New("CDmePolygonMesh", "meshData")
             .Set("vertexEdgeIndices", T.Array(T.Int), Ints(vertexEdge))
             .Set("vertexDataIndices", T.Array(T.Int), Ints(Enumerable.Range(0, positions.Count)))
@@ -343,10 +371,7 @@ public sealed class VmapBuilder
             .Set("materials", T.Array(T.String), materials.Cast<object?>().ToArray())
             .Set("vertexData", T.Element, DataArray(positions.Count,
                 Stream("position", 3, T.Vector3, positions.Cast<object?>().ToArray())))
-            .Set("faceVertexData", T.Element, DataArray(to.Count,
-                Stream("texcoord", 1, T.Vector2, texcoords),
-                Stream("normal", 1, T.Vector3, cornerNormals),
-                Stream("tangent", 1, T.Vector4, tangents)))
+            .Set("faceVertexData", T.Element, DataArray(to.Count, [.. cornerStreams]))
             .Set("edgeData", T.Element, DataArray(to.Count / 2,
                 Stream("flags", 3, T.Int, Ints(new int[to.Count / 2]))))
             .Set("faceData", T.Element, DataArray(loops.Count,
@@ -380,7 +405,7 @@ public sealed class VmapBuilder
             .Set("smoothingAngle", T.Float, 40f)
             .Set("tintColor", T.Color, new byte[] { 255, 255, 255, 255 })
             .Set("renderAmt", T.Int, 255)
-            .Set("physicsType", T.String, "default")
+            .Set("physicsType", T.String, physicsType)
             .Set("physicsGroup", T.String, "")
             .Set("physicsInteractsAs", T.String, "")
             .Set("physicsInteractsWith", T.String, "")
@@ -423,12 +448,12 @@ public sealed class VmapBuilder
     /// <summary>A data stream as Hammer writes a standard one: the element named
     /// "&lt;name&gt;:&lt;semantic index&gt;", which is how readers find it (MapMeshes.Stream); name,
     /// semantic and state flags as probe_classes' meshes hold them.</summary>
-    private DmxBinary.Element Stream(string name, int stateFlags, byte scalar, object?[] data)
+    private DmxBinary.Element Stream(string name, int stateFlags, byte scalar, object?[] data, string? standard = null, int bufferLocation = 0)
         => New("CDmePolygonMeshDataStream", name + ":0")
-            .Set("standardAttributeName", T.String, name)
+            .Set("standardAttributeName", T.String, standard ?? name)
             .Set("semanticName", T.String, name)
             .Set("semanticIndex", T.Int, 0)
-            .Set("vertexBufferLocation", T.Int, 0)
+            .Set("vertexBufferLocation", T.Int, bufferLocation)
             .Set("dataStateFlags", T.Int, stateFlags)
             .Set("subdivisionBinding", T.Element, null)
             .Set("data", T.Array(scalar), data);

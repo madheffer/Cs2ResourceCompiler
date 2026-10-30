@@ -122,8 +122,8 @@
   "module": "Brush entities",
   "subtask": "Render meshes: texture alignment and visible-only faces",
   "weight": 4,
-  "done": 0,
-  "evidence": "not started"
+  "done": 0.75,
+  "evidence": "10-31: brush entity render models through our forward on the decompile = Valve's file on 117 of 119 (MapDecompilerTests.BrushRender_CompilesAsTheSourceDoes: ze_hold_em_p 8/8, probe_classes 52/52, atixref 57/58; prefabprobe2's one inside a prefab not read). Each Hammer mesh rebuilt from its render pieces (hammer_mesh_<k><n> names) and hulls: drawn triangles + nodraw faces closing the convex hull; flat parts' pushed hulls; physics-none meshes; texcoords/normals/tints chosen to pack to the shipped bits, SNORM texcoords fitted to m_flUvDensity. Left: Hammer texture axes/scale (editor only), drawn faces stay triangles, valdina_button's face order (draw filter fails on its true source mesh too)"
  },
  {
   "module": "Brush entities",

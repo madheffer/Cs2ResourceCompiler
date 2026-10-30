@@ -21,11 +21,12 @@ Valve's compile of the true Hammer source. To update: edit the rows in
 `tools/map-survey/decompile_progress.json`, upload the file to the page as an asset, and point the
 page's `subtasks` source at the new upload with `updated` set.
 
-## Status and what is left (2026-10-30, night)
+## Status and what is left (2026-10-31)
 
 This is the entry point. The sections after it are the dated working notes behind each line here.
 Branch `research/vmap-decompile` (worktree `D:\_cursor projects\source2-compiler-wt-decompile`),
-nothing pushed (last commit 90b1e9b). Tracker **70.5%** (75.5 of 107 weighted points).
+nothing pushed. Tracker **73.3%** (78.45 of 107 weighted points; 10-31: brush entity render meshes,
+"Brush entity render meshes" below).
 
 ### Start here (next agent)
 
@@ -62,9 +63,11 @@ How it is checked: `MapDecompilerTests` (about 3 minutes at Idle on 4 cores with
 - `Entities_CompileAsTheSourceDoes`: our lump author on the decompile must equal it on the true
   Hammer source, on 20 maps;
 - `BrushPhysics_CompilesAsTheSourceDoes`: each brush model's PHYS through our forward against Valve's;
-- `Scripts_KeepTheirSource`: every workshop .vjs_c gives back its source.
+- `Scripts_KeepTheirSource`: every workshop .vjs_c gives back its source;
+- `BrushRender_CompilesAsTheSourceDoes`: each brush entity render model (buffers, MDAT and the rest)
+  through our forward on the decompile against it on the true source, file for file.
 
-Last run (10-30): 33 passed, 2 failed, both known (s2c_prefabprobe3's falling prop,
+Last run (10-31): 38 passed, 2 failed, both known (s2c_prefabprobe3's falling prop,
 s2c_prefabprobe2's carousel_door01 hull). Ground truth is always a map authored in Hammer and
 compiled by Valve's resourcecompiler, never VRF or our compiler's output.
 
@@ -74,7 +77,7 @@ compiled by Valve's resourcecompiler, never VRF or our compiler's output.
 |---|---|---|
 | Map file | 55 | Binary DMX writer (Hammer saves round trip as graphs); vmap 40 element shapes measured from Hammer saves; root and world element defaults read from hammer.dll; Hammer's own save of a decompile, run headless from cubehost (`hammer_autosave.py`), compiles to the same entities (pinst7, s2c_varprobe) |
 | Entities | 98 | BuildEntity inverted (key tables, compile-added keys removed, outputs, `[PR#]` fixup), point templates and their removed members (placement an exact solve), world layers, walk numbering with placeholders, settled props (pose + Start asleep), ropes (CMapPath, nodes and tangents solved), cables (CMapCable; collision cables' settings exact through their physics mesh). **19 of 20 test maps exact**: probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, atixref, s2c_prefabprobe 1/2/4/5/6/7/8/9/11/12, pinst, pinst7, instnest, prefabinst, cablecoll, cablerender |
-| Brush entities | 66 | Hulls as convex meshes, materials from the tool material hash, hull order (PartOrder qsort inverted), corners and hull vertex order as exact solves through the forward's one-mesh chain: **451 of 455 brush models' PHYS exact** |
+| Brush entities | 82 | Hulls as convex meshes, materials from the tool material hash, hull order (PartOrder qsort inverted), corners and hull vertex order as exact solves through the forward's one-mesh chain: **451 of 455 brush models' PHYS exact**. Render meshes (10-31): each Hammer mesh rebuilt whole from its render pieces and hulls, texcoords, normals and tints chosen to pack to the shipped bits: **117 of 119 render models exact** through our forward (= Valve's file) |
 | Prefabs | 76 | CMapPrefab nodes and prefab maps, name fixup, one map placed many times (FrameSolver, families nested in families), prefab file names from RED2 when one map is unambiguous |
 | Instances | 99 | Copies in prefab maps and in the map itself, copy ids through the block allocation, several collapses of one template across rounds and nesting, each later placement an exact solve (atixref's 199 copies) |
 | World geometry | 32 | probe01: world physics byte-exact from the decompile (soup vertices exact; triangle order solved as one CP-SAT model, C# in `Source2.Compiler.Solvers`, about 18 minutes). ze_hold_em_p: 86 prop_statics rebuilt from all 129 world hulls, every hull exact; every soup triangle gets its real material (split-stream render draws read) |
@@ -107,8 +110,10 @@ World geometry (the largest gap, 32%):
    `.vrad3` folder. Checked through `WORLDPHYS_PIECES`.
 2. **The source's mesh split** (RED2 physics_shape_count 16 vs 4 on probe01): the physics cannot
    decide it; it waits on the render-mesh port (render aggregates merge and re-split meshes).
-3. **Render meshes**: texture alignment (UV projection back to Hammer's face axes and scale),
-   render-only faces, lightmap settings. Shared with brush entities' render meshes (0%).
+3. **Render meshes** of the world: corner texcoords and normals as the brush entities' now are
+   (aggregates merge and re-split meshes, so the per-mesh pieces have to be found first), render-only
+   faces, lightmap settings. Hammer's texture axes and scale are left at the world alignment for the
+   brush entities too (the compile reads only the corners' texcoords).
 4. **The soup triangle order on large maps**: the CP-SAT model solves probe01; ze_hold_em_p's
    world is one connected piece of 4548 triangles and has not been run end to end.
 5. prop_statics without physics (render-only), scaled or deformed props, props whose model has
@@ -116,7 +121,11 @@ World geometry (the largest gap, 32%):
 6. Not started: overlays and decals, smart props and clutter, deformers (path, lattice, simple).
 
 Brush entities:
-7. Render meshes (above) and triangle-mesh physics shapes (0%).
+7. **Render meshes: done 10-31** for 117 of 119 models ("Brush entity render meshes" below). Left:
+   atixref's valdina_button (the draw filter fails on its true source mesh too: find the forward step
+   it misses, `ENTFILTER=s2c_rc_probe|atixref|123`), render meshes inside prefabs and copies (the
+   forward moves them by the placement), drawn faces back as polygons (they stay triangles), Hammer's
+   texture axes. Triangle-mesh physics shapes (0%).
 8. The 4 hulls left: one corner and one vertex order on ze_doom (search budget), two in
    s2c_prefabprobe2's prefab (placement not modelled by the one-mesh chain).
 
@@ -393,8 +402,7 @@ What is left in stage 2:
   ze_hold_em_p 32 of 32, probe01 5 of 5, ze_doom_p2_c_gameplay 272 of 274 (teleportrandom2: a corner
   not found; teleportlab_4: the order not found in the budget), s2c_prefabprobe2 21 of 23 (two inside
   its prefab, whose placement the one-mesh chain does not model, so neither check runs there).
-- **Render meshes**: a brush entity with visible faces gets them back from its hulls with world
-  alignment; the render mesh's UVs and render-only faces are not read yet.
+- **Render meshes: done 10-31** for 117 of 119 models, see "Brush entity render meshes (2026-10-31)".
 - Triangle-mesh shapes (physicsType mesh), and brush entities whose model the compile failed.
 
 ## Stage 3: prefabs and instances (2026-10-28, in progress)
@@ -1124,6 +1132,80 @@ folders kept in `%TEMP%/fresh_compile`).
   package.
 - **Nav settings.** Not inverted. The .nav would have to show the CMapNavData settings it was
   built with; NAV.md has no record of the file holding them. Open.
+
+### Brush entity render meshes (2026-10-31, CS2 open)
+
+`Maps/Decompile/BrushRender.cs` and `MapDecompiler.RenderMeshes`. A brush entity model with render
+meshes now comes back mesh for mesh as Hammer drew it, not one mesh per hull. Checked by
+`MapDecompilerTests.BrushRender_CompilesAsTheSourceDoes`: our entity model builder
+(EntityRenderModels.Author, the whole file) on the decompile against it on the true source. Our
+forward on the source is Valve's file on all four maps (EntityRenderProbe.EveryEntityModel, 119 of
+119), so a match is Valve's bytes.
+
+| map | render models | exact |
+|---|---|---|
+| ze_hold_em_p | 8 | 8 |
+| probe_classes | 52 | 52 |
+| atixref | 58 | 57 |
+| s2c_prefabprobe2 | 1 | 0 (inside a prefab, not read) |
+
+Survey first (EntityRenderProbe.RenderSurvey, `ENTSURVEY=<addon>|<map>`): every mesh behind these 119
+models is closed and convex. 66 of ze's are 7 drawn faces round 3 nodraw ones (two hulls that
+overlap), atixref's glass panes are 4 nodraw sides and a glass front and back. Normals are smoothed
+at bevels (the normalised sum of two faces' normals). Texcoords are float, SNORM16 or half.
+
+How a mesh comes back, every step judged by the forward:
+- **Meshes from names.** The forward names a mesh's drawn pieces `hammer_mesh_<k>` (k from 0), a
+  taken name getting the next free number appended (EntityRenderModels.Pieces). Replaying that over
+  the model's mesh names splits them into Hammer meshes: a continuing piece starts with k + 1 > 0,
+  a new mesh with 0 (`BrushRender.MeshesOf`).
+- **Hulls to meshes.** The physics walks the same meshes and pieces, so the drawn hulls (inverse
+  PartOrder, as before) pair with the render pieces in order. Under convex_multi a piece gives one
+  hull per connected part (the panes' front and back). A flat or degenerate part's hull is its points
+  pushed out by the map builder's minimum thickness along +x, +y and +z and hulled again
+  (RnHullBuilder, FUN_180384ab0). Which pushed points survive depends on the order the builder meets
+  them, so such a hull pairs by structure (every vertex a part corner or one moved by 1 along an axis,
+  `BrushRender.PushedFrom`), and the mesh check below is the exact one. A mesh with render pieces and
+  no hull has physics type none (atixref's block_roof_waterm). A nodraw hull joins the mesh next to it
+  in the run that holds its points (ze), or the ends of its open drawn edges (a drawn quad on a nodraw
+  box, ze's end_breakable_240), or lies between two pieces of one mesh (disco_wall_toggle).
+- **Faces.** The drawn faces are the render triangles, each its own face, corners as the index
+  buffer lists them. The nodraw faces close them: every plane the mesh's points all lie behind
+  that no drawn triangle covers becomes a face of every point on it (collinear ones kept, as the
+  source's nodraw faces hold them), with the material of the nodraw hull holding most of them. A
+  pushed nodraw hull counts only the drawn corners it was pushed from. Faces that do not close, or a
+  mesh whose hulls through the forward's one-mesh chain (BrushMeshHulls) are not the shipped ones bit
+  for bit, fall back to one mesh per hull with a note.
+- **Corner values** are chosen so the forward's packing gives the shipped bits back. Texcoords go
+  through the DMX round trip (v is 1 - (1 - v)) and the format's packing (float, SNORM16 truncated,
+  half): the shipped value where it survives, else for SNORM the coarsest binary fraction in the cell.
+  Normals: the face's own, else the normalised sum of it with a subset of the faces round the corner,
+  else the octahedral bits decoded (TangentFrame); the tangent bits follow in the forward. Tints come
+  from RGBA8 as byte / 255, stepped up where that truncates low. The faces that draw nothing get
+  texcoords that keep the mesh's high-precision flag as shipped (±1.75 when the drawn ones do not
+  pass ±1.03125 and the draw is float, else 0.5).
+- **UV density.** A packed draw's `m_flUvDensity` comes from the float texcoords before packing
+  (UvDensity: the 20th-percentile triangle's sqrt(world area / uv area)). So the SNORM floats are
+  moved within their cells until it is the shipped float (`BrushRender.FitDensity`). The moves are
+  one value per (axis, packed bits), as a projected mapping shares them, by cell scans, bisection and
+  pairs. A SNORM draw stays within [-1, 1] (past it the forward packs halves), and the packed frames
+  must stay the shipped ones where they already were. atixref's block_roof_waterm needed it: the
+  source's v 0.3735212 and 0.5051669 against the coarse 0.37351 and 0.50515.
+- **Order.** Fed back in the shipped order, the draw passes (weld, meshopt vertex cache and overdraw,
+  first-use order) give the shipped order again on 117 of the 119. Where only a hull's vertex order
+  differs, the piece's faces are searched: for a drawn piece every order of its faces, each face's
+  triangles either way round, through a draw filter that replicates EntityRenderModels.Entry
+  (`RenderOrderHolds`), then the hull.
+
+Not recovered: Hammer's texture axes and scale (the compile reads only the corners' texcoords; the
+axes stay the world alignment, so Hammer's texture tools start from that), drawn faces back as
+polygons (they stay triangles), smoothing edge flags. Left: atixref's valdina_button_1_123, a
+woodfloor box whose hull comes back in another vertex order and whose shipped order is not a fixed
+point of the draw passes. No face order of 46,080 draws even its positions as shipped, and the filter
+fails on the true source mesh too (`EntityRenderProbe.RenderFilterOnTheSource`,
+`ENTFILTER=s2c_rc_probe|atixref|123`), so the filter misses a forward step for this mesh. Find that
+step first. Render meshes inside prefabs and copies are not read (the forward moves them by the
+placement, which the one-mesh chain does not model). Debug notes: `DECOMPILE_RENDER_DEBUG=1`.
 
 ## Ground truth for the decompiler
 

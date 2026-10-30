@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
 using Source2.Compiler;
@@ -589,6 +589,146 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         var unexplained = differing.Where(d => !KnownHullMisses.Any(k => d.StartsWith(k, StringComparison.Ordinal))).ToList();
         Assert.True(unexplained.Count == 0, $"{unexplained.Count} model(s) differ: {unexplained.FirstOrDefault()}");
     }
+
+    /// <summary>
+    /// The brush entities' render meshes, through the forward compile: our entity model builder with
+    /// render meshes (EntityRenderModels.Author: buffers, MDAT, PHYS, CTRL, RERL, RED2, DATA) run on the
+    /// decompile and on the true source, file against file for every model that draws. Our forward on
+    /// the source equals Valve's file on all four maps (EntityRenderProbe.EveryEntityModel: 119 of 119),
+    /// so a match here is Valve's bytes. A model either matches whole or is listed with the first block
+    /// that differs.
+    /// </summary>
+    [Theory]
+    [InlineData("s2c_rc_probe", "ze_hold_em_p")]
+    [InlineData("s2c_rc_probe", "probe_classes")]
+    [InlineData("s2c_rc_probe", "atixref")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe2")]
+    public void BrushRender_CompilesAsTheSourceDoes(string addon, string map)
+    {
+        var source = MapFixtures.VmapSource(addon, map);
+        var cs2 = CS2Fixtures.StockPak();
+        var package = source is null ? null : Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source)!, "..", "..", "..", "..",
+                                                                            "game", "csgo_addons", addon, "maps", map + ".vpk"));
+        if (source is null || cs2 is null || !File.Exists(package)) { MapFixtures.Skip($"the {addon}/{map} source and package"); return; }
+        var schema = MapFixtures.GameSchema();
+        var game = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(cs2)!, ".."));
+        using var content = new Maps.GameContent(cs2, Path.Combine(game, "csgo_addons", addon));
+
+        var result = MapDecompiler.Decompile(MapDecompiler.ReadPackage(package), map, schema, StockMaterials());
+        var decompiled = Maps.MapNodeAngles.Apply(DmxBinary.Read(result.Vmap));
+        Maps.MapPrefabs.Attach(decompiled, PrefabLoader(result));
+        Maps.MapDeformers.Apply(decompiled, schema);
+        var truth = DmxBinary.ReadFile(source);
+        Maps.MapPrefabs.Attach(truth, Maps.MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!));
+        Maps.MapDeformers.Apply(truth, schema);
+
+        Dictionary<string, Physics.EntityPhysicsModels.Model> Models(DmxBinary.Document d)
+            => Physics.EntityPhysicsModels.Build(d, map, content.Material, content.CollisionProperty, schema, [], content.SmartProp)
+                      .Where(m => !m.PhysicsOnly)
+                      .GroupBy(m => m.Path, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var expected = Models(truth);
+        var ours = Models(decompiled);
+        static List<(string Type, byte[] Bytes)> Blocks(byte[] file)
+        {
+            using var r = new ValveResourceFormat.Resource();
+            r.Read(new MemoryStream(file));
+            return [.. r.Blocks.Select(b =>
+            {
+                r.Reader.BaseStream.Position = b.Offset;
+                var bytes = new byte[b.Size];
+                r.Reader.BaseStream.ReadExactly(bytes);
+                return (b.Type.ToString(), bytes);
+            })];
+        }
+        int exact = 0;
+        var differing = new List<string>();
+        var firstBlock = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (path, model) in expected.OrderBy(m => m.Key, StringComparer.Ordinal))
+        {
+            if (!ours.TryGetValue(path, out var mine))
+            {
+                differing.Add($"{path} ({model.ClassName}): no render model from the decompile");
+                firstBlock["missing"] = firstBlock.GetValueOrDefault("missing") + 1;
+                continue;
+            }
+            var a = Maps.EntityRenderModels.Author(model, content);
+            var b = Maps.EntityRenderModels.Author(mine, content);
+            if (a.AsSpan().SequenceEqual(b))
+            {
+                exact++;
+                continue;
+            }
+            var (ba, bb) = (Blocks(a), Blocks(b));
+            var at = Enumerable.Range(0, Math.Min(ba.Count, bb.Count)).FirstOrDefault(i => ba[i].Type != bb[i].Type || !ba[i].Bytes.AsSpan().SequenceEqual(bb[i].Bytes), -1);
+            var what = ba.Count != bb.Count ? $"blocks {ba.Count} vs {bb.Count}" : at < 0 ? "same blocks, other layout" : $"block {at} {ba[at].Type} ({ba[at].Bytes.Length} vs {bb[at].Bytes.Length} bytes)";
+            var kind = ba.Count != bb.Count ? "block count" : at < 0 ? "layout" : ba[at].Type;
+            firstBlock[kind] = firstBlock.GetValueOrDefault(kind) + 1;
+            // A KV3 block's first differences as trees.
+            static ValveKeyValue.KVObject? Tree(byte[] file, int index)
+            {
+                using var r = new ValveResourceFormat.Resource();
+                r.Read(new MemoryStream(file));
+                return r.Blocks[index] switch
+                {
+                    ValveResourceFormat.ResourceTypes.BinaryKV3 k => k.Data.Root,
+                    ValveResourceFormat.ResourceTypes.KeyValuesOrNTRO k => k.Data,
+                    ValveResourceFormat.Blocks.ResourceEditInfo2 e => e.Data?.Root,
+                    _ => null,
+                };
+            }
+            if (at >= 0 && Tree(a, at) is { } ta && Tree(b, at) is { } tb)
+                what += ": " + string.Join(" | ", KvTreeDiff.Diff(ta, tb).Take(3));
+            // A vertex buffer's differences by field, vertex by vertex in order.
+            if (kind is "MVTX" or "VBIB")
+            {
+                static List<ValveResourceFormat.Blocks.VBIB.OnDiskBufferData> Buffers(byte[] file)
+                {
+                    using var r = new ValveResourceFormat.Resource();
+                    r.Read(new MemoryStream(file));
+                    return [.. ((ValveResourceFormat.ResourceTypes.Model)r.DataBlock!).GetEmbeddedMeshesAndLoD().Select(m => m.Mesh.VBIB.VertexBuffers[0])];
+                }
+                var (va, vb) = (Buffers(a), Buffers(b));
+                for (var i = 0; i < Math.Min(va.Count, vb.Count); i++)
+                {
+                    var (da, db, st) = (va[i].Data, vb[i].Data, (int)va[i].ElementSizeInBytes);
+                    if (da.AsSpan().SequenceEqual(db))
+                        continue;
+                    var fields = va[i].InputLayoutFields;
+                    var byField = Enumerable.Range(0, Math.Min(da.Length, db.Length)).Where(x => da[x] != db[x])
+                        .GroupBy(x => { var f = fields.Last(f => f.Offset <= x % st); return f.SemanticName + f.SemanticIndex; })
+                        .Select(g => $"{g.Key} x{g.Select(x => x / st).Distinct().Count()}");
+                    var first = Enumerable.Range(0, Math.Min(da.Length, db.Length)).FirstOrDefault(x => da[x] != db[x], -1);
+                    what += $"; mesh {i}: {va[i].ElementCount} vs {vb[i].ElementCount} vertices, {string.Join(" ", byField)}"
+                            + (first >= 0 ? $", vertex {first / st}: {Convert.ToHexString(da, first / st * st, st)} vs {Convert.ToHexString(db, first / st * st, st)}" : "");
+                    break;
+                }
+            }
+            differing.Add($"{path} ({model.ClassName}): {what}");
+        }
+        output.WriteLine($"{map}: {expected.Count} render models; {exact} exact, {differing.Count} differ");
+        foreach (var (k, v) in firstBlock)
+            output.WriteLine($"  first differing block {k}: {v}");
+        foreach (var group in result.Notes.Where(n => n.Contains("render", StringComparison.Ordinal)).GroupBy(n => Regex.Replace(n, @"^\S+ \S+: |\([^)]*\)|maps/\S+|\d+", "#").Trim()))
+            output.WriteLine($"  note x{group.Count()}: {group.First()}");
+        foreach (var line in differing.Take(25))
+            output.WriteLine("  DIFFERS " + line);
+        var unexplained = differing.Where(d => !KnownRenderMisses.Any(k => d.StartsWith(k, StringComparison.Ordinal))).ToList();
+        Assert.True(unexplained.Count == 0, $"{unexplained.Count} render model(s) differ: {unexplained.FirstOrDefault()}");
+    }
+
+    /// <summary>Render models the decompile does not give back yet, each with its reason (docs/DECOMPILE.md,
+    /// "Brush entity render meshes").</summary>
+    private static readonly string[] KnownRenderMisses =
+    [
+        // Its box hull comes back with the shipped points in another order, and no order of its faces
+        // searched draws as shipped: the decompiler's draw filter fails on the true source's mesh too
+        // (EntityRenderProbe.RenderFilterOnTheSource, ENTFILTER=s2c_rc_probe|atixref|123), so the
+        // filter misses a step of the forward for this mesh.
+        "maps/atixref/entities/valdina_button_1_123.vmdl",
+        // Inside a prefab: the forward moves the mesh and the entity by the prefab's placement, which
+        // the decompile's one-mesh chain does not (its physics is a known miss too).
+        "maps/s2c_prefabprobe2/entities/combo_moveparent_108_115.vmdl",
+    ];
 
     /// <summary>Models with a corner the fit cannot place exactly (MapDecompiler.CornerFor: no grid value
     /// and no point within the search lands on the hull's vertex), each a few float steps off.</summary>

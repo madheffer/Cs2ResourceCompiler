@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using Source2.Compiler.Maps;
 using ValvePak;
 using ValveResourceFormat;
@@ -309,6 +309,196 @@ public class EntityRenderProbe(ITestOutputHelper output)
                 output.WriteLine($"{m.Path} ({(m.PhysicsOnly ? "physics" : "render")}) differs");
         }
         output.WriteLine($"{map}: render models exact {renderExact} of {render}, physics-only exact {physicsExact} of {physics}, {missing} not in the package");
+    }
+
+    /// <summary>
+    /// <c>ENTSURVEY=&lt;addon&gt;|&lt;map&gt;</c>: for the decompile's render half, each top-level
+    /// brush entity's render model in the shipped package (embedded meshes: name, materials,
+    /// vertex and index counts, vertex layout) beside the source's meshes (faces per material,
+    /// drawn or not, and whether each material's face set is closed and convex).
+    /// </summary>
+    [Fact]
+    public void RenderSurvey()
+    {
+        if (Environment.GetEnvironmentVariable("ENTSURVEY") is not { Length: > 0 } spec || spec.Split('|') is not [var addon, var map])
+            return;
+        var cs2 = Environment.GetEnvironmentVariable("CS2_DIR") ?? @"D:\Steam\steamapps\common\Counter-Strike Global Offensive";
+        var source = MapFixtures.VmapSource(addon, map)!;
+        var doc = DmxBinary.ReadFile(source);
+        using var content = new GameContent(Path.Combine(cs2, "game", "csgo", "pak01_dir.vpk"), Path.Combine(cs2, "game", "csgo_addons", addon));
+        var byId = doc.Elements.Where(e => e.Type == "CMapEntity" && e.GetValue<int>("nodeID") is not null)
+            .GroupBy(e => e.GetValue<int>("nodeID")!.Value).ToDictionary(g => g.Key, g => g.First());
+        using var package = new Package();
+        package.Read(Path.Combine(cs2, "game", "csgo_addons", addon, "maps", map + ".vpk"));
+        var layouts = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var shapes = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach (var entry in package.Entries!.GetValueOrDefault("vmdl_c") ?? [])
+        {
+            if (!entry.DirectoryName.EndsWith("entities", StringComparison.OrdinalIgnoreCase))
+                continue;
+            package.ReadEntry(entry, out var bytes);
+            using var resource = new Resource();
+            resource.Read(new MemoryStream(bytes));
+            if (resource.Blocks.All(b => b.Type != BlockType.MDAT))
+                continue;
+            var name = entry.FileName;
+            var model = (Model)resource.DataBlock!;
+            var ctrl = ((BinaryKV3)resource.GetBlockByType(BlockType.CTRL)!).Data.Root;
+            var meshNames = ctrl["embedded_meshes"]!.Values.Select(m => (string)m["m_Name"]!).ToList();
+            var embedded = model.GetEmbeddedMeshesAndLoD().Select(m => m.Mesh).ToList();
+            var valve = new List<string>();
+            for (var i = 0; i < embedded.Count; i++)
+            {
+                var m = embedded[i];
+                var vb = m.VBIB.VertexBuffers[0];
+                var layout = string.Join(",", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}"));
+                layouts[layout] = layouts.GetValueOrDefault(layout) + 1;
+                var mats = string.Join("+", m.Data.GetArray("m_sceneObjects").SelectMany(so => so.GetArray("m_drawCalls")).Select(d => Path.GetFileNameWithoutExtension(d.GetStringProperty("m_material"))));
+                valve.Add($"{meshNames.ElementAtOrDefault(i)}[{mats} v{vb.ElementCount} i{m.VBIB.IndexBuffers[0].ElementCount}]");
+            }
+            var line = $"{name}: valve {string.Join(" ", valve)}";
+            if (int.TryParse(name[(name.LastIndexOf('_') + 1)..], out var id) && byId.TryGetValue(id, out var entity))
+            {
+                var parts = new List<string>();
+                foreach (var mesh in Meshes(entity))
+                {
+                    var data = mesh.Get<DmxBinary.Element>("meshData")!;
+                    var mats = (data.Get<object?[]>("materials") ?? []).Select(x => x as string ?? "").ToArray();
+                    var first = (data.Get<object?[]>("faceEdgeIndices") ?? []).Select(x => (int)x!).ToArray();
+                    var next = (data.Get<object?[]>("edgeNextIndices") ?? []).Select(x => (int)x!).ToArray();
+                    var faceOf = (data.Get<object?[]>("edgeFaceIndices") ?? []).Select(x => (int)x!).ToArray();
+                    var opposite = (data.Get<object?[]>("edgeOppositeIndices") ?? []).Select(x => (int)x!).ToArray();
+                    var faceData = (data.Get<object?[]>("faceDataIndices") ?? []).Select(x => (int)x!).ToArray();
+                    var matIndex = (data.Get<DmxBinary.Element>("faceData")!.GetElements("streams").First(s => s.Name.StartsWith("materialindex", StringComparison.Ordinal)).Get<object?[]>("data") ?? []).Select(x => (int)x!).ToArray();
+                    var subdivided = data.Get<DmxBinary.Element>("subdivisionData")?.Get<object?[]>("subdivisionLevels")?.Any(x => x is int l && l > 0) == true;
+                    var perMaterial = new List<string>();
+                    foreach (var g in Enumerable.Range(0, first.Length).GroupBy(f => matIndex[faceData[f]]).OrderBy(g => g.Key))
+                    {
+                        var set = g.ToHashSet();
+                        // Closed: every edge of the set's faces has its opposite on a face of the set.
+                        var closed = true;
+                        foreach (var f in set)
+                        {
+                            var e = first[f];
+                            do
+                            {
+                                if (!set.Contains(faceOf[opposite[e]]))
+                                    closed = false;
+                                e = next[e];
+                            } while (e != first[f]);
+                        }
+                        var mat = g.Key < mats.Length ? mats[g.Key] : "";
+                        var drawn = !Physics.EntityPhysicsModels.DrawsNothing(content.Material(mat));
+                        perMaterial.Add($"{Path.GetFileNameWithoutExtension(mat)}{(drawn ? "" : "(nd)")}x{set.Count}{(closed ? "c" : "o")}");
+                    }
+                    // The whole mesh: closed when every edge has a face on both sides, convex when every
+                    // vertex is on or behind every face's plane.
+                    var toVertex = (data.Get<object?[]>("edgeVertexIndices") ?? []).Select(x => (int)x!).ToArray();
+                    var vertexData = (data.Get<object?[]>("vertexDataIndices") ?? []).Select(x => (int)x!).ToArray();
+                    var positions = (data.Get<DmxBinary.Element>("vertexData")!.GetElements("streams").First(s => s.Name.StartsWith("position", StringComparison.Ordinal)).Get<object?[]>("data") ?? []).Select(x => (Vector3)x!).ToArray();
+                    var wholeClosed = Enumerable.Range(0, faceOf.Length).All(e => faceOf[e] < 0 || faceOf[opposite[e]] >= 0);
+                    var convex = true;
+                    for (var f = 0; f < first.Length && convex; f++)
+                    {
+                        var loop = new List<Vector3>();
+                        var e = first[f];
+                        do
+                        {
+                            loop.Add(positions[vertexData[toVertex[e]]]);
+                            e = next[e];
+                        } while (e != first[f]);
+                        var n = Vector3.Zero;
+                        for (var i = 0; i < loop.Count; i++)
+                        {
+                            var (a, b) = (loop[i], loop[(i + 1) % loop.Count]);
+                            n += new Vector3((a.Y - b.Y) * (a.Z + b.Z), (a.Z - b.Z) * (a.X + b.X), (a.X - b.X) * (a.Y + b.Y));
+                        }
+                        n = Vector3.Normalize(n);
+                        convex = positions.All(p => Vector3.Dot(p - loop[0], n) < 1e-2f);
+                    }
+                    var key = $"materials {perMaterial.Count}, drawn {perMaterial.Count(p => !p.Contains("(nd)"))}, {(wholeClosed ? "closed" : "open")}{(convex ? " convex" : " concave")}{(subdivided ? ", subdivided" : "")}";
+                    shapes[key] = shapes.GetValueOrDefault(key) + 1;
+                    parts.Add($"mesh {mesh.GetValue<int>("nodeID")} [{string.Join(" ", perMaterial)}]{(subdivided ? " sub" : "")}");
+                    var streamKey = "STREAMS " + string.Join(",", data.Get<DmxBinary.Element>("faceVertexData")!.GetElements("streams").Select(s => s.Name));
+                    shapes[streamKey] = shapes.GetValueOrDefault(streamKey) + 1;
+                    // ENTSURVEY_MESH=<node id>: that mesh's streams and faces, each corner's stored normal
+                    // against its face's normalised Newell normal.
+                    if (Environment.GetEnvironmentVariable("ENTSURVEY_MESH") == mesh.GetValue<int>("nodeID")?.ToString())
+                    {
+                        var fvd = data.Get<DmxBinary.Element>("faceVertexData")!.GetElements("streams").ToList();
+                        foreach (var s in fvd.Concat(data.Get<DmxBinary.Element>("faceData")!.GetElements("streams")))
+                            output.WriteLine($"  STREAM {s.Name}: std {s.Get<string>("standardAttributeName")} sem {s.Get<string>("semanticName")}/{s.GetValue<int>("semanticIndex")} vbl {s.GetValue<int>("vertexBufferLocation")} flags {s.GetValue<int>("dataStateFlags")} first {string.Join(" ", (s.Get<object?[]>("data") ?? []).Take(2).Select(x => x is byte[] b ? Convert.ToHexString(b) : x?.ToString()))}");
+                        var cornerData = (data.Get<object?[]>("edgeVertexDataIndices") ?? []).Select(x => (int)x!).ToArray();
+                        var normalsData = fvd.First(s => s.Name.StartsWith("normal", StringComparison.Ordinal)).Get<object?[]>("data")!;
+                        var uvData = fvd.First(s => s.Name.StartsWith("texcoord", StringComparison.Ordinal)).Get<object?[]>("data")!;
+                        for (var f = 0; f < first.Length; f++)
+                        {
+                            var loop = new List<int>();
+                            var e = first[f];
+                            do { loop.Add(e); e = next[e]; } while (e != first[f]);
+                            var pts = loop.Select(x => positions[vertexData[toVertex[x]]]).ToArray();
+                            var n = Vector3.Zero;
+                            for (var i = 0; i < pts.Length; i++)
+                            {
+                                var (a, b) = (pts[i], pts[(i + 1) % pts.Length]);
+                                n += new Vector3((a.Y - b.Y) * (a.Z + b.Z), (a.Z - b.Z) * (a.X + b.X), (a.X - b.X) * (a.Y + b.Y));
+                            }
+                            var newell = Vector3.Normalize(n);
+                            output.WriteLine($"  FACE {f} mat {matIndex[faceData[f]]}: " + string.Join(" ", loop.Select(x =>
+                            {
+                                var p = positions[vertexData[toVertex[x]]];
+                                var nn = (Vector3)normalsData[cornerData[x]]!;
+                                var uv = (Vector2)uvData[cornerData[x]]!;
+                                return $"({p.X:R},{p.Y:R},{p.Z:R} uv {uv.X:R},{uv.Y:R} n {nn.X:R},{nn.Y:R},{nn.Z:R}{(nn == newell ? " =newell" : "")})";
+                            })) + $" newell {newell.X:R},{newell.Y:R},{newell.Z:R}");
+                        }
+                    }
+                }
+                line += $"; source {string.Join(" ", parts)}";
+            }
+            else
+                line += "; no top-level entity";
+            output.WriteLine(line);
+        }
+        foreach (var (k, v) in layouts)
+            output.WriteLine($"LAYOUT x{v}: {k}");
+        foreach (var (k, v) in shapes)
+            output.WriteLine($"SHAPE x{v}: {k}");
+    }
+
+    /// <summary>
+    /// <c>ENTFILTER=&lt;addon&gt;|&lt;map&gt;|&lt;entity id&gt;</c>: the decompiler's render filter
+    /// (MapDecompiler.RenderOrderHolds) on the true source's meshes of one brush entity against its
+    /// shipped render pieces, mesh by mesh, piece by piece: it must hold where the forward is exact.
+    /// </summary>
+    [Fact]
+    public void RenderFilterOnTheSource()
+    {
+        if (Environment.GetEnvironmentVariable("ENTFILTER") is not { Length: > 0 } spec || spec.Split('|') is not [var addon, var map, var idText])
+            return;
+        var cs2 = Environment.GetEnvironmentVariable("CS2_DIR") ?? @"D:\Steam\steamapps\common\Counter-Strike Global Offensive";
+        var doc = DmxBinary.ReadFile(MapFixtures.VmapSource(addon, map)!);
+        var entity = doc.Elements.First(e => e.Type == "CMapEntity" && e.GetValue<int>("nodeID") == int.Parse(idText));
+        using var package = new Package();
+        package.Read(Path.Combine(cs2, "game", "csgo_addons", addon, "maps", map + ".vpk"));
+        var entry = package.Entries!["vmdl_c"].First(x => x.DirectoryName.EndsWith("entities", StringComparison.OrdinalIgnoreCase) && x.FileName.EndsWith("_" + idText, StringComparison.Ordinal));
+        package.ReadEntry(entry, out var bytes);
+        var pieces = Source2.Compiler.Maps.Decompile.BrushRender.Read(bytes);
+        var toEntity = CTransform.FromNode(entity).Inverse().Matrix();
+        var at = 0;
+        foreach (var mesh in Meshes(entity))
+        {
+            var toWorld = CTransform.FromNode(mesh).Matrix();
+            var materials = (mesh.Get<DmxBinary.Element>("meshData")?.Get<object?[]>("materials") ?? []).Select(x => x as string ?? "").ToList();
+            for (var m = 0; m < materials.Count && at < pieces.Count; m++)
+            {
+                if (!string.Equals(materials[m], pieces[at].Material, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var holds = Source2.Compiler.Maps.Decompile.MapDecompiler.RenderOrderHolds(mesh, m, pieces[at], toWorld, toEntity, out var placed);
+                output.WriteLine($"mesh {mesh.GetValue<int>("nodeID")} material {m} ({pieces[at].Name}): positions {placed}, frames {holds}");
+                at++;
+            }
+        }
     }
 
     private static IEnumerable<DmxBinary.Element> Meshes(DmxBinary.Element node)

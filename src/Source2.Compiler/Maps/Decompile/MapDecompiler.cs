@@ -931,8 +931,27 @@ public static class MapDecompiler
         // Inside a prefab or a copy the forward moves mesh and entity by the placement too, so the
         // landing check here holds only for the map's own entities.
         var own = !e.IdPath.Contains(':', StringComparison.Ordinal);
-        foreach (var piece in input)
+        // A model with render meshes: the hulls of each Hammer mesh with drawn faces come back as that
+        // one mesh, its drawn faces and their streams from the render (BrushRender), where the forward
+        // gives back its hulls exactly; the rest as one mesh per hull.
+        var leading = new List<MergedMesh>();
+        var merged = geometry.HasRender && own
+            ? RenderMeshes(input, bytes, e, entityNode, Fit, toWorld, toEntity, fromEntity, label, notes, leading)
+            : [];
+        foreach (var m in leading)
+            builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero, m.Faces, m.Materials,
+                            cornerTexcoords: m.Texcoords, cornerNormals: m.Normals, cornerTints: m.Tints, physicsType: m.PhysicsType);
+        for (var k = 0; k < input.Length; k++)
         {
+            var piece = input[k];
+            if (merged.TryGetValue(k, out var mesh))
+            {
+                if (mesh.Hulls[0] == k)
+                    foreach (var m in mesh.Before.Append(mesh).Concat(mesh.After))
+                        builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero, m.Faces, m.Materials,
+                                        cornerTexcoords: m.Texcoords, cornerNormals: m.Normals, cornerTints: m.Tints, physicsType: m.PhysicsType);
+                continue;
+            }
             var (origin, angles) = (e.Entity.Origin, Vector3.Zero);
             Func<Vector3, Vector3> fit = Fit;
             // Judged by the forward's chain for one mesh (its hull's points, bit for bit): the mesh as
@@ -969,14 +988,557 @@ public static class MapDecompiler
             notes.Add($"{label}: {moved} mesh(es) whose corners needed more than landing on the hull (a vertex the hull build moves, a mesh turned with the entity or at the world's origin)");
         if (off > 0)
             notes.Add($"{label}: {off} mesh(es) with a corner no searched point places exactly");
-        if (geometry.HasRender)
-            notes.Add($"{label}: render mesh not read (texture alignment and render-only faces are not recovered)");
+        if (geometry.HasRender && !own)
+            notes.Add($"{label}: inside a prefab or a copy, render mesh not read (texture coordinates and normals not recovered)");
         if (geometry.TriangleMeshes > 0)
             notes.Add($"{label}: {geometry.TriangleMeshes} triangle-mesh shape(s) not read");
         if (geometry.UnknownMaterials.Count > 0)
             notes.Add($"{label}: {geometry.UnknownMaterials.Count} hull(s) with a material hash no known material has");
         if (geometry.Pieces.Count == 0)
             notes.Add($"{label}: its model has no hulls; no geometry");
+    }
+
+    /// <summary>A Hammer mesh rebuilt with a brush entity model's render half: the hulls it gives (input
+    /// indices, in order), its faces (corners in the mesh's space), materials and corner streams.</summary>
+    private sealed record MergedMesh(int[] Hulls, List<(Vector3[] Corners, int Material)> Faces, List<string> Materials,
+                                     List<Vector2[]?> Texcoords, List<Vector3[]?> Normals, List<Vector4[]?>? Tints, string PhysicsType)
+    {
+        /// <summary>Render-only meshes (physics type none) written just before and after this one.</summary>
+        public List<MergedMesh> Before { get; } = [];
+        public List<MergedMesh> After { get; } = [];
+    }
+
+    /// <summary>
+    /// The Hammer meshes of a brush entity model with render meshes (<see cref="BrushRender"/>), keyed by
+    /// each of their hulls' input index. The drawn hulls pair with the render pieces in order (the physics
+    /// and the render walk the same meshes, each mesh's pieces in material order), a piece taking one hull
+    /// per connected part or one for the whole, a flat part's hull pushed out by the minimum thickness; a
+    /// mesh with render pieces and no hull is one whose physics type is none. A nodraw hull joins the mesh
+    /// next to it in the run that holds its points or the ends of its open drawn edges, else it stays a
+    /// mesh of its own. A mesh is kept only where the forward's chain for one mesh
+    /// (EntityPhysicsModels.BrushMeshHulls) gives back its hulls bit for bit, in order, after a face order
+    /// search where only the order differs; the others stay one mesh per hull, with a note. Render-only
+    /// meshes with no rebuilt mesh to follow go into <paramref name="leading"/>.
+    /// </summary>
+    private static Dictionary<int, MergedMesh> RenderMeshes(BrushGeometry.Piece[] input, byte[] model, EntityLumpAuthor.SourceEntity e,
+                                                            DmxBinary.Element entityNode, Func<Vector3, Vector3> fit, float[] toWorld, float[] toEntity,
+                                                            float[] fromEntity, string label, List<string> notes, List<MergedMesh> leading)
+    {
+        var result = new Dictionary<int, MergedMesh>();
+        var render = BrushRender.Read(model);
+        if (BrushRender.MeshesOf([.. render.Select(r => r.Name)]) is not { } meshes)
+        {
+            notes.Add($"{label}: render mesh names not the compile's ({string.Join(", ", render.Select(r => r.Name))}); render not read");
+            return result;
+        }
+        foreach (var r in render.Where(r => r.Unread.Count > 0))
+            notes.Add($"{label}: {r.Name} holds {string.Join(", ", r.Unread)}, not read back");
+        // A material draws when some render piece has it (DrawsNothing is the material's own).
+        var drawn = new HashSet<string>(render.Select(r => r.Material), StringComparer.OrdinalIgnoreCase);
+        bool Draws(string material) => drawn.Contains(material);
+        var pieceMesh = new int[render.Count];
+        for (var m = 0; m < meshes.Count; m++)
+            foreach (var j in meshes[m])
+                pieceMesh[j] = m;
+        var positions = render.Select(r => r.Corners.Select(c => c.Position).ToHashSet()).ToList();
+        var meshPositions = meshes.Select(m => m.SelectMany(j => positions[j]).ToHashSet()).ToList();
+
+        // A drawn piece's hulls: one per connected part under convex_multi (BrushHulls.Inputs' groups;
+        // atixref's glass panes, a front and a back face), or one of the whole piece. A hull's points are
+        // its part's, except a flat or degenerate part's, which the map builder pushes out by its minimum
+        // thickness and hulls again (RnHullBuilder, FUN_180384ab0): such a hull pairs with a part when the
+        // forward's hull chain on the part's corners pushes it into those points (BrushRender.PushedFrom);
+        // the mesh's own check below (BrushMeshHulls) is the exact one.
+        var parts = render.Select((r, j) => Parts(r).Append(positions[j]).Distinct(HashSet<Vector3>.CreateSetComparer()).ToList()).ToList();
+        int Pairs(int h, int j, IReadOnlyCollection<int> left) => !string.Equals(render[j].Material, input[h].Material, StringComparison.OrdinalIgnoreCase) ? -1
+            : left.Where(p => input[h].Vertices.All(parts[j][p].Contains)).DefaultIfEmpty(-1).First() is var exact and >= 0 ? exact
+            : left.Where(p => BrushRender.PushedFrom(input[h].Vertices, parts[j][p])).DefaultIfEmpty(-1).First();
+        IReadOnlyCollection<int> AllParts(int j) => [.. Enumerable.Range(0, parts[j].Count)];
+        // A mesh whose physics type is none has render pieces and no hulls: skipped whole where a later
+        // mesh's first piece pairs with the hull (atixref's block_roof_waterm).
+        var renderOnly = new HashSet<int>();
+        var meshOf = Enumerable.Repeat(-1, input.Length).ToArray();
+        var thickened = new bool[input.Length];
+        var next = 0;
+        var left = new HashSet<int>();
+        bool Starts(int j) => meshes[pieceMesh[j]][0] == j;
+        for (var h = 0; h < input.Length; h++)
+        {
+            if (!Draws(input[h].Material))
+                continue;
+            if (left.Count == 0 && next < render.Count)
+                left = [.. AllParts(next)];
+            if (next < render.Count && left.Count == parts[next].Count && Pairs(h, next, left) < 0 && Starts(next)
+                && Enumerable.Range(next + 1, render.Count - next - 1).FirstOrDefault(j => Starts(j) && Pairs(h, j, AllParts(j)) >= 0, -1) is var later and > 0)
+            {
+                for (var m = pieceMesh[next]; m < pieceMesh[later]; m++)
+                    renderOnly.Add(m);
+                next = later;
+                left = [.. AllParts(next)];
+            }
+            var part = next < render.Count ? Pairs(h, next, left) : -1;
+            if (part < 0)
+            {
+                notes.Add($"{label}: drawn hull {h} does not pair with render piece {next} in order; render not read"
+                          + (next < render.Count ? $" ({input[h].Material} vs {render[next].Material}, {input[h].Vertices.Count(positions[next].Contains)} of {input[h].Vertices.Length} hull points on it"
+                                                   + $"{(Environment.GetEnvironmentVariable("DECOMPILE_RENDER_DEBUG") == "1" ? $": hull {string.Join(" ", input[h].Vertices.Select(v => $"{v.X:R},{v.Y:R},{v.Z:R}"))}; render {string.Join(" ", positions[next].Select(v => $"{v.X:R},{v.Y:R},{v.Z:R}"))}" : "")})" : ""));
+                return result;
+            }
+            thickened[h] = !input[h].Vertices.All(parts[next][part].Contains);
+            meshOf[h] = pieceMesh[next];
+            // The whole piece's points take every part with them.
+            if (part == parts[next].Count - 1 && parts[next].Count > 1)
+                left.Clear();
+            else
+                left.Remove(part);
+            left.Remove(parts[next].Count - 1);
+            if (left.Count == 0)
+                next++;
+        }
+        if (next < render.Count && left.Count > 0 && left.Count < parts[next].Count)
+        {
+            notes.Add($"{label}: render piece {next} has parts with no hull; render not read");
+            return result;
+        }
+        if (next < render.Count && !Starts(next))
+        {
+            notes.Add($"{label}: render piece {next} with no drawn hull; render not read");
+            return result;
+        }
+        for (var m = next < render.Count ? pieceMesh[next] : meshes.Count; m < meshes.Count; m++)
+            renderOnly.Add(m);
+        // A nodraw hull joins the mesh before or after it in the run whose drawn corners hold its points
+        // (ze_hold_em_p's breakables: three nodraw faces round seven drawn), else whose drawn faces' open
+        // edges it holds the ends of (a drawn quad on a nodraw box, ze_hold_em_p's end_breakable_240).
+        var openEnds = meshes.Select(m =>
+        {
+            var edges = new HashSet<(Vector3, Vector3)>();
+            foreach (var j in m)
+                for (var t = 0; t + 2 < render[j].Corners.Length; t += 3)
+                    for (var i = 0; i < 3; i++)
+                        edges.Add((render[j].Corners[t + i].Position, render[j].Corners[t + ((i + 1) % 3)].Position));
+            return edges.Where(x => !edges.Contains((x.Item2, x.Item1))).SelectMany(x => new[] { x.Item1, x.Item2 }).ToHashSet();
+        }).ToList();
+        for (var h = 0; h < input.Length; h++)
+        {
+            if (meshOf[h] >= 0)
+                continue;
+            var before = h > 0 ? meshOf[h - 1] : -1;
+            var after = Enumerable.Range(h + 1, input.Length - h - 1).Where(k => Draws(input[k].Material)).Select(k => meshOf[k]).DefaultIfEmpty(-1).First();
+            var vertices = input[h].Vertices.ToHashSet();
+            // Between two pieces of one mesh it is that mesh's (atixref's disco_wall_toggle: trim, nodraw, floor).
+            if (before >= 0 && before == after)
+                meshOf[h] = before;
+            else if (before >= 0 && input[h].Vertices.All(meshPositions[before].Contains))
+                meshOf[h] = before;
+            else if (after >= 0 && input[h].Vertices.All(meshPositions[after].Contains))
+                meshOf[h] = after;
+            else if (before >= 0 && openEnds[before].Count > 0 && openEnds[before].All(vertices.Contains))
+                meshOf[h] = before;
+            else if (after >= 0 && openEnds[after].Count > 0 && openEnds[after].All(vertices.Contains))
+                meshOf[h] = after;
+        }
+
+        static (int, int, int) Bits(Vector3 v) => (BitConverter.SingleToInt32Bits(v.X), BitConverter.SingleToInt32Bits(v.Y), BitConverter.SingleToInt32Bits(v.Z));
+        Vector3 NormalToEntity(Vector3 n) => NodeMeshEntries.Normalise(NodeMeshEntries.Rotate(toEntity, NodeMeshEntries.Rotate(toWorld, n)));
+        Vector3 NormalFromEntity(Vector3 n) => NodeMeshEntries.Rotate(fromEntity, n);
+        var failed = new List<string>();
+        var plans = new MergedMesh?[meshes.Count];
+        for (var m = 0; m < meshes.Count; m++)
+        {
+            var hulls = Enumerable.Range(0, input.Length).Where(h => meshOf[h] == m).ToArray();
+            if (hulls.Length > 0 && hulls[^1] - hulls[0] + 1 != hulls.Length)
+            {
+                failed.Add($"mesh {m}: its hulls are not one run");
+                continue;
+            }
+            var materials = hulls.Select(h => input[h].Material).Concat(meshes[m].Select(j => render[j].Material))
+                                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            int IndexOf(string material) => materials.FindIndex(x => string.Equals(x, material, StringComparison.OrdinalIgnoreCase));
+            var pieces = meshes[m].Select(j => (render[j], IndexOf(render[j].Material))).ToList();
+            var (faces, reason) = BrushRender.Rebuild(pieces, [.. hulls.Select(h => input[h])], [.. hulls.Select(h => IndexOf(input[h].Material))],
+                                                      [.. hulls.Select(h => thickened[h])], x => !Draws(x), closed: !renderOnly.Contains(m));
+            if (faces is null)
+            {
+                failed.Add($"mesh {m}: {reason}");
+                continue;
+            }
+            var local = faces.Select(f => f.Corners.Select(fit).ToArray()).ToList();
+            var (streams, why) = CornerStreams(faces, local, pieces, NormalToEntity, NormalFromEntity);
+            if (streams is null)
+            {
+                failed.Add($"mesh {m}: {why}");
+                continue;
+            }
+            var physicsType = renderOnly.Contains(m) ? "none" : "default";
+            var (texcoords, normals, tints) = streams.Value;
+            // The mesh with its faces in an order: the hulls the forward gives back, each exact or not.
+            (DmxBinary.Element Mesh, bool[] Exact, bool SamePoints) Build(int[] order, bool hullsToo = true)
+            {
+                var scratch = new VmapBuilder("rendermesh");
+                var trial = scratch.AddMesh(scratch.World, 1, e.Entity.Origin, Vector3.Zero, [.. order.Select(f => (local[f], faces[f].Material))], materials, null,
+                                            [.. order.Select(f => texcoords[f])], [.. order.Select(f => normals[f])], tints is null ? null : [.. order.Select(f => tints[f])], physicsType);
+                scratch.RemoveFromWorld(trial);
+                if (!hullsToo)
+                    return (trial, [], false);
+                var back = Physics.EntityPhysicsModels.BrushMeshHulls(trial, entityNode, e.Entity.ClassName, VmapBuilder.FormatVersion);
+                if (back.Count != hulls.Length)
+                    return (trial, [.. hulls.Select(_ => false)], false);
+                var exact = back.Zip(hulls).Select(p => p.First.Select(Bits).SequenceEqual(input[p.Second].Vertices.Select(Bits))).ToArray();
+                return (trial, exact, back.Zip(hulls).All(p => p.First.Select(Bits).Order().SequenceEqual(input[p.Second].Vertices.Select(Bits).Order())));
+            }
+            var order = Enumerable.Range(0, faces.Count).ToArray();
+            var built = Build(order);
+            // A hull with the shipped points in another order: its piece's faces reordered (seeded tries)
+            // until the hull builder meets them as the source's did, the drawn triangles' order through the
+            // draw passes kept (RenderOrderHolds).
+            var searched = new List<string>();
+            if (!built.Exact.All(x => x) && built.SamePoints)
+            {
+                var random = new Random(0x5eed);
+                foreach (var q in Enumerable.Range(0, hulls.Length).Where(q => !built.Exact[q]).ToList())
+                {
+                    var material = materials.FindIndex(x => string.Equals(x, input[hulls[q]].Material, StringComparison.OrdinalIgnoreCase));
+                    var slots = Enumerable.Range(0, order.Length).Where(i => faces[order[i]].Material == material).ToArray();
+                    var drawnPiece = pieces.FirstOrDefault(p => p.Item2 == material).Item1;
+                    // A drawn piece: its triangles in their faces (joined across an edge whose corners are one
+                    // render vertex each), the faces in every order and each face's triangles either way
+                    // round, the draw checked first (atixref's valdina_button: six quads, its shipped order
+                    // not the one the draw passes give back).
+                    var (drawnTried, drawnHeld, placedHeld) = (0, 0, 0);
+                    if (drawnPiece is not null)
+                        foreach (var candidate in DrawnOrders(order, slots, faces).Take(60000))
+                        {
+                            // No order drawing even the shipped corner positions in the first few thousand:
+                            // the filter misses something for this mesh, and the rest would not land either.
+                            if (drawnTried >= 4096 && placedHeld == 0)
+                                break;
+                            drawnTried++;
+                            var mesh = Build(candidate, hullsToo: false).Mesh;
+                            var holds = RenderOrderHolds(mesh, material, drawnPiece, toWorld, toEntity, out var placed);
+                            placedHeld += placed ? 1 : 0;
+                            if (!holds)
+                                continue;
+                            drawnHeld++;
+                            var tried = Build(candidate);
+                            if (tried.Exact[q])
+                            {
+                                (order, built) = (candidate, tried);
+                                break;
+                            }
+                        }
+                    if (drawnPiece is not null && !built.Exact[q])
+                        searched.Add($"{drawnTried} face orders tried, {placedHeld} with the shipped corner order, {drawnHeld} with its frames too");
+                    for (var attempt = 0; attempt < 3000 && !built.Exact[q] && drawnPiece is null; attempt++)
+                    {
+                        var candidate = (int[])order.Clone();
+                        var shuffled = slots.Select(i => order[i]).OrderBy(_ => random.Next()).ToArray();
+                        for (var i = 0; i < slots.Length; i++)
+                            candidate[slots[i]] = shuffled[i];
+                        var tried = Build(candidate);
+                        if (tried.Exact[q] && (drawnPiece is null || RenderOrderHolds(tried.Mesh, material, drawnPiece, toWorld, toEntity)))
+                            (order, built) = (candidate, tried);
+                    }
+                }
+            }
+            if (!built.Exact.All(x => x))
+            {
+                failed.Add($"mesh {m}: its hulls through the forward differ ({(built.SamePoints ? "same points, no face order searched gives their order" : "other points")}"
+                           + $"{(searched.Count > 0 ? "; " + string.Join("; ", searched) : "")})"
+                           + (Environment.GetEnvironmentVariable("DECOMPILE_RENDER_DEBUG") == "1"
+                               ? $"; render order as read holds: {string.Join(",", pieces.Select(p => RenderOrderHolds(Build(Enumerable.Range(0, faces.Count).ToArray()).Mesh, p.Item2, p.Item1, toWorld, toEntity)))}" : ""));
+                continue;
+            }
+            if (Environment.GetEnvironmentVariable("DECOMPILE_RENDER_DEBUG") == "1")
+                notes.Add($"{label}: render debug: mesh {m} kept, render filter {string.Join(",", pieces.Select(p => RenderOrderHolds(built.Mesh, p.Item2, p.Item1, toWorld, toEntity)))}");
+            plans[m] = new MergedMesh(hulls, [.. order.Select(f => (local[f], faces[f].Material))], materials, [.. order.Select(f => texcoords[f])],
+                                      [.. order.Select(f => normals[f])], tints is null ? null : [.. order.Select(f => tints[f])], physicsType);
+        }
+        // A render-only mesh has no hull to stand at: it is written after the mesh before it in model
+        // order (before the first one when it leads).
+        for (var m = 0; m < meshes.Count; m++)
+        {
+            if (plans[m] is not { } plan || plan.Hulls.Length == 0)
+                continue;
+            foreach (var h in plan.Hulls)
+                result[h] = plan;
+            for (var k = m + 1; k < meshes.Count && renderOnly.Contains(k); k++)
+                if (plans[k] is { } after)
+                    plan.After.Add(after);
+            if (m == Enumerable.Range(0, meshes.Count).First(x => !renderOnly.Contains(x)))
+                for (var k = 0; k < m; k++)
+                    if (plans[k] is { } before)
+                        plan.Before.Add(before);
+        }
+        // With no rebuilt mesh to stand by, the render-only ones lead the model's meshes (atixref's
+        // block_roof_waterm: its drawn mesh has no physics, its only hull is a toolsclip mesh's).
+        if (!plans.Any(p => p is { Hulls.Length: > 0 }))
+            leading.AddRange(plans.OfType<MergedMesh>());
+        if (failed.Count > 0)
+            notes.Add($"{label}: {failed.Count} of {meshes.Count} mesh(es) not rebuilt with the render mesh: {string.Join("; ", failed)}");
+        return result;
+    }
+
+    /// <summary>
+    /// The corner streams of a rebuilt mesh (<see cref="BrushRender"/>): a drawn face's texcoords, normals
+    /// and tints chosen so the forward packs the shipped bits; a face that draws nothing gets texcoords
+    /// that keep the mesh's high precision flag as shipped (a texcoord past +-1.03125 after the shift
+    /// anywhere in the mesh, EntityRenderModels.Pieces) and its own normal.
+    /// </summary>
+    private static ((List<Vector2[]?> Texcoords, List<Vector3[]?> Normals, List<Vector4[]?>? Tints)? Streams, string? Reason) CornerStreams(
+        List<BrushRender.Face> faces, List<Vector3[]> local, List<(BrushRender.Piece Piece, int Material)> pieces,
+        Func<Vector3, Vector3> normalToEntity, Func<Vector3, Vector3> normalFromEntity)
+    {
+        var formats = pieces.ToDictionary(p => p.Material, p => p.Piece.TexcoordFormat);
+        var texcoords = new List<Vector2[]?>();
+        var normals = new List<Vector3[]?>();
+        var tints = pieces.Any(p => p.Piece.Corners.Any(c => c.Tint is not null)) ? new List<Vector4[]?>() : null;
+        static Vector3 FaceNormal(Vector3[] loop)
+        {
+            var n = Vector3.Zero;
+            for (var i = 0; i < loop.Length; i++)
+            {
+                var (a, b) = (loop[i], loop[(i + 1) % loop.Length]);
+                n += new Vector3((a.Y - b.Y) * (a.Z + b.Z), (a.Z - b.Z) * (a.X + b.X), (a.X - b.X) * (a.Y + b.Y));
+            }
+            return n.LengthSquared() > 0f ? Vector3.Normalize(n) : n;
+        }
+        var faceNormals = local.Select(FaceNormal).ToList();
+        // The distinct face normals round each corner, for its smoothing candidates.
+        var around = new Dictionary<Vector3, List<Vector3>>();
+        for (var f = 0; f < local.Count; f++)
+            foreach (var c in local[f])
+            {
+                if (!around.TryGetValue(c, out var list))
+                    around[c] = list = [];
+                if (!list.Any(n => Vector3.Dot(n, faceNormals[f]) > 1f - 1e-6f))
+                    list.Add(faceNormals[f]);
+            }
+        IEnumerable<Vector3> Candidates(Vector3 corner, Vector3 own)
+        {
+            yield return own;
+            var others = around[corner].Where(n => Vector3.Dot(n, own) <= 1f - 1e-6f).ToList();
+            // The normalised sum of the face's normal with each subset of the others, smallest first
+            // (atixref's and ze's bevels: two faces at right angles give (0.70710677, 0.70710677, 0)).
+            for (var size = 1; size <= Math.Min(others.Count, 5); size++)
+                foreach (var subset in Subsets(others, size))
+                    if (subset.Aggregate(own, (s, n) => s + n) is var sum && sum.LengthSquared() > 0f)
+                        yield return Vector3.Normalize(sum);
+        }
+        var unpacked = 0;
+        for (var f = 0; f < faces.Count; f++)
+        {
+            if (faces[f].Render is not { } corners)
+            {
+                texcoords.Add(null);
+                normals.Add(null);
+                tints?.Add(null);
+                continue;
+            }
+            var uv = new Vector2[corners.Length];
+            for (var i = 0; i < corners.Length; i++)
+            {
+                if (BrushRender.Texcoord(corners[i], formats[faces[f].Material]) is { } t)
+                    uv[i] = t;
+                else
+                    unpacked++;
+            }
+            texcoords.Add(uv);
+            normals.Add([.. corners.Select((c, i) => BrushRender.Normal(c.Frame, Candidates(local[f][i], faceNormals[f]), normalToEntity, normalFromEntity))]);
+            tints?.Add([.. corners.Select(c => c.Tint is { } rgba ? BrushRender.Tint(rgba) : Vector4.One)]);
+        }
+        if (unpacked > 0)
+            return (null, $"{unpacked} texcoord(s) no value packs to");
+        // A packed piece's texcoords moved within their cells to the draw's UV density.
+        foreach (var (piece, material) in pieces.Where(p => p.Piece.TexcoordFormat != "R32G32_FLOAT"))
+        {
+            var chosen = new Dictionary<BrushRender.Corner, Vector2>();
+            var normalOf = new Dictionary<BrushRender.Corner, Vector3>();
+            for (var f = 0; f < faces.Count; f++)
+                if (faces[f].Material == material && faces[f].Render is { } corners)
+                    for (var i = 0; i < corners.Length; i++)
+                    {
+                        chosen.TryAdd(corners[i], texcoords[f]![i]);
+                        normalOf.TryAdd(corners[i], normalToEntity(normals[f]![i]));
+                    }
+            if (BrushRender.FitDensity(piece, chosen, c => normalOf[c]) is not { } fitted)
+                return (null, $"{piece.Name}: no texcoords in their cells give the draw's UV density {piece.UvDensity:R}");
+            for (var f = 0; f < faces.Count; f++)
+                if (faces[f].Material == material && faces[f].Render is { } corners)
+                    for (var i = 0; i < corners.Length; i++)
+                        texcoords[f]![i] = fitted[corners[i]];
+        }
+        var precise = pieces.Any(p => p.Piece.TexcoordFormat == "R32G32_FLOAT");
+        var drawnPast = texcoords.Where(t => t is not null).SelectMany(t => t!).Any(t => MathF.Abs(t.X) > 1.03125f || MathF.Abs(t.Y) > 1.03125f);
+        for (var f = 0; f < faces.Count; f++)
+            if (texcoords[f] is null)
+                texcoords[f] = [.. local[f].Select((_, i) => precise && !drawnPast
+                    ? new Vector2((i & 1) == 0 ? -1.75f : 1.75f, (i & 2) == 0 ? -1.75f : 1.75f)
+                    : new Vector2(0.5f, 0.5f))];
+        return ((texcoords, normals, tints), null);
+    }
+
+    /// <summary>A render piece's connected parts (its triangles joined by shared corners), each as its points.</summary>
+    private static List<HashSet<Vector3>> Parts(BrushRender.Piece piece)
+    {
+        var parent = new Dictionary<Vector3, Vector3>();
+        Vector3 Find(Vector3 x)
+        {
+            while (parent[x] != x)
+                x = parent[x] = parent[parent[x]];
+            return x;
+        }
+        foreach (var c in piece.Corners)
+            parent.TryAdd(c.Position, c.Position);
+        for (var t = 0; t + 2 < piece.Corners.Length; t += 3)
+        {
+            var a = Find(piece.Corners[t].Position);
+            parent[Find(piece.Corners[t + 1].Position)] = a;
+            parent[Find(piece.Corners[t + 2].Position)] = Find(a);
+        }
+        return [.. parent.Keys.GroupBy(Find).Select(g => g.ToHashSet())];
+    }
+
+    /// <summary>
+    /// Whether a rebuilt mesh's drawn piece comes out of the draw as the shipped triangles: the piece in
+    /// the entity's space with its tangents recomputed (EntityRenderModels.Entry: MeshTangents over the
+    /// triangles in order), through NodeDraw (the weld, meshopt's vertex cache and overdraw passes,
+    /// first-use order), corner for corner by position and packed tangent frame. The weld runs over the
+    /// position, texcoord, normal and tangent (and the tint where the layout has one), the streams a
+    /// brush entity's draw keeps, so this filters a search; the forward compile of the decompile is the
+    /// check.
+    /// </summary>
+    private static bool RenderOrderHolds(DmxBinary.Element mesh, int material, BrushRender.Piece shipped, float[] toWorld, float[] toEntity)
+        => RenderOrderHolds(mesh, material, shipped, toWorld, toEntity, out _);
+
+    /// <param name="positionsHold">Whether the corners' positions alone come out as shipped.</param>
+    internal static bool RenderOrderHolds(DmxBinary.Element mesh, int material, BrushRender.Piece shipped, float[] toWorld, float[] toEntity, out bool positionsHold)
+    {
+        positionsHold = false;
+        var piece = MapMeshCorners.Build(mesh, true, null, withTangent: false, allStreams: true).FirstOrDefault(p => p.Material == material);
+        if (piece is null)
+            return false;
+        int? At(string name) => piece.Streams.Where(s => s.Name == name).Select(s => (int?)s.First).FirstOrDefault();
+        var (uvAt, normalAt, tintAt) = (At("texcoord"), At("normal"), shipped.Corners.Any(c => c.Tint is not null) ? At("VertexPaintTintColor") : null);
+        if (uvAt is null || normalAt is null)
+            return false;
+        var count = piece.Vertices.Length / piece.Stride;
+        var positions = new Vector3[count];
+        var normals = new Vector3[count];
+        var uvs = new Vector2[count];
+        for (var c = 0; c < count; c++)
+        {
+            var o = c * piece.Stride;
+            positions[c] = MapMeshes.Transform(toEntity, MapMeshes.Transform(toWorld, new Vector3(piece.Vertices[o], piece.Vertices[o + 1], piece.Vertices[o + 2])));
+            var n = new Vector3(piece.Vertices[o + normalAt.Value], piece.Vertices[o + normalAt.Value + 1], piece.Vertices[o + normalAt.Value + 2]);
+            normals[c] = NodeMeshEntries.Normalise(NodeMeshEntries.Rotate(toEntity, NodeMeshEntries.Rotate(toWorld, n)));
+            uvs[c] = new Vector2(piece.Vertices[o + uvAt.Value], 1f - (1f - piece.Vertices[o + uvAt.Value + 1]));
+        }
+        var tangents = MeshTangents.Corners(positions, normals, uvs, piece.Indices);
+        var cornerTangent = new Vector4[count];
+        for (var k = 0; k < piece.Indices.Length; k++)
+            cornerTangent[piece.Indices[k]] = tangents[k];
+        var stride = tintAt is null ? 12 : 16;
+        var vertices = new float[count * stride];
+        for (var c = 0; c < count; c++)
+        {
+            var o = c * stride;
+            (vertices[o], vertices[o + 1], vertices[o + 2]) = (positions[c].X, positions[c].Y, positions[c].Z);
+            (vertices[o + 3], vertices[o + 4]) = (uvs[c].X, uvs[c].Y);
+            (vertices[o + 5], vertices[o + 6], vertices[o + 7]) = (normals[c].X, normals[c].Y, normals[c].Z);
+            (vertices[o + 8], vertices[o + 9], vertices[o + 10], vertices[o + 11]) = (cornerTangent[c].X, cornerTangent[c].Y, cornerTangent[c].Z, cornerTangent[c].W);
+            if (tintAt is { } t)
+                Array.Copy(piece.Vertices, (c * piece.Stride) + t, vertices, o + 12, 4);
+        }
+        List<Physics.MeshWeld.Stream> streams = [new("position", 0, 3, false, 42), new("texcoord", 3, 2, false, 41), new("normal", 5, 3, false, 42), new("tangent", 8, 4, false, 43)];
+        if (tintAt is not null)
+            streams.Add(new("VertexPaintTintColor", 12, 4, false, 43));
+        var draw = NodeDraw.Build(vertices, stride, 0, piece.Indices, streams, false, 0f);
+        if (draw.Indices.Length != shipped.Corners.Length)
+            return false;
+        Vector3 Placed(int i) => new(draw.Vertices[draw.Indices[i] * stride], draw.Vertices[(draw.Indices[i] * stride) + 1], draw.Vertices[(draw.Indices[i] * stride) + 2]);
+        positionsHold = Enumerable.Range(0, draw.Indices.Length).All(i => Placed(i) == shipped.Corners[i].Position);
+        if (!positionsHold)
+            return false;
+        for (var i = 0; i < draw.Indices.Length; i++)
+        {
+            var o = draw.Indices[i] * stride;
+            var frame = TangentFrame.Compress(new Vector3(draw.Vertices[o + 5], draw.Vertices[o + 6], draw.Vertices[o + 7]),
+                                              new Vector4(draw.Vertices[o + 8], draw.Vertices[o + 9], draw.Vertices[o + 10], draw.Vertices[o + 11]));
+            if (frame != shipped.Corners[i].Frame)
+            {
+                if (Environment.GetEnvironmentVariable("DECOMPILE_RENDER_DEBUG") == "1")
+                    Console.Error.WriteLine($"render filter: corner {i} of {draw.Indices.Length} at {Placed(i)}: frame {frame:x8}, shipped {shipped.Corners[i].Frame:x8}");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Face orders for a drawn piece's triangles (the faces at <paramref name="slots"/> of
+    /// <paramref name="order"/>): the triangles joined into the faces they came from (an edge whose two
+    /// corners are the same render vertices on both sides), then every order of those faces with each
+    /// face's triangles as read or reversed, the read order first.
+    /// </summary>
+    private static IEnumerable<int[]> DrawnOrders(int[] order, int[] slots, List<BrushRender.Face> faces)
+    {
+        var triangles = slots.Select(i => order[i]).ToArray();
+        var parent = Enumerable.Range(0, triangles.Length).ToArray();
+        int Find(int x) => parent[x] == x ? x : parent[x] = Find(parent[x]);
+        var edgeOf = new Dictionary<(BrushRender.Corner, BrushRender.Corner), int>();
+        for (var t = 0; t < triangles.Length; t++)
+        {
+            var c = faces[triangles[t]].Render!;
+            for (var i = 0; i < c.Length; i++)
+            {
+                var (a, b) = (c[i], c[(i + 1) % c.Length]);
+                if (edgeOf.TryGetValue((b, a), out var other))
+                    parent[Find(t)] = Find(other);
+                edgeOf.TryAdd((a, b), t);
+            }
+        }
+        var groups = Enumerable.Range(0, triangles.Length).GroupBy(Find).Select(g => g.Select(t => triangles[t]).ToArray()).ToList();
+        var perm = Enumerable.Range(0, groups.Count).ToArray();
+        do
+        {
+            for (var flips = 0; flips < 1 << Math.Min(groups.Count, 16); flips++)
+            {
+                var sequence = perm.SelectMany((g, i) => (flips >> i & 1) == 0 ? groups[g] : groups[g].Reverse()).ToArray();
+                var candidate = (int[])order.Clone();
+                for (var i = 0; i < slots.Length; i++)
+                    candidate[slots[i]] = sequence[i];
+                yield return candidate;
+            }
+        }
+        while (NextPermutation(perm));
+    }
+
+    private static bool NextPermutation(int[] a)
+    {
+        var i = a.Length - 2;
+        while (i >= 0 && a[i] >= a[i + 1])
+            i--;
+        if (i < 0)
+            return false;
+        var j = a.Length - 1;
+        while (a[j] <= a[i])
+            j--;
+        (a[i], a[j]) = (a[j], a[i]);
+        Array.Reverse(a, i + 1, a.Length - i - 1);
+        return true;
+    }
+
+    private static IEnumerable<List<T>> Subsets<T>(List<T> items, int size, int from = 0)
+    {
+        if (size == 0)
+        {
+            yield return [];
+            yield break;
+        }
+        for (var i = from; i <= items.Count - size; i++)
+            foreach (var rest in Subsets(items, size - 1, i + 1))
+                yield return [items[i], .. rest];
     }
 
     /// <summary>
