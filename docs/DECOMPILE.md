@@ -967,6 +967,21 @@ CS2-closed session 10-29 evening (d167724):
 - Open from it: our world builder does not drop toolsskip faces (the decompile's fillers are
   toolsskip boxes).
 
+Queued for the next CS2-closed window (10-30): **s2c_biasprobe, lit.** Made with CS2 open by
+`tools/map-survey/bias_probe_map.py <probe01.vmap> <ze_hold_em_p.vmap> <out.vmap>` (dmxconvert only),
+at `content/csgo_addons/s2c_rc_probe/maps/s2c_biasprobe.vmap`:
+- nodes 127-132: probe01's dev_measuregeneric01 box with every face at lightmapScaleBias -2, -1, 0, 1,
+  2, 3, 256 units apart along y;
+- node 133: the box with its faces alternating 0 and 1;
+- node 134: ze_hold_em_p's node 409 (subdivided, painted, 13 faces at 0 and 50 at 1) at y 4096, outside
+  probe01's skybox, so a leak warning is expected.
+Compile it lit (full, not -world) with Valve's resourcecompiler, then on the package:
+`DECOMPILE_WORLD_MESHES=1 DECOMPILE_LMDENSITY=<file> s2c decompile-map` and compare each box's
+lightmap density against its bias (expected: ×4 in area per step, ChartMeshes' 2^bias chart scale;
+watch for a clamp). WPBUILD with `WORLDPHYS_PIECES` lists node 134's pieces (expected 7: slabs 0, 2, 0,
+4480, concrete_9 16, hr_conc 30, 8). If density reads the bias, the decompile can write node 409 as a
+flat mesh with per-face bias and per-vertex paint ("What the pieces need").
+
 Done this session: atixref's ropes (CMapPath rebuilt, positions and tangents solved), template
 members' placement as an exact solve, light-step keys (test checks them against the package;
 directlight 1 with desiredstationary inverted to 3), a prefab map's own multi-collapse instances.
