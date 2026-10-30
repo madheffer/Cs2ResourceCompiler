@@ -36,6 +36,7 @@ try
         "entitylump" => Commands.Entitylump(args[1..]),
         "reauthor" => Commands.Reauthor(args[1..]),
         "decompile-map" => Commands.DecompileMap(args[1..]),
+        "decompile-scripts" => Commands.DecompileScripts(args[1..]),
         "selftest" => SelfTest.Run(args[1..]),
         _ => Unknown(args[0]),
     };
@@ -113,6 +114,11 @@ static void Usage()
                     --content, by default the folder holding the output's maps/),
                     instances and paths. World geometry is not rebuilt yet; what
                     is left out is listed (docs/DECOMPILE.md).
+
+      s2c decompile-scripts <addon _dir.vpk | .vjs_c ...> --content <addon content dir>
+                    The cs_script sources (.js) back from an addon's compiled
+                    scripts, byte for byte (each checked against the CRC its
+                    RED2 records), at the content paths RED2 names.
 
       s2c id        <resource/path.vtex>
                     Print the 64-bit RERL id the engine looks that path up by.

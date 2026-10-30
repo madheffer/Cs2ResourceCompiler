@@ -892,6 +892,29 @@ Two rules came out of it, each measured on a probe compiled by resourcecompiler:
   recompile: pinst7's 2138, atixref's 22 doors, buttons and breakables. func_water's models are
   render-only (no hulls) and come back with render meshes (plan 3).
 
+### Scripts and map links (2026-10-30, CS2 open)
+
+- **Scripts.** A PanoramaScript (.vjs_c) of version 4 or later keeps its source as plain text: the
+  DATA block is the .js as the compile read it. Checked on every workshop script on this machine
+  (227 in 77 addons): the CRC32 of each DATA block equals the CRC its RED2 records for the .js input,
+  so the text is the source byte for byte. The second input, scripts/<name>.vjs, has CRC 0.
+  Scripts live in the addon's package (scripts/...), never in a map's own .vpk (0 of those 77
+  addons' maps hold one). `s2c decompile-scripts <addon _dir.vpk | .vjs_c ...> --content <dir>`
+  writes them at RED2's paths (Maps/Decompile/ScriptSources.cs; test
+  `MapDecompilerTests.Scripts_KeepTheirSource`). No .ts source was found (PanoramaTypescript is
+  read the same way, but no example checks it).
+- **Links.** skybox_reference targetMapName, info_spawngroup_load_unload mapname and point_script
+  cs_script round trip with the entities (probe_classes and atixref exact). The linked levels are
+  packages of their own, decompiled on their own. decompile-map now prints them
+  (`links: ...`, MapDecompiler.Links): probe_classes names `probe` twice, atixref
+  `maps/ze_atix_panic_new_skybox.vmap`.
+- **Map variables.** Every Hammer source has a CMapVariableSet (root `mapVariables`), but none of
+  the 232 sources on this machine fill one, so there is no ground truth. Next CS2-closed window: a
+  probe map with variables (and whatever uses them), compiled by RC, to see where they land in the
+  package.
+- **Nav settings.** Not inverted. The .nav would have to show the CMapNavData settings it was
+  built with; NAV.md has no record of the file holding them. Open.
+
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's
@@ -967,7 +990,7 @@ CS2-closed session 10-29 evening (d167724):
 - Open from it: our world builder does not drop toolsskip faces (the decompile's fillers are
   toolsskip boxes).
 
-Queued for the next CS2-closed window (10-30): **s2c_biasprobe, lit.** Made with CS2 open by
+Queued for the next CS2-closed window (10-30): a map-variables probe (above, "Scripts and map links"), and **s2c_biasprobe, lit.** Made with CS2 open by
 `tools/map-survey/bias_probe_map.py <probe01.vmap> <ze_hold_em_p.vmap> <out.vmap>` (dmxconvert only),
 at `content/csgo_addons/s2c_rc_probe/maps/s2c_biasprobe.vmap`:
 - nodes 127-132: probe01's dev_measuregeneric01 box with every face at lightmapScaleBias -2, -1, 0, 1,

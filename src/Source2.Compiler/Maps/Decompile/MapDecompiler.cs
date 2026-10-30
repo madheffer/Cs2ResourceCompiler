@@ -1723,6 +1723,32 @@ public static class MapDecompiler
         return copy with { Entity = e with { Keys = keys, Connections = connections, Origin = origin, Angles = angles } };
     }
 
+    /// <summary>What the map loads that is not built into it (memory of the FGD survey, 10-20): a
+    /// skybox_reference's targetMapName and an info_spawngroup_load_unload's mapname are levels of
+    /// their own (their own maps/&lt;name&gt;.vpk, decompiled on their own), a point_script's
+    /// cs_script a compiled script in the addon's package (<see cref="ScriptSources"/>). The keys
+    /// themselves round trip with the entities; this lists them so the rest of the addon can follow.</summary>
+    public static List<(string ClassName, string Key, string Target)> Links(IEnumerable<EntityLumpAuthor.SourceEntity> entities)
+    {
+        var links = new List<(string, string, string)>();
+        foreach (var e in entities)
+        {
+            var key = e.Entity.ClassName switch
+            {
+                "skybox_reference" => "targetMapName",
+                "info_spawngroup_load_unload" => "mapname",
+                "point_script" => "cs_script",
+                _ => null,
+            };
+            if (key is null)
+                continue;
+            var value = e.Entity.Keys.FirstOrDefault(k => string.Equals(k.Key, key, StringComparison.OrdinalIgnoreCase)).Value;
+            if (!string.IsNullOrWhiteSpace(value))
+                links.Add((e.Entity.ClassName, key, value));
+        }
+        return links;
+    }
+
     /// <summary>The input dependencies the map's .vmap_c records (its RED2 block): content-relative file
     /// names with their CRC, the map's own source first, then every file the compile read (prefab maps
     /// among them).</summary>

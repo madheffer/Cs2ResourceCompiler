@@ -213,8 +213,8 @@
   "module": "World geometry",
   "subtask": "World physics (world_physics.vmdl_c)",
   "weight": 3,
-  "done": 0,
-  "evidence": "not started"
+  "done": 0.4,
+  "evidence": "10-30: probe01 PHYS byte-exact from the decompile (CP-SAT soup order); RED2 shape count 16 vs 4 (the source's mesh split); ze_hold_em_p: all 129 prop hulls exact, soup order, mesh pieces (9 vs 14) and surface order open (node 409's per-face lightmapScaleBias, s2c_biasprobe queued for CS2 closed)"
  },
  {
   "module": "World geometry",
@@ -256,21 +256,21 @@
   "subtask": "Map variables",
   "weight": 1,
   "done": 0,
-  "evidence": "not started"
+  "evidence": "10-30: every Hammer source has a CMapVariableSet, but 0 of 232 sources on this machine fill one: no ground truth; needs a probe map compiled by RC (CS2 closed)"
  },
  {
   "module": "Other map data",
   "subtask": "Scripts: does .vjs_c keep the source",
   "weight": 2,
-  "done": 0,
-  "evidence": "to check"
+  "done": 1,
+  "evidence": "10-30: yes, byte for byte: a PanoramaScript v4+ DATA block is the .js as read; CRC32 = the RED2 input CRC on 227 of 227 workshop scripts (77 addons). s2c decompile-scripts writes them at RED2's paths (ScriptSources, MapDecompilerTests.Scripts_KeepTheirSource). Scripts sit in the addon's package, never a map's .vpk"
  },
  {
   "module": "Other map data",
   "subtask": "Skybox and spawn-group map links",
   "weight": 1,
-  "done": 0,
-  "evidence": "not started"
+  "done": 1,
+  "evidence": "10-30: the keys round trip with the entities (probe_classes: skybox_reference + info_spawngroup_load_unload + point_script; atixref: skybox_reference, both exact); each linked level is its own .vpk, decompiled on its own; decompile-map lists the links (MapDecompiler.Links)"
  },
  {
   "module": "Verification",

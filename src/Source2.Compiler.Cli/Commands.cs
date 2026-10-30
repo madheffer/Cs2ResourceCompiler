@@ -667,11 +667,54 @@ internal static class Commands
                 Console.WriteLine($"  wrote {target}  ({bytes.Length:n0} bytes)");
             }
         }
+        // What the map loads from outside its own package: the levels to decompile on their own and
+        // the scripts decompile-scripts gives back from the addon's package.
+        foreach (var (className, key, target) in Maps.Decompile.MapDecompiler.Links(result.Entities).Distinct())
+            Console.WriteLine($"  links: {className} {key} = {target}");
         // The notes grouped by what they say, with an example each.
         foreach (var group in result.Notes.GroupBy(n => System.Text.RegularExpressions.Regex.Replace(n, @"^\S+ \S+: |\([^)]*\)", "").Trim())
                                           .OrderByDescending(g => g.Count()))
             Console.WriteLine($"  {group.Count(),5} x {group.Key}   (e.g. {group.First()})");
         return 0;
+    }
+
+    /// <summary>An addon's cs_script sources from its compiled .vjs_c (Maps.Decompile.ScriptSources).
+    /// Scripts sit in the addon's package, not in a map's own .vpk.</summary>
+    public static int DecompileScripts(string[] a)
+    {
+        var content = Require(Opt(a, "--content"), "--content <addon content dir>");
+        var inputs = a.Where((x, i) => !x.StartsWith('-') && (i == 0 || a[i - 1] != "--content")).ToList();
+        if (inputs.Count == 0)
+            throw new ArgumentException("missing an addon _dir.vpk or .vjs_c file");
+        var compiled = new List<(string Name, byte[] Bytes)>();
+        foreach (var input in inputs)
+        {
+            if (!input.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
+            {
+                compiled.Add((input, File.ReadAllBytes(input)));
+                continue;
+            }
+            using var package = new ValvePak.Package();
+            package.Read(input);
+            foreach (var entry in package.Entries.TryGetValue("vjs_c", out var scripts) ? scripts : [])
+                compiled.Add((entry.GetFullPath(), Io.VpkEntries.Read(package, entry)));
+        }
+        var failed = 0;
+        foreach (var (name, bytes) in compiled)
+        {
+            if (Maps.Decompile.ScriptSources.Recover(bytes) is not { } script)
+            {
+                Console.WriteLine($"  {name}: keeps no source text that matches its RED2 CRC; skipped");
+                failed++;
+                continue;
+            }
+            var target = Path.Combine(content, script.Path.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.WriteAllBytes(target, script.Source);
+            Console.WriteLine($"  wrote {target}  ({script.Source.Length:n0} bytes)");
+        }
+        Console.WriteLine($"{compiled.Count - failed} of {compiled.Count} scripts recovered");
+        return failed == 0 ? 0 : 1;
     }
 
     public static int Entities(string[] a)

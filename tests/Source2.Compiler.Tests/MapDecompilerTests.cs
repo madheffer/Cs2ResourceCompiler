@@ -475,6 +475,34 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// Every compiled cs_script of the subscribed workshop addons gives back its source: the
+    /// .vjs_c's plain text, at the path and with the CRC its RED2 records (ScriptSources).
+    /// 227 of 227 on 10-30.
+    /// </summary>
+    [Fact]
+    public void Scripts_KeepTheirSource()
+    {
+        if (MapFixtures.WorkshopDir() is not { } root) { MapFixtures.Skip("workshop addons"); return; }
+        int seen = 0, lost = 0;
+        foreach (var dir in Directory.EnumerateFiles(root, "*_dir.vpk", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
+        {
+            using var package = new ValvePak.Package();
+            package.Read(dir);
+            foreach (var entry in package.Entries.TryGetValue("vjs_c", out var scripts) ? scripts : [])
+            {
+                seen++;
+                if (ScriptSources.Recover(Source2.Compiler.Io.VpkEntries.Read(package, entry)) is null)
+                {
+                    lost++;
+                    output.WriteLine($"{dir}: {entry.GetFullPath()} keeps no source matching its RED2 CRC");
+                }
+            }
+        }
+        output.WriteLine($"{seen - lost} of {seen} scripts give back their source");
+        Assert.Equal(0, lost);
+    }
+
+    /// <summary>
     /// The brush entities' collision, through the forward compile: our entity model builder
     /// (Physics.EntityPhysicsModels) run on the decompiled meshes and on the true source, PHYS
     /// block against PHYS block for every model. A model either matches whole, or its hulls are
