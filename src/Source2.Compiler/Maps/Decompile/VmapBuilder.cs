@@ -32,6 +32,35 @@ public sealed class VmapBuilder
     /// <summary>The asset references of the file's prefix.</summary>
     public List<string> AssetReferences { get; } = [];
 
+    /// <summary>The map's variables (the root's mapVariables).</summary>
+    public DmxBinary.Element Variables { get; }
+
+    /// <summary>
+    /// A map variable of type "string" holding <paramref name="value"/>, last in the set. The type name
+    /// and the order entry (the variable's index) are what s2c_varprobe gave resourcecompiler, which
+    /// compiled it (ledger 187); no Hammer save with a variable has been read.
+    /// </summary>
+    public void AddVariable(string name, string value)
+    {
+        var index = (Variables.Get<object?[]>("variableNames") ?? []).Length;
+        Append(Variables, "variableNames", name);
+        Append(Variables, "variableValues", value);
+        Append(Variables, "variableTypeNames", "string");
+        Append(Variables, "variableTypeParameters", "");
+        Append(Variables, "variableGroupNames", "");
+        Append(Variables, "variableAndChoiceOrder", index);
+    }
+
+    /// <summary>Bind <paramref name="node"/>'s key <paramref name="key"/> to the map variable <paramref name="variable"/>.</summary>
+    public static void Bind(DmxBinary.Element node, string key, string variable)
+    {
+        Append(node, "variableTargetKeys", key);
+        Append(node, "variableNames", variable);
+    }
+
+    private static void Append(DmxBinary.Element e, string name, object value)
+        => e.Attributes[name] = (e.Get<object?[]>(name) ?? []).Append(value).ToArray();
+
     public VmapBuilder(string seed)
     {
         _seed = seed;
@@ -49,12 +78,17 @@ public sealed class VmapBuilder
                   .Set("hiddenFlags", T.Array(T.Int), Array.Empty<object?>());
         Placement(visibility, Vector3.Zero, Vector3.Zero, Vector3.One);
         Flags(visibility);
+        // CMapVariableSetStorage's attributes in its constructor's order (rc 0923 180fcdf10), as Hammer
+        // saves them (its re-save of s2c_dec_s2c_pinst7, 10-30).
         var variables = New("CMapVariableSet")
             .Set("variableNames", T.Array(T.String), Array.Empty<object?>())
             .Set("variableValues", T.Array(T.String), Array.Empty<object?>())
             .Set("variableTypeNames", T.Array(T.String), Array.Empty<object?>())
             .Set("variableTypeParameters", T.Array(T.String), Array.Empty<object?>())
-            .Set("m_ChoiceGroups", T.Array(T.Element), Array.Empty<object?>());
+            .Set("variableGroupNames", T.Array(T.String), Array.Empty<object?>())
+            .Set("m_ChoiceGroups", T.Array(T.Element), Array.Empty<object?>())
+            .Set("variableAndChoiceOrder", T.Array(T.Int), Array.Empty<object?>());
+        Variables = variables;
         var selection = New("CMapSelectionSet")
             .Set("children", T.Array(T.Element), Array.Empty<object?>())
             .Set("selectionSetName", T.String, "")
@@ -405,15 +439,16 @@ public sealed class VmapBuilder
     /// with the map (loadIfNested on, not at runtime), as a prefab that ships merged into its parent.
     /// </summary>
     public DmxBinary.Element AddPrefab(int nodeId, string targetMapPath, bool fixupEntityNames, string targetName,
-                                       Vector3 origin = default, Vector3 angles = default)
+                                       Vector3 origin = default, Vector3 angles = default,
+                                       IReadOnlyList<(string Variable, string Value)>? overrides = null)
     {
         var prefab = New("CMapPrefab");
         Node(prefab, nodeId, ReferenceId(nodeId));
         prefab.Set("relayPlugData", T.Element, PlugList())
               .Set("connectionsData", T.Array(T.Element), Array.Empty<object?>())
               .Set("target", T.Element, null)
-              .Set("variableOverrideNames", T.Array(T.String), Array.Empty<object?>())
-              .Set("variableOverrideValues", T.Array(T.String), Array.Empty<object?>());
+              .Set("variableOverrideNames", T.Array(T.String), (overrides ?? []).Select(o => (object?)o.Variable).ToArray())
+              .Set("variableOverrideValues", T.Array(T.String), (overrides ?? []).Select(o => (object?)o.Value).ToArray());
         Placement(prefab, origin, angles, Vector3.One);
         Flags(prefab);
         prefab.Set("customVisGroup", T.String, "")

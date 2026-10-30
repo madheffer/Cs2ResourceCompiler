@@ -4641,6 +4641,33 @@ game can answer is raised with the user first, and runs with -insecure.
        the ids Valve's resourcecompiler gives it (atixref: all 736 entities).
      - Not found in the code: where the clone drops a hollow node (CloneObjects 180f616e0 and the node clone 180f86a90
        copy every child; the ids are assigned after).
+187. **Map variables are written into the keys bound to them as a map loads** (2026-10-30, research/vmap-decompile:
+     decompile of resourcecompiler 0923, and s2c_varprobe compiled by resourcecompiler 1.41.9.3 -world -fshallow;
+     numbered past research/map-authoring's 186).
+     - Read: CMapVariableSetStorage's attributes (180fcdf10): variableNames, variableValues, variableTypeNames,
+       variableTypeParameters, variableGroupNames (string arrays), m_ChoiceGroups (element array), variableAndChoiceOrder
+       (int array); a choice group (180fcdcc0): m_ChoiceVariables, m_Choices, m_ActiveValue, m_GroupName. A node's
+       bindings are a table at CMapNode +0x3d0 (accessor 180f8bc90), serialized sorted into variableTargetKeys /
+       variableNames (180f93000); a CMapPrefab's overrides are variableOverrideNames / Values at +0x588 / +0x5a8.
+     - Read: the prefab load (180f96d40) runs 18107d160 once the prefab holds its map's set. For each variable in set
+       order it takes the value from 18107a810 (a choice group driving the variable first; else the placing prefab's
+       override when its override names hold the variable's, 180fa0570, case-blind, the first match, an empty value
+       counting; else the variable's own value; a non-empty value inside a prefab with the flag +0x55f goes through
+       18107c510, a transform of vector values by the placement) and gives it to every node of the map (180f86e70) via
+       1810ec600: each binding naming the variable (case-blind) has its key set through the key's attribute (vf 0x7a0)
+       when the value differs (case-blind); attribute types 0x24/0x25/0x26 convert first.
+     - Measured (tools/map-survey/variable_probe_map.py; types "string", order = indices, which no Hammer save showed,
+       Hammer loaded both maps without a variable error): the map's own variable gives its spawn targetname
+       "[PR#]map_level" (the usual fixup, its world's fixupEntityNames on); the prefab placed with overrides ships
+       "[PR#]over_relay" and priority Int32 5, the one without its map's defaults "[PR#]def_relay" and Int64 0 (the KV3
+       0/1 typing).
+     - Ported: MapVariables.Apply, from MapPrefabs.Attach (the map itself, then each placement's freshly loaded map).
+       EntityLumpAgainstValveTests s2c_varprobe exact, the other 26 prefab probes as before. Choice groups throw; the
+       +0x55f rewrite and the 0x24-0x26 conversions are not measured; whether the walk reaches nodes of prefabs nested
+       in the map is not measured (only the map's own nodes take its variables).
+     - Decompile: a key a later placement of a shared prefab map ships differently becomes a variable of the map with
+       the first's value, overridden by that placement (MapDecompiler.PlanVariables); MapDecompilerTests s2c_varprobe
+       exact. A top-level bound key is indistinguishable from a plain one and comes back plain.
 
 ## Resolved
 

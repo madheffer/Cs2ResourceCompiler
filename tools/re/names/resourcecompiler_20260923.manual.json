@@ -1861,6 +1861,78 @@
    "note": "a group at the prefab's transform, 181018e50 places the map, its nodes move into the group (vf 0x1c8), then the remap"
   },
   {
+   "addr": "180fcdf10",
+   "name": "CMapVariableSetStorage_Construct",
+   "module": "s2c:entities",
+   "note": "variableNames +0x98, variableValues +0xb8, variableTypeNames +0xd8, variableTypeParameters +0xf8, variableGroupNames +0x118, m_ChoiceGroups +0x138, variableAndChoiceOrder +0x160"
+  },
+  {
+   "addr": "180fcdcc0",
+   "name": "CMapVariableChoiceGroupStorage_Construct",
+   "module": "s2c:entities",
+   "note": "m_ChoiceVariables, m_Choices, m_ActiveValue, m_GroupName"
+  },
+  {
+   "addr": "180f8bc90",
+   "name": "CMapNode_VariableBindings",
+   "module": "s2c:entities",
+   "note": "lea rax, [rcx+0x3d0]: the node's key -> variable table"
+  },
+  {
+   "addr": "180f93000",
+   "name": "CMapNode_WriteVariableBindings",
+   "module": "s2c:entities",
+   "note": "the +0x3d0 table sorted into variableTargetKeys (+0x3f8) / variableNames (+0x418)"
+  },
+  {
+   "addr": "180fa07d0",
+   "name": "CMapPrefab_ConstructOverrides",
+   "module": "s2c:entities",
+   "note": "registers variableOverrideNames +0x588, variableOverrideValues +0x5a8; zeroes +0x5c8 (180f96d40 runs 18107d160 when it and its +0x1b0 are set)"
+  },
+  {
+   "addr": "180fa0570",
+   "name": "CMapPrefab_HasVariableOverride",
+   "module": "s2c:entities",
+   "note": "the name among variableOverrideNames (V_stricmp_fast, first match) with a value, an empty one included"
+  },
+  {
+   "addr": "180fa03d0",
+   "name": "CMapPrefab_GetVariableOverride",
+   "module": "s2c:entities",
+   "note": "that override's value"
+  },
+  {
+   "addr": "18107d160",
+   "name": "CMapVariableSet_ApplyToNodes",
+   "module": "s2c:entities",
+   "note": "each variable in order: its value (18107a810), then 1810ec600 on every node of the map (180f86e70 flags 0, 1, 1)"
+  },
+  {
+   "addr": "18107a810",
+   "name": "CMapVariableSet_ResolveValue",
+   "module": "s2c:entities",
+   "note": "a choice group driving it first, else the prefab's override (180fa0570), else the variable's value; prefab +0x55f sends a non-empty value through 18107c510"
+  },
+  {
+   "addr": "18107c510",
+   "name": "CMapVariableSet_TransformValue",
+   "module": "s2c:entities",
+   "note": "a value rewritten by the placing prefab's transform (vector math); not ported"
+  },
+  {
+   "addr": "1810ec600",
+   "name": "CMapNodeBindings_SetVariable",
+   "module": "s2c:entities",
+   "note": "each binding naming the variable (case-blind): the value through the key's attribute (types 0x24-0x26 convert), set by vf 0x7a0 when it differs case-blind"
+  },
+  {
+   "addr": "1810ec540",
+   "name": "CMapNodeBindings_FindKey",
+   "module": "s2c:entities",
+   "note": "the binding of a key (181006440 asks it of parentname)"
+  },
+  {
    "addr": "181114940",
    "name": "MapInstance_DeltaMatrix",
    "module": "s2c:geometry/mesh-export",

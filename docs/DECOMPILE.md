@@ -25,7 +25,7 @@ page's `subtasks` source at the new upload with `updated` set.
 
 This is the entry point. The sections after it are the dated working notes behind each line here.
 Branch `research/vmap-decompile` (worktree `D:\_cursor projects\source2-compiler-wt-decompile`),
-nothing pushed. Tracker **67.9%** (72.6 of 107 weighted points).
+nothing pushed. Tracker **70.1%** (75.0 of 107 weighted points).
 
 ### How to run it
 
@@ -61,7 +61,7 @@ compiled by Valve's resourcecompiler, never VRF or our compiler's output.
 | Prefabs | 76 | CMapPrefab nodes and prefab maps, name fixup, one map placed many times (FrameSolver, families nested in families), prefab file names from RED2 when one map is unambiguous |
 | Instances | 99 | Copies in prefab maps and in the map itself, copy ids through the block allocation, several collapses of one template across rounds and nesting, each later placement an exact solve (atixref's 199 copies) |
 | World geometry | 32 | probe01: world physics byte-exact from the decompile (soup vertices exact; triangle order solved as one CP-SAT model, C# in `Source2.Compiler.Solvers`, about 18 minutes). ze_hold_em_p: 86 prop_statics rebuilt from all 129 world hulls, every hull exact; every soup triangle gets its real material (split-stream render draws read) |
-| Other map data | 50 | Scripts: a .vjs_c keeps its .js byte for byte (227 of 227 workshop scripts, by the CRC RED2 records); skybox_reference, info_spawngroup_load_unload and point_script links round trip and are listed |
+| Other map data | 60 | Map variables (forward + decompile, s2c_varprobe exact both ways). Scripts: a .vjs_c keeps its .js byte for byte (227 of 227 workshop scripts, by the CRC RED2 records); skybox_reference, info_spawngroup_load_unload and point_script links round trip and are listed |
 | Verification | 55 | Entity round trip, brush physics round trip, Valve's resourcecompiler on 5 decompiles (every entity under Valve's id; found the hollow-node rule, ledger 182) |
 
 Decisions the user made on the way: brush entities whose model the source compile failed stay out
@@ -79,10 +79,11 @@ World geometry (the largest gap, 32%):
    (mesh pieces 9 vs 14, surface order wet/concrete_block, m_Materials, the soup's name) all come
    from source node 409, a subdivided, painted blend mesh. Its pieces are (lightmapScaleBias,
    material) groups split by paint layer, so a flat mesh with per-face bias and per-vertex paint
-   would do, but each face's bias is not readable from the fixture build. Compile
-   `content/csgo_addons/s2c_rc_probe/maps/s2c_biasprobe.vmap` lit with Valve's RC, then read the
-   lightmap density per bias (`DECOMPILE_LMDENSITY`) and node 134's pieces (`WORLDPHYS_PIECES`).
-   Recipe in the Handoff below.
+   would do. **10-30: the bias is readable from a lit build** (bias probes, "CS2-closed captures
+   10-30" below): log2(lightmap density) = c + 2·bias, face by face within one mesh. The fixture
+   build of ze is unlit, so the next step is **[closed] a lit RC compile of ze_hold_em_p**, then
+   group node 409's faces by density step, and the port: a flat mesh with per-face bias and
+   per-vertex paint, checked through `WORLDPHYS_PIECES`.
 2. **The source's mesh split** (RED2 physics_shape_count 16 vs 4 on probe01): the physics cannot
    decide it; it waits on the render-mesh port (render aggregates merge and re-split meshes).
 3. **Render meshes**: texture alignment (UV projection back to Hammer's face axes and scale),
@@ -100,8 +101,10 @@ Brush entities:
 
 Map file:
 9. **[closed] Hammer open and re-save check**: `cs2.exe -tools -insecure -addon s2c_rc_probe
-   -netconport 29000 -novid`, `open_asset maps/s2c_dec_s2c_pinst7.vmap`, `hammer_force_autosave`,
-   then diff the autosave against ours. Not run yet.
+   -netconport 29000 -novid`, `open_asset maps/s2c_dec_s2c_pinst7.vmap`, `hammer_force_autosave`.
+   **Run 10-30 on pinst7**: RC on Hammer's re-save = RC on ours (below). Left: a large map. Hammer
+   autosaves only maps it marks dirty, and 8 of the 9 decompiles loaded clean, so a re-save of
+   atixref or ze needs a way to dirty the document over netcon (not found yet).
 10. Element defaults for node placement, flags and class fields (declared in Hammer's tool
     attribute tables). Needs the Ghidra/ReVa connection, which can run with CS2 open.
 
@@ -116,8 +119,9 @@ Prefabs and entities:
     package; it stays a note.
 
 Other map data:
-15. **[closed] Map variables**: every source has a CMapVariableSet, but none of the 232 on this
-    machine fills one. Needs a probe map with variables compiled by RC to see where they land.
+15. **Map variables: done 10-30** (ledger 187): forward port and decompile, s2c_varprobe exact
+    both ways. Left: choice groups, the vector transform (prefab flag +0x55f), **[closed] RC on the
+    decompiled s2c_varprobe**, a Hammer save with a variable (type names, variableAndChoiceOrder).
 16. Nav settings (CMapNavData): first find whether and where the .nav keeps the settings it was
     built with (NAV.md has no record of it). Nav markup entities already round trip.
 17. TypeScript sources (PanoramaTypescript): read the same way, but no example checks it.
@@ -1000,6 +1004,50 @@ Two rules came out of it, each measured on a probe compiled by resourcecompiler:
   package lacks (the source's compile failed it) has no geometry to rebuild and so is dropped by a
   recompile: pinst7's 2138, atixref's 22 doors, buttons and breakables. func_water's models are
   render-only (no hulls) and come back with render meshes (plan 3).
+
+### CS2-closed captures 10-30
+
+All with Valve's resourcecompiler 1.41.9.3 (`tools/pipeline/compile_fresh.py`, packages and vrad3
+folders kept in `%TEMP%resh_compile`).
+
+- **Lightmap scale bias.** `tools/map-survey/bias_probe_map.py` (probe01 plus copies of its
+  dev_measuregeneric01 box at each bias, a box with faces alternating 0 and 1, ze's node 409), full
+  compiles, read with `DECOMPILE_WORLD_MESHES=1 DECOMPILE_LMDENSITY=<file> s2c decompile-map`:
+  - s2c_biasprobe (boxes 512 wide, 256 apart, so they overlap): bias -2..2 give log2 density
+    -27.8, -25.8, -23.8, -21.8, -19.8; bias 3 -18.46, capped (RC: "extremely large in lightmap",
+    4052x129). Node 409's slab triangles fall in three clusters 1.6 apart, not 2: its charts are
+    huge (21000 units) and outside probe01's lightmap volumes, so not a clean reading.
+  - s2c_biasprobe2 (`BIAS_PROBE_SPACING=640 BIAS_PROBE_ZE_Y=8192`): boxes past probe01's
+    `toolslightmapres` volumes (nodes 79 and 93 set the base density) lose the steps; the last box
+    is outside the world and has no triangles. Discarded.
+  - s2c_biasprobe3 (`BIAS_PROBE_ROW=1` with the mesh `scales` 0.25): **resourcecompiler ignores a
+    mesh's scales**, the boxes stayed 512 wide. Discarded.
+  - **s2c_biasprobe4** (`BIAS_PROBE_ROW=1 BIAS_PROBE_ZE_Y=none`, vertices scaled to 128-wide boxes
+    in a row inside volume 79): log2 density -27.4, -25.3, -23.4, -21.4, -19.4, -17.4 for bias -2..3,
+    so **×4 in area per step with no cap**, and the alternating box reads -23.4 on its bias-0 faces
+    and -21.4 on its bias-1 faces: **each face's bias is readable within one mesh**. The base
+    (c = -23.4 here, -23.8 on probe 1) moves with the map's packing, so a decompile reads steps
+    relative to one map, not absolute values.
+- **Map variables** (s2c_varprobe and its prefab map s2c_varinner, `tools/map-survey/variable_probe_map.py`):
+  ledger 187. RC substitutes each bound key's text with the variable's value as the map loads (the
+  map's own value, or the placing prefab's override); the shipped keys look like plain ones
+  (`[PR#]map_level` is the world's fixup, Int32 5 the usual typing). Hammer opened both maps without
+  a variable error.
+- **Hammer re-save.** cs2 -tools with netcon, `open_asset` on 9 fresh decompiles (pinst7, probe8, probe4,
+  atixref, prefabinst, probe9, cablecoll, ze_hold_em_p, probe01): all opened; `hammer_force_autosave`
+  wrote only pinst7 (`content/_toolsautosave/hammer/csgo_addons/s2c_rc_probe/maps/s2c_dec_s2c_pinst7001.vmap_autosave`,
+  copied to `maps/s2c_rs_s2c_pinst7.vmap`). What Hammer changed (element graph diff): it adds every
+  FGD default key, a randomSeed per node, transformPin and customVisGroup on every node, CMapMesh's
+  full field list in its own order (physicsCollisionProperty, bakeLightDoubleSided, keep_vertices,
+  steamaudioGeometryMode, detail layers ...), the CMapVariableSet's seven fields; it shifts some
+  texture coordinates by whole units and writes a 3-component color for one key. RC on the re-save
+  against RC on our file (`DECOMPILE_RC`): 80/80 entities, 5/5 brush PHYS equal, the 12 differences
+  all the map name in paths. Quitting over netcon left cs2 waiting (a save prompt for the dirty map);
+  it had to be killed.
+
+Queued for the next CS2-closed window: a lit compile of ze_hold_em_p (node 409's biases); RC on the
+decompiled s2c_varprobe; a Hammer save with a map variable (open s2c_varinner, touch the set, save) if
+a way to dirty a document over netcon turns up.
 
 ### Scripts and map links (2026-10-30, CS2 open)
 

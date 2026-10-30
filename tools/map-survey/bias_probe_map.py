@@ -16,6 +16,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "coverage"))
 import probe_map as pm  # noqa: E402
 
 BIASES = [-2, -1, 0, 1, 2, 3]
+# The box is 512 units along y: s2c_biasprobe (10-30) used 256 and its boxes overlapped; s2c_biasprobe2 uses
+# BIAS_PROBE_SPACING=640 BIAS_PROBE_ZE_Y=8192.
+SPACING = int(os.environ.get("BIAS_PROBE_SPACING", "256"))
+ZE_Y = os.environ.get("BIAS_PROBE_ZE_Y", "4096")  # "none": leave node 409 out
+# BIAS_PROBE_ROW=1 (s2c_biasprobe4): the boxes' vertices scaled 0.25 x 0.25, in a row along x 160 apart at y 0, z 128, all
+# inside probe01's toolslightmapres volume 79 (x -208..1248, y -928..912, z 0..256) and clear of its geometry;
+# probes 1 and 2 crossed volumes 79 and 93, which set the base density.
+ROW = os.environ.get("BIAS_PROBE_ROW") == "1"
 
 
 def load(path):
@@ -63,7 +71,15 @@ def main(base, ze, out):
     made = []
 
     def place(c, dy):
-        c.set("origin", "vector3", " ".join(f"{v:g}" for v in [origin[0], origin[1] + dy, origin[2]]))
+        if ROW:
+            k = dy // SPACING - 1
+            c.set("origin", "vector3", f"{-112 + 160 * k:g} 0 128")
+            # resourcecompiler ignores a mesh's scales (s2c_biasprobe3, 10-30): scale the vertices.
+            s = stream(c, "vertexData", "position")
+            s.set("data", s.fields[[f[0] for f in s.fields].index("data")][1],
+                  [" ".join(f"{float(v) * m:g}" for v, m in zip(p.split(), (0.25, 0.25, 1))) for p in s.get("data")])
+        else:
+            c.set("origin", "vector3", " ".join(f"{v:g}" for v in [origin[0], origin[1] + dy, origin[2]]))
         world.get("children").append(c)
 
     for i, bias in enumerate(BIASES):
@@ -71,23 +87,26 @@ def main(base, ze, out):
         ids.renew(c)
         s = stream(c, "faceData", "lightmapScaleBias")
         s.set("data", "int_array", [str(bias)] * len(s.get("data")))
-        place(c, 256 * (i + 1))
+        place(c, SPACING * (i + 1))
         made.append((c.get("nodeID"), f"all faces {bias}"))
     c = copy.deepcopy(box)
     ids.renew(c)
     s = stream(c, "faceData", "lightmapScaleBias")
     s.set("data", "int_array", [str(k % 2) for k in range(len(s.get("data")))])
-    place(c, 256 * (len(BIASES) + 1))
+    place(c, SPACING * (len(BIASES) + 1))
     made.append((c.get("nodeID"), "faces alternating 0, 1"))
 
     source = next(e for e in everything(ze_tops) if e.type == "CMapMesh" and e.get("nodeID") == "409")
-    c = copy.deepcopy(source)
-    ids.renew(c)
-    o = [float(x) for x in source.get("origin").split()]
-    c.set("origin", "vector3", " ".join(f"{v:g}" for v in [o[0], 4096, o[2]]))
-    world.get("children").append(c)
-    biases = stream(c, "faceData", "lightmapScaleBias").get("data")
-    made.append((c.get("nodeID"), f"ze_hold_em_p node 409: biases {sorted(set(biases))}, {biases.count('0')} at 0, {biases.count('1')} at 1"))
+    if ZE_Y == "none":
+        source = None
+    if source is not None:
+      c = copy.deepcopy(source)
+      ids.renew(c)
+      o = [float(x) for x in source.get("origin").split()]
+      c.set("origin", "vector3", " ".join(f"{v:g}" for v in [o[0], float(ZE_Y), o[2]]))
+      world.get("children").append(c)
+      biases = stream(c, "faceData", "lightmapScaleBias").get("data")
+      made.append((c.get("nodeID"), f"ze_hold_em_p node 409: biases {sorted(set(biases))}, {biases.count('0')} at 0, {biases.count('1')} at 1"))
 
     work = tempfile.mkdtemp(prefix="bias_probe_out_")
     text_out = os.path.join(work, "out_text.vmap")

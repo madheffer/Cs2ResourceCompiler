@@ -103,6 +103,9 @@ public partial class EntityLumpAgainstValveTests(ITestOutputHelper output)
     [InlineData("s2c_slotprobe9")]
     [InlineData("s2c_prefabslot")]
     [InlineData("s2c_brushless")]
+    // Map variables (tools/map-survey/variable_probe_map.py): the map's own, bound to a targetname, and a
+    // prefab map's two, placed overridden and at their defaults.
+    [InlineData("s2c_varprobe")]
     public void PrefabProbe_DiffersOnlyInTheDocumentedGaps(string map)
     {
         var source = MapFixtures.VmapSource("s2c_rc_probe", map);

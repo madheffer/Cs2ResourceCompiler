@@ -50,6 +50,8 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     // render-only ones over materials, tints and shapes (s2c_cablerender), both -world builds.
     [InlineData("s2c_rc_probe", "s2c_cablecoll")]
     [InlineData("s2c_rc_probe", "s2c_cablerender")]
+    // Map variables: the map's own and a prefab map's, overridden and at their defaults.
+    [InlineData("s2c_rc_probe", "s2c_varprobe")]
     public void Entities_CompileAsTheSourceDoes(string addon, string map)
     {
         var source = MapFixtures.VmapSource(addon, map);

@@ -229,6 +229,11 @@ public static class MapDecompiler
         foreach (var placements in families)
             foreach (var later in placements.Skip(1).Where(p => p.Children.Count > 0))
                 LandNested(placements[0], later, Canonical, notes);
+        // A later placement whose node ships another value of a key than the first's: one map cannot
+        // hold both, so the key is bound to a variable of the map, the first's value its own and the
+        // later placement's an override (MapVariables; s2c_varprobe's priority 5 and 0).
+        foreach (var placements in families)
+            PlanVariables(placements, notes);
 
         // A prefab map's own instances collapsed more than once (its copies' indices start again):
         // planned as the map's own are (InstancePlan), over the prefab map's nodes. A shared prefab
@@ -636,6 +641,9 @@ public static class MapDecompiler
                     notes.Add($"{x.ClassName} {x.NodeId}: not rebuilt as a cable ({string.Join("; ", e.Dropped.Where(d => d.StartsWith("pathNodes", StringComparison.Ordinal)))}); kept as an entity");
                 var entityNode = builder.AddEntity(x.NodeId, x.Keys, x.Origin, x.Angles, x.Scales, x.Connections,
                                                    parent: layer is null ? null : layerNode);
+                var inner = e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..];
+                foreach (var v in scope.Variables.Where(v => v.Inner == inner))
+                    VmapBuilder.Bind(entityNode, v.Key, v.Variable);
                 if (e.BrushModel is { } model)
                     AddBrushGeometry(builder, entityNode, e, model, files, table, notes, NewId);
                 at = Math.Max(at, e.SourceId + 1);
@@ -660,7 +668,7 @@ public static class MapDecompiler
                 {
                     // Placed again: no new indices, its nodes are the first placement's.
                     builder.AddPrefab(child.NodeId, first.Path(mapName), fix?.Own is not null, fix?.TargetName ?? "",
-                                      child.Placement.Origin, child.Placement.Angles);
+                                      child.Placement.Origin, child.Placement.Angles, child.Overrides);
                     continue;
                 }
                 // The prefab map's world takes the index ahead of its first node.
@@ -670,6 +678,8 @@ public static class MapDecompiler
                                   child.Placement.Origin, child.Placement.Angles);
                 child.Builder = new VmapBuilder($"{mapName}/{child.Chain}");
                 child.Builder.SetWorld(1, [new("classname", "worldspawn")], [], false, "standard");
+                foreach (var v in child.Variables)
+                    child.Builder.AddVariable(v.Variable, v.Value);
                 Emit(child);
             }
             // The instance, at the map's root after its nodes: its copies land where the map's
@@ -1204,6 +1214,12 @@ public static class MapDecompiler
         /// <summary>A later placement's prefab transform over the first's map.</summary>
         public (Vector3 Origin, Vector3 Angles) Placement { get; set; }
 
+        /// <summary>A first placement's map variables: the node (inner id) and key each binds, and its value.</summary>
+        public List<(string Inner, string Key, string Variable, string Value)> Variables { get; } = [];
+
+        /// <summary>A later placement's overrides of its map's variables.</summary>
+        public List<(string Variable, string Value)> Overrides { get; } = [];
+
         /// <summary>The map's instances rebuilt from copies of more than one collapse.</summary>
         public InstancePlan? Plan { get; set; }
 
@@ -1301,6 +1317,43 @@ public static class MapDecompiler
     /// prefab nodes take its transforms. With no solution, the first placement stands where it is
     /// and the later ones take <see cref="SharedPlacement"/>, noted.
     /// </summary>
+    /// <summary>
+    /// The map variables a shared prefab map needs: a key a later placement's node ships with another
+    /// value than the first's is bound to a variable "&lt;key&gt;_&lt;inner id&gt;" holding the first's
+    /// value, which that placement overrides (the forward: MapVariables). Nodes are paired by inner id;
+    /// a key one side lacks cannot be set this way (a binding sets a value, it removes none) and is noted.
+    /// </summary>
+    private static void PlanVariables(List<Scope> placements, List<string> notes)
+    {
+        var first = placements[0];
+        static string Inner(EntityLumpAuthor.SourceEntity e) => e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..];
+        var byInner = first.Entities.GroupBy(Inner).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        foreach (var later in placements.Skip(1))
+            foreach (var l in later.Entities)
+            {
+                if (!byInner.TryGetValue(Inner(l), out var f))
+                    continue;
+                var theirs = l.Entity.Keys.GroupBy(k => k.Key, StringComparer.OrdinalIgnoreCase)
+                              .ToDictionary(g => g.Key, g => g.First().Value, StringComparer.OrdinalIgnoreCase);
+                foreach (var (key, value) in f.Entity.Keys)
+                {
+                    if (!theirs.TryGetValue(key, out var other))
+                    {
+                        notes.Add($"prefab {later.Chain}: node {Inner(l)} has no {key} where prefab {first.Chain}'s has one; not rebuilt");
+                        continue;
+                    }
+                    if (string.Equals(value, other, StringComparison.Ordinal))
+                        continue;
+                    var name = $"{key}_{Inner(f)}";
+                    if (!first.Variables.Any(v => v.Variable == name))
+                        first.Variables.Add((Inner(f), key, name, value));
+                    later.Overrides.Add((name, other));
+                }
+            }
+        if (first.Variables.Count > 0)
+            notes.Add($"prefab {first.Chain}: {first.Variables.Count} map variables for keys its {placements.Count} placements ship differently");
+    }
+
     private static void SolveFrame(List<Scope> placements, List<string> notes)
     {
         string Inner(EntityLumpAuthor.SourceEntity e) => e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..];
