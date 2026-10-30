@@ -625,8 +625,21 @@ Open, in order:
      true on the source: 11 pieces, all contiguous); the lag window (`--lag 8`, a search bound, the source
      needs 7, face-level: lone triangle or quad by the pair's highest corner).
    Measured: along the source's order 2 s; source prefix 220: 15 s; halves alone 36/77 s. Without the
-   piece blocks the free solve did not finish in 500 s. Next: port to C# (Google.OrTools NuGet, or our
-   own CDCL), then ze_hold_em_p (one connected piece, so no piece blocks; prop_static hulls first).
+   piece blocks the free solve did not finish in 500 s.
+   **C# (10-30 night):** `src/Source2.Compiler.Solvers/WorldOrderCpSat.cs` (Google.OrTools 9.15), a
+   project of its own so Source2.Compiler takes no solver dependency: the core builds
+   `WorldGeometry.OrderProblem` and calls the `WorldGeometry.OrderSolver` hook, which `s2c decompile-map`
+   installs. With `DECOMPILE_WORLD_SEARCH=1` (still off by default) the solver's order guides the forward
+   search, which puts the faces back (`DECOMPILE_SEARCH_DIRECTION=forward|backward` skips the solver,
+   `DECOMPILE_SEARCH_SECONDS`, default 1800). probe01 end to end: Optimal in 1054 s, world PHYS 0
+   differences.
+   **Left on probe01: RED2 physics_shape_count / _mesh_count 16 vs 4.** The count is the source's mesh
+   pieces (16: nine boxes, the skybox, four boxes welded into one connected piece, two reflectivity meshes
+   welded into another; `WORLDPHYS_PIECES=<file>` lists them). The soup welds across meshes, so where
+   the meshes split changes no PHYS byte: the physics alone does not decide it. The render aggregates
+   do not map 1:1 either (`agg_merge_*`: 28 draws for the 2 reflectivity meshes, 10 for the 13 boxes,
+   merged and split again), so the split comes with the render-mesh port (Brush/world render item).
+   Next: ze_hold_em_p (one connected piece, so no piece blocks; prop_static hulls first).
    Debug switches: `DECOMPILE_SEARCH_BUDGET` (default 5M), `DECOMPILE_SEARCH_GUIDE=preimage` (worse:
    deepest 87), `DECOMPILE_TRUTH_PREFIX=n`, `DECOMPILE_SEARCH_PREFER=inverted`, `DECOMPILE_SEARCH_SLOTS=all`,
    `DECOMPILE_WORLDDEBUG=1`.

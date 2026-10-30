@@ -634,6 +634,8 @@ internal static class Commands
     /// <summary>A compiled map package back to a .vmap (Maps.Decompile.MapDecompiler).</summary>
     public static int DecompileMap(string[] a)
     {
+        // The world soup's order, when the world search runs (DECOMPILE_WORLD_SEARCH=1): CP-SAT.
+        Source2.Compiler.Solvers.WorldOrderCpSat.Install();
         var path = Positional(a, "map .vpk");
         var outPath = Require(Opt(a, "-o"), "-o <out.vmap>");
         var cs2 = Require(Opt(a, "--cs2") ?? Environment.GetEnvironmentVariable("CS2_DIR"), "--cs2 <CS2 install dir> (or CS2_DIR)");

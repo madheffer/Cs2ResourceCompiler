@@ -1040,43 +1040,7 @@ internal static class WorldGeometry
                     Console.Error.WriteLine($"node {i} ({set.Count}, {left.Count} left): {new string([.. truth.Where(set.Contains).Select(t => left.Contains(t) ? 'L' : 'R')])}");
                 }
         }
-        var byEdge = new Dictionary<(int, int), int>();
-        for (var t = 0; t < soup.Count; t++)
-            foreach (var (x, y) in (ValueTuple<int, int>[])[(soup[t].A, soup[t].B), (soup[t].B, soup[t].C), (soup[t].C, soup[t].A)])
-                byEdge[(x, y)] = t;
-        Vector3 Normal(int k) => Vector3.Normalize(Vector3.Cross(vertices[soup[k].B] - vertices[soup[k].A], vertices[soup[k].C] - vertices[soup[k].A]));
-        // The faces each triangle can begin: itself alone from each corner, or a quad cut into it then a
-        // neighbour.
-        var begins = new List<(int Partner, int[] Loop, int[] Corners)>[soup.Count];
-        var partners = new List<int>[soup.Count];
-        for (var t = 0; t < soup.Count; t++)
-        {
-            int[] own = [soup[t].A, soup[t].B, soup[t].C];
-            begins[t] = [.. Enumerable.Range(0, 3).Select(r => (-1, (int[])[own[r], own[(r + 1) % 3], own[(r + 2) % 3]], (int[])[own[r], own[(r + 1) % 3], own[(r + 2) % 3]]))];
-            partners[t] = [];
-            for (var x = 0; x < 3; x++)
-            {
-                if (!byEdge.TryGetValue((own[(x + 1) % 3], own[x]), out var u) || u == t)
-                    continue;
-                var (n1, n2) = (Normal(t), Normal(u));
-                if (!(Vector3.Dot(n1, n2) > 1 - 1e-5f && MathF.Abs(Vector3.Dot(n1, vertices[own[0]]) - Vector3.Dot(n1, vertices[soup[u].A])) < 1e-3f))
-                    continue;
-                partners[t].Add(u);
-                int[] other = [soup[u].A, soup[u].B, soup[u].C];
-                var third = other.First(v => !own.Contains(v));
-                int[] loop = [.. own.Take(x + 1), third, .. own.Skip(x + 1)];
-                for (var r = 0; r < 4; r++)
-                {
-                    var rotated = loop.Skip(r).Concat(loop.Take(r)).ToArray();
-                    var cut = PolygonTriangulator.Triangulate([.. rotated.Select(v => vertices[v])]);
-                    if (cut.Length != 6)
-                        continue;
-                    var corners = cut.Select(i => rotated[i]).ToArray();
-                    if (Norm((corners[0], corners[1], corners[2])) == Norm(soup[t]) && Norm((corners[3], corners[4], corners[5])) == Norm(soup[u]))
-                        begins[t].Add((u, rotated, corners));
-                }
-            }
-        }
+        var (begins, partners) = Begins(soup, vertices);
         // DECOMPILE_SEARCH_DUMP=<file>: the problem as JSON (soup corners, faces each triangle can begin,
         // the BVH trace in pre-order as soup ids, the source's order when known) for an outside solver.
         if (Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_DUMP") is { Length: > 0 } dumpFile)
@@ -1283,6 +1247,94 @@ internal static class WorldGeometry
         return found;
     }
 
+    /// <summary>
+    /// A soup's input order as a constraint problem, for an outside solver (<see cref="OrderSolver"/>):
+    /// the soup's corners (vertex ids), each quad a triangle can begin (it first, then its partner, with the
+    /// corner starts the pair can take, as rotations of each one's corners), the BVH trace in pre-order as
+    /// soup ids, the lag window and a time limit.
+    /// </summary>
+    public sealed record OrderProblem(int Vertices, int[][] Soup, (int First, int Second, (int First, int Second)[] Starts)[] Quads,
+                                      (int[] Set, int[]? Left, bool ByCount)[] Trace, int Lag, double Seconds);
+
+    /// <summary>
+    /// Solves an <see cref="OrderProblem"/>: soup ids by input slot (null when none was found in time) and a
+    /// report. Set by the host (Source2.Compiler.Solvers' WorldOrderCpSat), so this library takes no solver
+    /// dependency; unset, the forward search runs on its own.
+    /// </summary>
+    public static Func<OrderProblem, (int[]? Order, string Report)>? OrderSolver;
+
+    private static int[]? SolveOrder(List<(int[] Entry, HashSet<int>? Left, bool ByCount)> trace, Func<int, int> soupOf, Vector3[] vertices,
+                                     List<(int A, int B, int C)> soup, int lag, out string report)
+    {
+        report = "";
+        if (OrderSolver is null)
+            return null;
+        var (begins, _) = Begins(soup, vertices);
+        var quads = new Dictionary<(int, int), HashSet<(int, int)>>();
+        for (var t = 0; t < soup.Count; t++)
+            foreach (var (u, _, c) in begins[t])
+                if (u >= 0)
+                {
+                    int[] own = [soup[t].A, soup[t].B, soup[t].C], other = [soup[u].A, soup[u].B, soup[u].C];
+                    if (!quads.TryGetValue((t, u), out var starts))
+                        quads[(t, u)] = starts = [];
+                    starts.Add((Array.IndexOf(own, c[0]), Array.IndexOf(other, c[3])));
+                }
+        var seconds = double.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_SECONDS"), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var s) ? s : 1800;
+        var problem = new OrderProblem(vertices.Length, [.. soup.Select(t => (int[])[t.A, t.B, t.C])],
+            [.. quads.Select(q => (q.Key.Item1, q.Key.Item2, q.Value.Order().ToArray()))],
+            [.. trace.Select(n => (n.Entry.Select(soupOf).ToArray(), n.Left?.Select(soupOf).ToArray(), n.ByCount))], lag, seconds);
+        var (order, said) = OrderSolver(problem);
+        report = said;
+        return order;
+    }
+
+    /// <summary>
+    /// The faces each soup triangle can begin: itself alone from each corner, or a quad (with a coplanar
+    /// neighbour across an edge) that the triangulator cuts into it and then that neighbour; and each
+    /// triangle's possible quad partners.
+    /// </summary>
+    internal static (List<(int Partner, int[] Loop, int[] Corners)>[] Begins, List<int>[] Partners) Begins(List<(int A, int B, int C)> soup, Vector3[] vertices)
+    {
+        var byEdge = new Dictionary<(int, int), int>();
+        for (var t = 0; t < soup.Count; t++)
+            foreach (var (x, y) in (ValueTuple<int, int>[])[(soup[t].A, soup[t].B), (soup[t].B, soup[t].C), (soup[t].C, soup[t].A)])
+                byEdge[(x, y)] = t;
+        Vector3 Normal(int k) => Vector3.Normalize(Vector3.Cross(vertices[soup[k].B] - vertices[soup[k].A], vertices[soup[k].C] - vertices[soup[k].A]));
+        var begins = new List<(int Partner, int[] Loop, int[] Corners)>[soup.Count];
+        var partners = new List<int>[soup.Count];
+        for (var t = 0; t < soup.Count; t++)
+        {
+            int[] own = [soup[t].A, soup[t].B, soup[t].C];
+            begins[t] = [.. Enumerable.Range(0, 3).Select(r => (-1, (int[])[own[r], own[(r + 1) % 3], own[(r + 2) % 3]], (int[])[own[r], own[(r + 1) % 3], own[(r + 2) % 3]]))];
+            partners[t] = [];
+            for (var x = 0; x < 3; x++)
+            {
+                if (!byEdge.TryGetValue((own[(x + 1) % 3], own[x]), out var u) || u == t)
+                    continue;
+                var (n1, n2) = (Normal(t), Normal(u));
+                if (!(Vector3.Dot(n1, n2) > 1 - 1e-5f && MathF.Abs(Vector3.Dot(n1, vertices[own[0]]) - Vector3.Dot(n1, vertices[soup[u].A])) < 1e-3f))
+                    continue;
+                partners[t].Add(u);
+                int[] other = [soup[u].A, soup[u].B, soup[u].C];
+                var third = other.First(v => !own.Contains(v));
+                int[] loop = [.. own.Take(x + 1), third, .. own.Skip(x + 1)];
+                for (var r = 0; r < 4; r++)
+                {
+                    var rotated = loop.Skip(r).Concat(loop.Take(r)).ToArray();
+                    var cut = PolygonTriangulator.Triangulate([.. rotated.Select(v => vertices[v])]);
+                    if (cut.Length != 6)
+                        continue;
+                    var corners = cut.Select(i => rotated[i]).ToArray();
+                    if (Norm((corners[0], corners[1], corners[2])) == Norm(soup[t]) && Norm((corners[3], corners[4], corners[5])) == Norm(soup[u]))
+                        begins[t].Add((u, rotated, corners));
+                }
+            }
+        }
+        return (begins, partners);
+    }
+
     /// <summary>Debugging: DECOMPILE_TRUTH=&lt;file of the source's input triangles, as SoupInputsOfTwoMaps
     /// dumps them&gt; as soup triangle ids in input order (each matched within 1/32), to keep a search to it.</summary>
     private static int[]? Truth(List<(int A, int B, int C)> soup, Vector3[] vertices)
@@ -1452,12 +1504,18 @@ internal static class WorldGeometry
                     if (soupOf[i] >= 0)
                         rankOfSoup[soupOf[i]] = Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_GUIDE") == "preimage" ? position[i] : i;
                 // DECOMPILE_SEARCH_DIRECTION=backward: from the input's end (exact BVH, hidden choices);
-                // otherwise from its start.
-                var found = Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_DIRECTION") == "backward"
+                // =forward: from its start on its own; otherwise the order solver's answer (OrderSolver,
+                // when the host set one) followed by the forward search, which puts the faces back.
+                var direction = Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_DIRECTION");
+                var lag = int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_LAG"), out var lg) ? lg : 8;
+                var solved = "";
+                var guide = Truth(shipped, vertices) ?? (direction is "forward" or "backward" ? null : SolveOrder(trace, x => soupOf[x], vertices, shipped, lag, out solved));
+                var found = direction == "backward"
                     ? BackwardSearch(trace, x => soupOf[x], vertices, shipped,
                         Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_PREFER") == "inverted" ? pattern : own, rankOfSoup, budget, out searched)
-                    : ForwardSearch(trace, x => soupOf[x], vertices, shipped, rankOfSoup, budget,
-                        int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_SEARCH_LAG"), out var lag) ? lag : 8, Truth(shipped, vertices), out searched);
+                    : ForwardSearch(trace, x => soupOf[x], vertices, shipped, rankOfSoup, budget, lag, guide, out searched);
+                if (solved.Length > 0)
+                    searched = $"{solved}; {searched}";
                 if (found is not null)
                 {
                     var memberOfTriangle = flat.SelectMany(x => x.Triangles.Select(t => (t, m: memberOf[x]))).ToDictionary(x => x.t, x => x.m);

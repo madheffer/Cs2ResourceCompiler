@@ -126,6 +126,9 @@ public sealed class WorldPhysics
         var meshPieces = ordered.Where(p => p.Type == WorldCollision.MeshType).ToList();
         var meshes = meshPieces.Select(p => (Attribute: AttributeOf(p.Physics, p), Surface: SurfaceOf(p.Physics, p), p.Points, p.Indices)).ToList();
         model.MeshPieces = meshes.Count;
+        // Debugging: WORLDPHYS_PIECES=<file> lists the mesh pieces (node, material, triangles, first point).
+        if (Environment.GetEnvironmentVariable("WORLDPHYS_PIECES") is { Length: > 0 } piecesFile)
+            File.AppendAllLines(piecesFile, meshPieces.Select(p => $"node {p.NodeId} {p.MaterialName} tris {p.Indices.Length / 3} points {p.Points.Length} first {(p.Points.Length > 0 ? p.Points[0] : default)}").Append("--"));
         foreach (var soup in WorldCollision.Group(meshes))
         {
             soupInput?.Invoke([.. soup.Indices], [.. soup.Vertices], soup.Materials?.ToArray());
