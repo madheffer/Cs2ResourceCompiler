@@ -21,11 +21,28 @@ Valve's compile of the true Hammer source. To update: edit the rows in
 `tools/map-survey/decompile_progress.json`, upload the file to the page as an asset, and point the
 page's `subtasks` source at the new upload with `updated` set.
 
-## Status and what is left (2026-10-30)
+## Status and what is left (2026-10-30, night)
 
 This is the entry point. The sections after it are the dated working notes behind each line here.
 Branch `research/vmap-decompile` (worktree `D:\_cursor projects\source2-compiler-wt-decompile`),
-nothing pushed. Tracker **70.1%** (75.0 of 107 weighted points).
+nothing pushed (last commit 90b1e9b). Tracker **70.5%** (75.5 of 107 weighted points).
+
+### Start here (next agent)
+
+1. Read the rules that bind this work: no guessing, every rule from a decompile, Frida or an RC
+   capture, logged in `docs/GROUND_TRUTH.md` (last entry 188; research/map-authoring has used 186);
+   addresses only in `tools/re/names/make_manual.py`, then `python tools/re/address_doc.py`; heavy
+   jobs (RC, cubehost, vrad3, whole-map test runs) only through `python tools/re/heavy.py run --who
+   <you> --what "<label>" -- <command>`, and check `heavy.py status` first: other sessions share the
+   queue and wait on it; kill every process you start; commit as
+   `6407692+madheffer@users.noreply.github.com`, never push.
+2. With CS2 open you may only decompile, port, and run Idle offline tests. With CS2 **and Steam**
+   closed: RC, cubehost and Frida. cs2.exe itself cannot run the tools with Steam closed.
+3. The next decompiler step with CS2 open: **node 409's biases from the physics** (item 1 below).
+   The next CS2-closed step: **Hammer saves of atixref, probe01 and prefabprobe9**, then ze alone
+   (item 9).
+4. After a milestone: the tracker rows (`tools/map-survey/decompile_progress.json`, then upload and
+   repoint the page, "Progress tracker" above), this section, and memory.
 
 ### How to run it
 
@@ -55,14 +72,14 @@ compiled by Valve's resourcecompiler, never VRF or our compiler's output.
 
 | Module | % | What works, and on what |
 |---|---|---|
-| Map file | 52 | Binary DMX writer (Hammer saves round trip as graphs); vmap 40 element shapes measured from Hammer saves; root and world element defaults read from hammer.dll |
+| Map file | 55 | Binary DMX writer (Hammer saves round trip as graphs); vmap 40 element shapes measured from Hammer saves; root and world element defaults read from hammer.dll; Hammer's own save of a decompile, run headless from cubehost (`hammer_autosave.py`), compiles to the same entities (pinst7, s2c_varprobe) |
 | Entities | 98 | BuildEntity inverted (key tables, compile-added keys removed, outputs, `[PR#]` fixup), point templates and their removed members (placement an exact solve), world layers, walk numbering with placeholders, settled props (pose + Start asleep), ropes (CMapPath, nodes and tangents solved), cables (CMapCable; collision cables' settings exact through their physics mesh). **19 of 20 test maps exact**: probe01, probe_classes, ze_hold_em_p, ze_doom_p2_c_gameplay, atixref, s2c_prefabprobe 1/2/4/5/6/7/8/9/11/12, pinst, pinst7, instnest, prefabinst, cablecoll, cablerender |
 | Brush entities | 66 | Hulls as convex meshes, materials from the tool material hash, hull order (PartOrder qsort inverted), corners and hull vertex order as exact solves through the forward's one-mesh chain: **451 of 455 brush models' PHYS exact** |
 | Prefabs | 76 | CMapPrefab nodes and prefab maps, name fixup, one map placed many times (FrameSolver, families nested in families), prefab file names from RED2 when one map is unambiguous |
 | Instances | 99 | Copies in prefab maps and in the map itself, copy ids through the block allocation, several collapses of one template across rounds and nesting, each later placement an exact solve (atixref's 199 copies) |
 | World geometry | 32 | probe01: world physics byte-exact from the decompile (soup vertices exact; triangle order solved as one CP-SAT model, C# in `Source2.Compiler.Solvers`, about 18 minutes). ze_hold_em_p: 86 prop_statics rebuilt from all 129 world hulls, every hull exact; every soup triangle gets its real material (split-stream render draws read) |
-| Other map data | 60 | Map variables (forward + decompile, s2c_varprobe exact both ways). Scripts: a .vjs_c keeps its .js byte for byte (227 of 227 workshop scripts, by the CRC RED2 records); skybox_reference, info_spawngroup_load_unload and point_script links round trip and are listed |
-| Verification | 55 | Entity round trip, brush physics round trip, Valve's resourcecompiler on 5 decompiles (every entity under Valve's id; found the hollow-node rule, ledger 182) |
+| Other map data | 62 | Map variables (forward + decompile, s2c_varprobe exact both ways, through Valve's RC 13/13, and Hammer's save of the decompile keeps them). Scripts: a .vjs_c keeps its .js byte for byte (227 of 227 workshop scripts, by the CRC RED2 records); skybox_reference, info_spawngroup_load_unload and point_script links round trip and are listed |
+| Verification | 55 | Entity round trip, brush physics round trip, Valve's resourcecompiler on 6 decompiles (every entity under Valve's id; found the hollow-node rule, ledger 182), Hammer re-saves of 2 decompiles through RC |
 
 Decisions the user made on the way: brush entities whose model the source compile failed stay out
 (10-29); seeds and nondeterministic outputs that do not affect the map are out of scope (10-28);
@@ -75,15 +92,19 @@ Ordered roughly by what unblocks most. **[closed]** means it needs CS2 and Steam
 Idle offline tests.
 
 World geometry (the largest gap, 32%):
-1. **[closed] Lightmap scale bias per face.** ze_hold_em_p's remaining world physics differences
-   (mesh pieces 9 vs 14, surface order wet/concrete_block, m_Materials, the soup's name) all come
-   from source node 409, a subdivided, painted blend mesh. Its pieces are (lightmapScaleBias,
-   material) groups split by paint layer, so a flat mesh with per-face bias and per-vertex paint
-   would do. **10-30: the bias is readable from a lit build** (bias probes, "CS2-closed captures
-   10-30" below): log2(lightmap density) = c + 2·bias, face by face within one mesh. The fixture
-   build of ze is unlit, so the next step is **[closed] a lit RC compile of ze_hold_em_p**, then
-   group node 409's faces by density step, and the port: a flat mesh with per-face bias and
-   per-vertex paint, checked through `WORLDPHYS_PIECES`.
+1. **Lightmap scale bias per face (node 409)** (CS2 open from here). ze_hold_em_p's remaining world
+   physics differences (mesh pieces 9 vs 14, surface order wet/concrete_block, m_Materials, the soup's
+   name) all come from source node 409, a subdivided, painted blend mesh. Its pieces are
+   (lightmapScaleBias, material) groups split by paint layer, so a flat mesh with per-face bias and
+   per-vertex paint would do. Measured 10-30 (ledger 188, "CS2-closed captures 10-30 evening"): a
+   **flat** face's bias reads from the lit lightmap texcoords (log2 area density = c + 2·bias, c per
+   map), but a **subdivided** face's tessellated triangles read one density whatever the bias, so the
+   lightmap cannot give node 409's slabs. Ways left: the physics pieces (each piece is one (bias,
+   material, layer) run in the soup's input order, so the CP-SAT order solve on ze's 4548-triangle soup
+   would expose the boundaries; probe01's 280 took 18 minutes), or the render aggregates (hr_conc had 19
+   draws with the source's biases, 18 at all 0). Packages for it: `%TEMP%/fresh_compile\ze_hold_em_p_lit.vpk`,
+   `s2c_zebias1.vpk` (source, round-trip control) and `s2c_zebias0.vpk` (node 409 all 0), each with its
+   `.vrad3` folder. Checked through `WORLDPHYS_PIECES`.
 2. **The source's mesh split** (RED2 physics_shape_count 16 vs 4 on probe01): the physics cannot
    decide it; it waits on the render-mesh port (render aggregates merge and re-split meshes).
 3. **Render meshes**: texture alignment (UV projection back to Hammer's face axes and scale),
@@ -100,11 +121,21 @@ Brush entities:
    s2c_prefabprobe2's prefab (placement not modelled by the one-mesh chain).
 
 Map file:
-9. **[closed] Hammer open and re-save check**: `cs2.exe -tools -insecure -addon s2c_rc_probe
-   -netconport 29000 -novid`, `open_asset maps/s2c_dec_s2c_pinst7.vmap`, `hammer_force_autosave`.
-   **Run 10-30 on pinst7**: RC on Hammer's re-save = RC on ours (below). Left: a large map. Hammer
-   autosaves only maps it marks dirty, and 8 of the 9 decompiles loaded clean, so a re-save of
-   atixref or ze needs a way to dirty the document over netcon (not found yet).
+9. **[closed] Hammer re-saves of the large decompiles.** Recipe (Steam and CS2 closed; cs2.exe -tools
+   cannot start without Steam, and key presses lose focus to the user's apps):
+   `python tools/re/heavy.py run --who <you> --what "Hammer autosave" --gpu -- python
+   tools/map-survey/hammer_autosave.py --host "D:/_cursor projects/source2-compiler/tools/cubehost/out/bin/win64/cubehost.exe"
+   s2c_dec_s2c_prefabprobe9 s2c_dec_probe01 s2c_dec_atixref` (cubehost is built in the main checkout only).
+   It copies each map to `s2c_rs_<map>.vmap`, waits until Hammer's title shows it (`--open-seconds`,
+   default 900), writes `maps/s2c_rs_<map>_saved.vmap` (all autosaves kept under
+   `%TEMP%\hammer_autosave\<time>`), logs the agent to `%TEMP%\hammer_autosave.jsonl` and removes only the
+   autosaves it wrote. Then RC (`compile_fresh.py s2c_rc_probe s2c_rs_<map>_saved -- -world -fshallow`) and
+   compare with `DECOMPILE_RC="<rc of ours>|<rc of Hammer's>"` (`ResourceCompilerOfTheDecompile_AgainstValve`).
+   Done: pinst7 (80/80 entities, 5/5 brush PHYS), s2c_varprobe (13/13). **ze_hold_em_p's decompile was
+   still loading after 10 minutes on one core** (stopped because other sessions were waiting): run it
+   alone, with nothing queued behind it, and find out whether it ever finishes (if not, which node
+   Hammer chokes on is itself a decompile bug). Kill a stuck run with `Stop-Process` on cubehost; the
+   harness then cleans up.
 10. Element defaults for node placement, flags and class fields (declared in Hammer's tool
     attribute tables). Needs the Ghidra/ReVa connection, which can run with CS2 open.
 
@@ -120,8 +151,10 @@ Prefabs and entities:
 
 Other map data:
 15. **Map variables: done 10-30** (ledger 187): forward port and decompile, s2c_varprobe exact
-    both ways. Left: choice groups, the vector transform (prefab flag +0x55f), **[closed] RC on the
-    decompiled s2c_varprobe**, a Hammer save with a variable (type names, variableAndChoiceOrder).
+    both ways, RC on the decompile 13/13, Hammer's save keeps them (its save of the prefab map is in
+    `%TEMP%\hammer_autosavevarprobe\prefabs\s2c_varprobe\s2c_varinner001.vmap_autosave`: compare its
+    variable set's type names and variableAndChoiceOrder with what VmapBuilder writes). Left: choice
+    groups, the vector transform (prefab flag +0x55f).
 16. Nav settings (CMapNavData): first find whether and where the .nav keeps the settings it was
     built with (NAV.md has no record of it). Nav markup entities already round trip.
 17. TypeScript sources (PanoramaTypescript): read the same way, but no example checks it.
@@ -1008,7 +1041,7 @@ Two rules came out of it, each measured on a probe compiled by resourcecompiler:
 ### CS2-closed captures 10-30
 
 All with Valve's resourcecompiler 1.41.9.3 (`tools/pipeline/compile_fresh.py`, packages and vrad3
-folders kept in `%TEMP%resh_compile`).
+folders kept in `%TEMP%/fresh_compile`).
 
 - **Lightmap scale bias.** `tools/map-survey/bias_probe_map.py` (probe01 plus copies of its
   dev_measuregeneric01 box at each bias, a box with faces alternating 0 and 1, ze's node 409), full

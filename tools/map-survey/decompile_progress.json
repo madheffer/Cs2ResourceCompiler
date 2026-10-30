@@ -24,8 +24,8 @@
   "module": "Map file",
   "subtask": "Hammer open and re-save check",
   "weight": 3,
-  "done": 0.6,
-  "evidence": "10-30: Hammer (cs2 -tools, open_asset + hammer_force_autosave over netcon) opened 9 decompiles without error; only pinst7 autosaved (Hammer saves dirty maps only). Valve's RC on that re-save = RC on our file: 80/80 entities, 5/5 brush PHYS (only the map name differs). Hammer adds FGD defaults, randomSeed, transformPin, customVisGroup, CMapMesh's full field list. Left: a re-save of a large map (atixref, ze)"
+  "done": 0.7,
+  "evidence": "10-30 night: Hammer saves with Steam closed and no key presses: tools/map-survey/hammer_autosave.py (cubehost spawned under Frida, hammer_force_autosave forced past the 'needs autosave' test, the recovery prompt answered No only for s2c_rc_probe files). s2c_varprobe decompile: Hammer's save (+ its prefab map with the variables) through RC = RC on ours, 13/13 entities, only the map name differs. Left: atixref, probe01, prefabprobe9 (not reached) and ze_hold_em_p (Hammer still loading after 10 min). 10-30: Hammer (cs2 -tools, open_asset + hammer_force_autosave over netcon) opened 9 decompiles without error; only pinst7 autosaved (Hammer saves dirty maps only). Valve's RC on that re-save = RC on our file: 80/80 entities, 5/5 brush PHYS (only the map name differs). Hammer adds FGD defaults, randomSeed, transformPin, customVisGroup, CMapMesh's full field list. Left: a re-save of a large map (atixref, ze)"
  },
  {
   "module": "Entities",
@@ -214,7 +214,7 @@
   "subtask": "World physics (world_physics.vmdl_c)",
   "weight": 3,
   "done": 0.4,
-  "evidence": "10-30: probe01 PHYS byte-exact from the decompile (CP-SAT soup order); RED2 shape count 16 vs 4 (the source's mesh split); ze_hold_em_p: all 129 prop hulls exact, soup order, mesh pieces (9 vs 14) and surface order open (node 409's per-face lightmapScaleBias, s2c_biasprobe queued for CS2 closed); 10-30 lit probes (s2c_biasprobe/4, RC): log2 lightmap density = c + 2*bias for -2..3, per face within one mesh (alternating 0/1 box), large charts capped (4052 px): the bias node 409 needs is readable from a lit build"
+  "evidence": "10-30 night (ledger 188): ze lit + node 409 at bias 0: tessellated faces' lightmap density ignores the bias (only flat faces show the x4 step), so node 409's bias must come from the physics pieces or the render aggregates. 10-30: probe01 PHYS byte-exact from the decompile (CP-SAT soup order); RED2 shape count 16 vs 4 (the source's mesh split); ze_hold_em_p: all 129 prop hulls exact, soup order, mesh pieces (9 vs 14) and surface order open (node 409's per-face lightmapScaleBias, s2c_biasprobe queued for CS2 closed); 10-30 lit probes (s2c_biasprobe/4, RC): log2 lightmap density = c + 2*bias for -2..3, per face within one mesh (alternating 0/1 box), large charts capped (4052 px): the bias node 409 needs is readable from a lit build"
  },
  {
   "module": "World geometry",
@@ -255,8 +255,8 @@
   "module": "Other map data",
   "subtask": "Map variables",
   "weight": 1,
-  "done": 0.8,
-  "evidence": "10-30: s2c_varprobe (RC): forward port of rc 18107d160/18107a810/1810ec600 (MapVariables) = Valve's lump; decompile rebuilds a shared prefab map's differing keys as variables + overrides, MapDecompilerTests exact (ledger 187). Left: choice groups, vector transform (+0x55f), RC on the decompile; a top-level bound key comes back plain (compiles the same)"
+  "done": 0.9,
+  "evidence": "10-30 night: RC on the decompiled s2c_varprobe 13/13, 0 differences; Hammer's save of it keeps the variables and compiles the same. 10-30: s2c_varprobe (RC): forward port of rc 18107d160/18107a810/1810ec600 (MapVariables) = Valve's lump; decompile rebuilds a shared prefab map's differing keys as variables + overrides, MapDecompilerTests exact (ledger 187). Left: choice groups, vector transform (+0x55f), a top-level bound key comes back plain (compiles the same)"
  },
  {
   "module": "Other map data",
