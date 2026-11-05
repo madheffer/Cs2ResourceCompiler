@@ -23,7 +23,7 @@ public sealed class NavCompileTests(ITestOutputHelper output)
     }
 
     /// <summary>The custom data as path = value lines; spotencounterdata from / to and order ids (heap pointers) masked.</summary>
-    private static List<string> Flatten(KVObject node, string path, List<string> lines)
+    internal static List<string> Flatten(KVObject node, string path, List<string> lines)
     {
         if (node.IsArray)
         {

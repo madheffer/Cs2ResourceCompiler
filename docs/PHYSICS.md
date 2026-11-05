@@ -137,7 +137,7 @@ Open:
         pose at +0x328 (after CAnimationHelper's update) is never read here. ModelPoseCaptureTests checks both rc
         compositions and the helper's skeleton set against the capture (RAGDOLL_POSE, a settle_pose.js +
         settle_posewriter.js capture). Not ported: stored bone overrides (181efec40), which replace both poses.
-     b. SettleWorld.Run still refuses a map with an aggregate, now for steps 6 and 7.
+     b. Done: steps 6 and 7 landed (ledgers 158-168), so SettleWorld settles a map with an aggregate.
      c. Small refusals that stay until a corpus model needs them: hull or mesh shapes in an aggregate, a node scale
         other than 1, a deformer, a mass-centre override (body vfn 0x108), joints to the world's static body
         (VPhysXJoint_t flags bit 0), motors, linear limits, breakable and elastic joints (18022c480, 18021ade0),

@@ -161,8 +161,8 @@ public static class VisClusters
     /// 0.1 (the last box takes every voxel left), each born cluster carries the
     /// box's tag, and each box's clusters are merged on their own and then
     /// appended. Without split hints the only box is the leaf itself, tag 0.
-    /// The split path is read from the binary; no specimen map has a split
-    /// hint, so it is not measured.
+    /// The split path is read from the binary and verified against Valve's
+    /// compiles of split-hint specimens (GROUND_TRUTH ledger 127).
     /// </remarks>
     public static List<VisClusterSet.Set> Generate(
         RayTraceEnvironment scene, VisVoxelizer.Octree tree, VisRegions.Result compacted, SplitHints? splits = null)

@@ -18,9 +18,9 @@ namespace Source2.Compiler.Maps;
 /// <item>A sliver triangle the emitter drops is dropped (<see cref="Emitted"/>).</item>
 /// </list>
 ///
-/// <para>Not yet covered: a face with subdivision levels, which the compile
-/// tessellates, and props, which the collector only adds when its model pass
-/// is on (it is off in every compile measured so far).</para>
+/// <para>A face with subdivision levels is tessellated by <see cref="TraceScene"/>
+/// through <see cref="SubdivisionBake"/>. Not covered: props, which the collector
+/// only adds when its model pass is on (it is off in every compile measured so far).</para>
 /// </summary>
 public static class MapGeometry
 {

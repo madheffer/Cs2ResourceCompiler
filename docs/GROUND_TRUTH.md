@@ -3271,6 +3271,14 @@ game can answer is raised with the user first, and runs with -insecure.
       Rechecked on CS2 1.41.9.2 (2026-10-25, the same switches over the addon's lit 10-23 packages): unchanged,
       8 compiled, no world; the 10-23 references that built the world had -world -fshallow added by
       compile_fresh.py.
+      Rechecked 2026-11-06 (CS2 1.41.9.6, tree 72b49c8, ParityReport from the .vmap into an empty package):
+      -world (fresh_refs) probe01 13/13, cardtest 14/14, ze_hold_em_p 45/45; -world -phys -vis -nav
+      (nolight_1023) probe01 18/18, cardtest 20/20 (both but the .nav), ze_hold_em_p 49/49 with its empty .nav;
+      Fast (preset_fast) probe01 16/16, cardtest 17/17 but the .nav; Only Entities (preset_entities, over
+      vrad3_refs' 10-29 lit package as PARITY_BASE) every file it writes, the .nav and world.vwrld_c stamp
+      being the base's. Every .nav miss is the heap pointer fields alone (ParityReport.NavWhy, ledger 109's
+      comparison). %TEMP%/parity_base (11-05) is not the package Valve's Only Entities run went over: its
+      lightmaps differ.
       (Which entity models make the map read force_up_to_date_materials: settled below.)
     - Also from the run: probe01's world_visibility.vvis_c differs only in 4 bytes at 551 (the fingerprint,
       a CRC over a path blob, and the dev box compiled under /tmp); Valve's own probe01 .nav is 9,556, 9,580

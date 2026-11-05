@@ -35,11 +35,13 @@ inside the lump build (`SettleWorld.Run` then `EntityLumpSet.Author`) in about
 Open:
 - **Joints:** CRnConicalJoint's prepare, velocity, store and position
   iterations are ported and exact against vphysics2 (ConicalJoint.cs,
-  JointRows.cs, JointSolverOracleTests). Not yet wired into the world, and
-  the revolute joint, the aggregate build and the islands' joint side are
-  not ported (PHYSICS.md's ragdoll roadmap), so a prop whose model has
-  several parts or a joint still refuses the settle. Compound shapes are
-  not ported.
+  JointRows.cs, JointSolverOracleTests). Wired into the world since ledgers
+  158-168 (the island joint stream, the aggregate build in
+  SettleWorld.Aggregate.cs, the ragdoll write-back and boneTransforms).
+  Still refused: an aggregate at a node scale other than 1, under a
+  deformer, or without a bind pose per part, and the small joint cases in
+  PHYSICS.md's ragdoll roadmap (item c). Compound shapes: no SettleWorld
+  code handles them (not rechecked against a specimen).
 - **Deformed props** (2026-10-24, ledger 130): a prop_static under a
   deformer has every shape tessellated, deformed and cooked as a mesh
   (`SettleWorld.Deformed.cs`); exact on s2c_deformplace.

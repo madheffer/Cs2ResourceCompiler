@@ -600,7 +600,8 @@ Next steps, by maps affected:
 
 ## Cross-cutting: docs that no longer match the code
 
-These do not change bytes but will mislead the next reader of chunk 1 and 2:
+These do not change bytes but will mislead the next reader of chunk 1 and 2 (2026-11-06: all but the last three
+fixed, GEOMETRY, MapGeometry, VisClusters, SETTLE and PHYSICS now cite the ledgers that settled them):
 - `docs/GEOMETRY.md:8` "Only the first two are ported" (world nodes are ported); `:128-129` RTE triangle order "ours is
   walk order" (settled, ledger 29); `:207-216` the T-junction fix "not ported yet" (`Maps/TJunctionFix.cs`, 180259d30);
   `:307-311` the -world merger "on six grid boxes ... the code is not found" (read: 180283520, ledger 55);
