@@ -6242,3 +6242,16 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Ported: FragmentOrder runs ModelTangents (the check and the recompute) on each welded fragment before the sort.
        atixref -world: 547 -> 550 of 553 files (97.96% of bytes); ze_hold_em_p 45/45. Left: n0.vwnod (A.11) and
        metal_door_001's bucket swap (Valve's own runs differ there).
+254. **Three kinds of render object keep CreateRenderObject's handshakes** (2026-11-05 night, CS2 closed; rc 0923
+     decompiles of 18026bab0 and its seven callers). READ.
+     - CreateRenderObject zero-fills the record (cubemap +0x7c, light probe +0x80 0, boost +0x84 1, fades 0, lighting
+       origin FLT_MAX) and copies its ninth argument (a 3x4 transform; DAT_182771b20 is the identity) to +0x8.
+     - The cluster compile (18026c150), the vis merger's object (18026e9c0) and CompileInstanced (18026ed20) then copy
+       their first entry's +0xa0, +0xa4 and boost (and the last two the fades and origin). The block light split
+       (180270a20), CSkyboxMeshList (180272480) and CSkyboxMaterialMeshList (180272620) copy nothing.
+     - Ported: RenderObject.EntryHandshakes (false for those three); WorldNodeFiles writes 0, 0, 1 for them.
+       atixref's 19 blocklight _shadow / _noshadow objects now carry Valve's probe 0 (written as INT64_ZERO).
+     - What is left in atixref's n0.vwnod is prop aggregate fragment order: Valve's two -world runs disagree on 17
+       aggregates and agree on the rest; ours equals one run on 3 of the 17 and differs on 113, 225, 232 and 233
+       where both runs agree. CAggregateMeshList::Compile sorts by CMesh pointer (180290090, A.11), so this is heap
+       order.

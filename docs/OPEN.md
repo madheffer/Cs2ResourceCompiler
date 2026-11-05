@@ -38,7 +38,9 @@ Open:
   - ~~vism0 overlay objects (8): field order~~ (closed 11-05, ledger 252: the DmeMesh round trip writes fields by
     container then DMX type group, WorldNodeModels.DmeFieldOrder; atixref 539 -> 547 of 553, 97.45% of bytes).
   - metal_door_001's two buckets: equal to Valve's second run (the known swap, within variance).
-  - n0.vwnod: the fragment order (A.11) and the blocklight shadow objects' light probe handshake (Valve 0).
+  - n0.vwnod: ~~the blocklight shadow objects' light probe handshake~~ (ledger 254). Left: prop aggregate fragment
+    order, which is CMesh pointer (heap) order: Valve's two runs disagree on 17 aggregates; ours differs where they
+    agree on 113 (flower_sets_a), 225, 232, 233.
 - 1.a1-1.a9 measured, not read: the SIMD transform and the renormalise before WRB_CollectMeshEntries, field and
   aggregate list order, AllowBackfaceCulling's parent set (materialsystem2 +0x60, written at 1800364c3).
 - 1.b refusals ZE maps can reach: foliage (NeedsLocalSpaceVertices), clutter, smart prop skips; detail grass
