@@ -129,6 +129,7 @@ static class Program
         [0x6ae217a2] = 0x2382858,   // 2026-10-29 (1.41.9.3)
         [0x6ae4fb84] = 0x2382858,   // 2026-10-30 (1.41.9.4; the handle's lea at 1800538ed unchanged)
         [0x6ae91e98] = 0x2382858,   // 2026-11-03 (1.41.9.5; the same lea)
+        [0x6aebc4da] = 0x2383858,   // 2026-11-05 (1.41.9.6; the same lea, which now points at handle 2383850)
     };
 
     private static void SetRenderDocCapture(int index)
