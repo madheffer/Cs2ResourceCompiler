@@ -560,13 +560,64 @@ internal static class WorldNodeModels
     private static bool Reads(IReadOnlyList<Source2ContainerAuthor.MaterialAuthoring.InputSignatureElement> elements, WrbMeshEntry.Stream s)
         => elements.Any(x => MaterialStreams.Inputs([x.Semantic]) is [var m] && Io.Tier0Strings.EqualsIgnoreCase(m.Name, Key(s).Name) && m.Index == Key(s).Index);
 
-    // Field order: position, texcoords, normal, tangent, then the rest as the mesh has them
-    // (ze_hold_em_p's baked fluorescent props, streamed P N Tg T0, lay out P T0 N).
-    private static int Rank(WrbMeshEntry.Stream s) => s.Name.ToLowerInvariant() switch
+    // MapBuilder_CMeshToHalfEdge's row table (18243b690): name and float count, then by count alone
+    // (18243b820); the half-edge field type and whether it is per vertex (+0x24 clear) or per face vertex.
+    private static readonly (string Name, int Count, int Type, bool PerVertex)[] NamedRows =
+    [
+        ("position", 2, 9, true), ("position", 3, 12, true), ("normal", 3, 13, false), ("tangent", 3, 14, false),
+        ("tangent", 4, 18, false), ("texcoord", 2, 10, false), ("color", 1, 2, false),
+        ("vertexPaintTintColor", 1, 2, false), ("vertexPaintBlendParams", 1, 2, false),
+    ];
+
+    private static readonly int[] CountRowTypes = [3, 8, 11, 17];
+
+    // The DMX writer's group per half-edge type (table 1822b73e0): 2 int, 3 float, 8 color, 9 Vector2,
+    // 10 Vector3, 11 Vector4.
+    private static int DmeGroup(int type) => type switch
     {
-        // The lightmap's uvs lay out among the texcoords, after them (ze_hold_em_p's baked aggregates).
-        "position" => 0, "texcoord" or "lightmapuv" => 1, "normal" => 2, "tangent" => 3, _ => 4,
+        1 => 2, 2 => 8, 3 => 3, 8 or 9 or 10 => 9, >= 11 and <= 16 => 10, _ => 11,
     };
+
+    // HalfEdge_WriteDmeMesh (180d4f480) writes the vertex fields (+0x38), then the face-vertex fields (+0xb0),
+    // each pass as 180d4cfe0 (type 12 only), 180d4cc00 (float), 180d4cdf0 (Vector2), 180d4cfe0 (other Vector3),
+    // 180d4d1d0 (Vector4), 180d4ca10 (int), 180d4d3c0 (color); a group keeps its fields in the order
+    // 1813319d0 added them, the mesh's. 180d463b0 lists the DmeMesh's fields in that order and
+    // DmeMeshToCMesh's stream layout (180d473d0) follows it.
+    private static readonly int[] DmeGroupOrder = [3, 9, 10, 11, 2, 8];
+
+    private static int? DmeFieldKey(WrbMeshEntry.Stream s, int at)
+    {
+        var row = NamedRows.FirstOrDefault(r => r.Count == s.Count && Io.Tier0Strings.EqualsIgnoreCase(s.Name, r.Name));
+        var (type, perVertex) = row.Name != null ? (row.Type, row.PerVertex)
+            : s.Count is >= 1 and <= 4 ? (CountRowTypes[s.Count - 1], false)
+            // Any other count takes the "invalid" row (18243b958, type 0, class 0): no writer adds it.
+            : (0, false);
+        if (type == 0)
+            return null;
+        var pass = type == 12 ? 0 : 1 + Array.IndexOf(DmeGroupOrder, DmeGroup(type));
+        return (perVertex ? 0 : 1 << 20) + (pass << 16) + at;
+    }
+
+    // The DmeMesh's field order after the model compile's round trip: CMesh -> half-edge (1813319d0) ->
+    // DmeMesh (180d4f480) -> CMesh (DmeMeshToCMesh). The first blendweight(s) and blendindices stream
+    // (lowest index, 1812e0b10) skip the rows; 180d4f1f0 writes them after both passes, weights first
+    // (181899f00). A stream no writer takes is not in the DmeMesh.
+    private static IEnumerable<WrbMeshEntry.Stream> DmeFieldOrder(IReadOnlyList<WrbMeshEntry.Stream> streams)
+    {
+        int Lowest(params string[] names) => streams.Select((s, i) => (s, i))
+            .Where(x => names.Any(n => Io.Tier0Strings.EqualsIgnoreCase(x.s.Name, n)))
+            .OrderBy(x => x.s.Index).ThenBy(x => x.i).Select(x => x.i).DefaultIfEmpty(-1).First();
+        var weights = Lowest("blendweight", "blendweights");
+        var indices = Lowest("blendindices");
+        var keyed = new List<(int Key, WrbMeshEntry.Stream Stream)>();
+        for (var i = 0; i < streams.Count; i++)
+        {
+            int? key = i == weights ? 1 << 22 : i == indices ? (1 << 22) + 1 : DmeFieldKey(streams[i], i);
+            if (key is { } k)
+                keyed.Add((k, streams[i]));
+        }
+        return keyed.OrderBy(x => x.Key).Select(x => x.Stream);
+    }
 
     private static List<Slot> Layout(List<DrawInput> draws, MaterialFacts facts, bool aggregate, bool mapMesh, Func<int, uint>? texcoordFormat = null)
     {
@@ -578,7 +629,7 @@ internal static class WorldNodeModels
                      && draws[0].Streams.Any(x => !x.Name.Equals("tangent", StringComparison.OrdinalIgnoreCase) && !Reads(facts.Depth, x));
         var slots = new List<Slot>();
         var offsets = new int[2];
-        foreach (var s in draws[0].Streams.OrderBy(Rank))
+        foreach (var s in DmeFieldOrder(draws[0].Streams))
         {
             if (s.Name.Equals("tangent", StringComparison.OrdinalIgnoreCase))
                 continue;

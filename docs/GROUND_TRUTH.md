@@ -6186,3 +6186,22 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Left on atixref: agg_nomerge_inferno_plaster01yellow_brick02_blend_0 (its vertex count differs, 67 frames
        with another tangent, not this rule), hr_concrete_wall_painted_001_1, inferno_trim_wood01_painted_blend_02_0,
        the vism0 overlay field order, metal_door_001's bucket swap (within Valve's variance) and n0.vwnod.
+252. **A world node model's field order is the DmeMesh round trip's** (2026-11-05, CS2 open; rc 0923 decompiles of
+     1813319d0, its eight typed writers 181323b30 .. 181327b30, 1812e0b10, 181320d30, 180d4f480 and its typed field
+     writers 180d4ca10 .. 180d4d3c0, 180d463b0, 180d473d0; tables 18243b690, 18243b8d0, 1822b73e0). READ. Replaces
+     WorldNodeModels' fitted Rank (position, texcoords, normal, tangent, rest).
+     - MapBuilder_CMeshToHalfEdge passes over the lowest-index blendweight(s) and blendindices streams (1812e0b10)
+       and gives every other stream a row of 18243b690 (0x2c each): the first whose float count (+0x20) and name
+       match (position 2/3, normal 3, tangent 3/4, texcoord 2, color, vertexPaintTintColor and
+       vertexPaintBlendParams 1), else the count row (18243b820: counts 1-4, types 3, 8, 11, 17), else "invalid"
+       (18243b958, type 0, class 0), which no writer takes. Row byte +0x24 clear (only the two position rows) puts
+       the field in the vertex list (half-edge +0x38), else in the face-vertex list (+0xb0); 181320d30 appends, so
+       each list keeps the mesh's order.
+     - HalfEdge_WriteDmeMesh (180d4f480) writes the vertex list, then the face-vertex list, each in seven passes by
+       the type's DMX group (1822b73e0): type 12 (cfe0 with 0xc, 0), float (cc00), Vector2 (cdf0), the other
+       Vector3 (cfe0 with 0, 0xc), Vector4 (d1d0), int (ca10), color (d3c0); then the blend fields (180d4f1f0,
+       weights then indices, 181899f00). DmeMeshToCMesh lists the fields in that order (180d463b0) and its stream
+       layout (180d473d0) follows it. So a count-1 stream such as VertexGenericIntegerData (float) comes right
+       after the position, and VertexPaintBlendParams (color) last.
+     - Ported as WorldNodeModels.DmeFieldOrder. atixref -world: 539 -> 547 of 553 files (97.45% of bytes), the 8
+       vism0 overlay objects now Valve's; ze_hold_em_p -world 45/45 files.

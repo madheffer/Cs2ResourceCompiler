@@ -231,7 +231,16 @@ the addon).
     Debug test build; time a Release build and Valve's own step before sizing it. Any change
     that could alter bytes waits for the user's OK (parity before speed).
 
-## Latest session (2026-11-04 evening and night, CS2 open: atixref -world world node models)
+## Latest session (2026-11-05 evening, CS2 open: 1.41.9.6 patch check, world node field order)
+
+- Patch 1.41.9.6: only client, server and pulse_system rebuilt; the toolchain is byte-identical to 11-03 and the
+  compile is unchanged (rc-oracle, 7/7 cs_script_demo scripts). The cs_script API changes are runtime only.
+  cubehost knows the new client; patch_check now watches pulse_system (4634010).
+- Ledger 252: WorldNodeModels' fitted Rank replaced by the DmeMesh round trip's field order (DmeFieldOrder).
+  atixref `-world` 539 -> **547 of 553 files (97.45%)**; ze_hold_em_p `-world` 45/45. Left on atixref: n0.vwnod
+  (A.11), metal_door_001's bucket swap (within variance), three tangent-kind meshes (OPEN 1.c7).
+
+## Earlier session (2026-11-04 evening and night, CS2 open: atixref -world world node models)
 
 All VAC-safe: ReVa headless decompiles, our builds and ParityReport through heavy.py --allow-cs2.
 - atixref `-world` ParityReport from the .vmap: **434 -> 521 of 553 files (95.24% of bytes)**, ledgers 243-250
