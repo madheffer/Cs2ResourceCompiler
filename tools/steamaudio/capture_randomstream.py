@@ -8,7 +8,10 @@ the first return address outside tier0 (module+rva). At resourcecompiler.dll (20
 of every stream seen so far. Writes <out_dir>/stream.jsonl and rc.log. A compile overwrites the map's .vpk: it is
 backed up and restored (cmp). --pin SEED reseeds the global stream (tier0 +0x3cc328) at the appender's entry as
 RandomSeed(SEED) would: every seed tier0 itself gives it is time-based (static init 1800057e0, 18017bd20,
-18017c72e), so Valve's appender is not reproducible run to run without it. CS2 must be closed; run it through tools/re/heavy.py.
+18017c72e), so Valve's appender is not reproducible run to run without it. Also logged: every point
+CNavArea_RandomPoint (20261103 1818e76d0, 0923 1818e4a00) returns inside the appender (op navpoint) and the
+clustering's input (20261103 180fbc650, 0923 180fbb450: the candidates the sight test kept, op candidates).
+Addresses checked unchanged for tier0 / resourcecompiler 20261103 (port_addr.py). CS2 must be closed; run it through tools/re/heavy.py.
 """
 import argparse
 import filecmp
@@ -72,6 +75,13 @@ function hookRc() {
       send({op: 'probes_out', n: n}, n > 0 ? this.probes.add(8).readPointer().readByteArray(n * 12) : new ArrayBuffer(0));
       dumpAll('appender_leave'); send({op: 'leave', fn: 'appender'}); inAppender--; } });
   Interceptor.attach(rc.base.add(0x18e5f60), { onEnter(args) { send({op: 'enter', fn: 'randompoint', tid: this.threadId}); } });
+  // CNavArea_RandomPoint (0923 1818e4a00): the point it returns, before the appender lifts it by 40 and traces up
+  Interceptor.attach(rc.base.add(0x18e76d0), { onLeave(ret) {
+    if (inAppender) send({op: 'navpoint'}, ret.readByteArray(12)); } });
+  // the clustering (0923 180fbb450): its input, every candidate the sight test kept, in the appender's order
+  Interceptor.attach(rc.base.add(0xfbc650), { onEnter(args) {
+    const n = args[1].readS32();
+    send({op: 'candidates', n: n}, n > 0 ? args[1].add(8).readPointer().readByteArray(n * 12) : new ArrayBuffer(0)); } });
   send({hooked: true});
 }
 hookTier0();

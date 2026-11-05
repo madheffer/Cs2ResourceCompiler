@@ -5055,6 +5055,29 @@ game can answer is raised with the user first, and runs with -insecure.
        appends 2, at (98.5, -439.5, 211.06) and (936.17, -312.0, 211.06), and the SAME 2 under seeds 1 and 2: its
        random points never decide the result there. The appender's non-random half (centre, corners, the
        sight test, clustering) can be checked on it; a specimen where a random point survives is still needed.
+     - Settled from the code (2026-11-05, decompile of rc 0923 180fbcb10, 180fbb450, 181271420; installed 20261103
+       addresses 180fbdd10, 180fbc650, 1818e76d0, unchanged from 20261029, tier0 20261103 unchanged too): per area,
+       in area order, the candidates are the centre, then each corner, then floor(area / (spacing x 39.37)^2), at
+       most 10, random points (CNavArea_RandomPoint, 0923 1818e4a00); each is lifted 40 and traced up by
+       height x 39.37 - 40 (vfn 0x4f8; a hit fraction below 1 moves it by fraction / 1.5). A candidate stays when
+       181271420 says its distance to the generation box is at most height x 39.37 (59.06 in at 1.5 m; points
+       outside the box pass) and no existing probe in the 3D sphere of spacing x 39.37 (236.2 in at 6 m) around it
+       (CVertexKDTree::FindVertsInSphere) has a clear trace to it. The clustering (180fbb450) is greedy in
+       candidate order: the first unclaimed candidate is kept as is and claims every candidate within the spacing
+       sphere. So a random point survives only if it is unseen and more than 236 in from every earlier kept
+       candidate.
+     - Measured (2026-11-05, capture_randomstream.py --pin 1 with the navpoint / candidates log; specimens from
+       steamaudio_navcover_specimen.py, box centre (512, 216, 144) size (1536, 2384, 288) in all): s2c_sanavcover:
+       31 random points, all on floor areas (z 4) that probes see; its roof areas (z 152) are thin strips along
+       the roof edges with no random draws, and 2 of their centres survive. A bigger roofed room
+       (-120..1160 x -920..-120): roof areas again edge strips only, 19 candidates, 7 clusters, no random one. A
+       roofless walled corridor (300..420 x -880..1300, between two probe grid columns, s2c_sanavcover3): no probe
+       inside, 38 corridor candidates survive, 8 clusters, but the nav splits it into 72 x 266 areas (19,180 in^2),
+       too small for a draw. A solid block 100 tall over -100..1150 x -880..1300: probes are generated on its top
+       too (z 148.4 / 156.1), 0 candidates. The same block 250 tall: no nav on top at all and probes at z 282.41,
+       0 candidates. Probe generation does not always pick the lowest floor (the roofed rooms got none on the roof;
+       the blocks did): not read yet. Next idea: a hollow room as in s2c_sanavcover (no probes on its roof) whose
+       roof gets whole nav areas, which needs knowing why its roof interior gets no nav.
 
 187. **atixref's build run to run, with the clock pinned** (2026-10-30: cubehost on the installed 10-29 DLLs, CS2 and
      Steam closed, settle 20; tools/cubehost/time_inputs.js (from feat/cube-nodump a2ecbce, ported with port_addr.py)

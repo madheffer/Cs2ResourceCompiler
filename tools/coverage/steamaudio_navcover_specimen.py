@@ -1,7 +1,8 @@
-"""steamaudio_navcover_specimen.py <base.vmap> <out.vmap> [height]: a copy of <base.vmap> (s2c_saprobe) with a closed
-room over the floor at x 72..952, y -680..-120 (a roof at <height>, default 150, and four walls, all scaled copies of
+"""steamaudio_navcover_specimen.py <base.vmap> <out.vmap> [height] [x0,x1,y0,y1] [noroof|block]: a copy of <base.vmap> (s2c_saprobe) with a closed
+room over the floor at x 72..952, y -680..-120 by default (a roof at <height>, default 150, and four walls, all scaled copies of
 the floor tile with nodeID 61, 176 x 112 x 2) and a copy of the map's point_nav_walkable inside it, so that IslandRemoval
-keeps the room's nav. The walls and roof hide the room's nav from every probe outside it, which gives Steam Audio's nav
+keeps the room's nav. noroof leaves the roof out; block makes one solid block over the bounds instead, <height>
+tall, seeded on top: the probes Steam Audio generates under it sit inside it and see nothing. The walls and roof hide the room's nav from every probe outside it, which gives Steam Audio's nav
 coverage appender (rc 0923 180fbcb10) areas to fill, big enough for its random points. Ids, node ids and reference ids
 are fresh; the world lists the copies after its other children.
 """
@@ -15,7 +16,7 @@ import uuid
 import probe_map as pm
 
 
-def main(base, out, z="150"):
+def main(base, out, z="150", bounds="72,952,-680,-120", roof="roof"):
     work = tempfile.mkdtemp(prefix="sanavcover_")
     text_path = os.path.join(work, "base.vmap")
     pm.convert(base, text_path, "keyvalues2")
@@ -49,12 +50,15 @@ def main(base, out, z="150"):
                 x.set("referenceID", "uint64", ref)
         return e
 
-    # a closed room: a roof and four walls, each a scaled copy of the tile (176 x 112 x 2)
-    x0, x1, y0, y1, top = 72.0, 952.0, -680.0, -120.0, float(z)
+    # a closed room: a roof (unless noroof) and four walls, each a scaled copy of the tile (176 x 112 x 2)
+    (x0, x1, y0, y1), top = (float(v) for v in bounds.split(",")), float(z)
     cx, cy, w, d = (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0
-    for (ox, oy, oz), (sx_, sy_, sz_) in (((cx, cy, top), (w / 176, d / 112, 2)),
-                                           ((cx, y0, top / 2), (w / 176, 0.1, top / 2)), ((cx, y1, top / 2), (w / 176, 0.1, top / 2)),
-                                           ((x0, cy, top / 2), (0.06, d / 112, top / 2)), ((x1, cy, top / 2), (0.06, d / 112, top / 2))):
+    walls = (((cx, y0, top / 2), (w / 176, 0.1, top / 2)), ((cx, y1, top / 2), (w / 176, 0.1, top / 2)),
+             ((x0, cy, top / 2), (0.06, d / 112, top / 2)), ((x1, cy, top / 2), (0.06, d / 112, top / 2)))
+    parts = ((((cx, cy, top), (w / 176, d / 112, 2)),) if roof != "noroof" else ()) + walls
+    if roof == "block":  # one solid block from the floor to <height>, its top walkable and seeded instead
+        parts = (((cx, cy, top / 2), (w / 176, d / 112, top / 2)),)
+    for (ox, oy, oz), (sx_, sy_, sz_) in parts:
         part = fresh(copy.deepcopy(source))
         part.set("origin", "vector3", f"{ox} {oy} {oz}")
         part.set("scales", "vector3", f"{sx_} {sy_} {sz_}")
@@ -62,7 +66,7 @@ def main(base, out, z="150"):
         world.get("children").append(("ref", part.get("id")))
     seed = next(e for e in tops if e.type == "CMapEntity" and e.get("entity_properties").get("classname") == "point_nav_walkable")
     walk = fresh(copy.deepcopy(seed))  # IslandRemoval keeps only seeded islands: the room needs its own
-    walk.set("origin", "vector3", f"{cx} {cy} 16")
+    walk.set("origin", "vector3", f"{cx} {cy} {top + 16 if roof == 'block' else 16}")
     tops.append(walk)
     world.get("children").append(("ref", walk.get("id")))
     out_text = os.path.join(work, "out.vmap")

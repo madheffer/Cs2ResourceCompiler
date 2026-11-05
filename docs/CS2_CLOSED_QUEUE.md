@@ -3,7 +3,8 @@
 What waits for CS2 to be closed, in the order to take it. Everything else is done with CS2 open: decompiles,
 ports and offline tests ([HANDOFF.md](HANDOFF.md) "Rules"). Run heavy jobs through `tools/re/heavy.py`, delete any
 crash dumps the game or resourcecompiler leaves, and kill everything you started when done. Each item names the
-ledger or doc that is waiting for its result. Last updated 2026-11-05 (A.10-A.13 done).
+ledger or doc that is waiting for its result. Last updated 2026-11-05 (A.10-A.13 done; A.1 tried, needs the
+game in the foreground; A.6 rules read, specimen still open).
 
 Steam has to be closed too for anything run in cubehost (part B). Part A needs only CS2 closed; A.1's in-game
 step needs Steam open, since it launches the game.
@@ -27,6 +28,14 @@ heavy runs with the game open at below-normal priority):
    game/csgo/maps (back up anything already there), launch `cs2.exe -tools -insecure -netconport 29000 -novid`,
    and run `python tools/pipeline/map_test.py ze_s2c ze_hold_em_p <spawn x,y,z>`. Look for missing lighting,
    magenta, wrong reflections and broken triggers. Report what the game showed.
+   Tried 2026-11-05 with the user at the PC: our package loads (no crash, no load errors seen before netcon
+   dropped at the map change; netcon comes back after the load), but CS2 neither renders nor simulates while it is
+   not the foreground window (two `screenshot` frames identical, `setpos` / teleports change nothing), so this step
+   needs the game in front: run it when the user is away from the PC, not while they use it. The whole screen is
+   magenta from the post volume's missing base.vpost (CAVEATS "Magenta screen"): send `ent_fire postprocess
+   Disable` before judging the lighting. All seven trigger_teleports start disabled: `ent_fire *trigger_teleport*
+   Enable` first. Spawn near (-12753, -211, 64); teleports 1-6 / end stand at x -12191, -9101, -6062, -3023.5, 19,
+   2314.5, 5420 (y about -356, z 70) to destinations x -10415 ... 7420.
 2. ~~Steam Audio's reverb through compile-map's builder~~ (ledger 199): done 2026-11-02 with CS2 open. 73 probes,
    the only differing probe the Embree tie (65), as SaprobeReverbFromTheMap.
 3. ~~The colour-adjust specimen, Valve's compile~~ (done 2026-11-04, ledger 197: %TEMP%/fresh_compile/s2c_coloradjust.vpk
@@ -46,7 +55,12 @@ heavy runs with the game open at below-normal priority):
 5. **The Blender viewmodel add-on's in-game test** (memory blender-vm-anim): export a SCAR-20 reload into an addon
    and check that it plays.
 6. **Steam Audio, the nav coverage appender** (ledger 186): a specimen where a random point survives, captured
-   with `capture_randomstream.py --pin SEED`.
+   with `capture_randomstream.py --pin SEED`. 2026-11-05: the tool now also logs every CNavArea_RandomPoint result
+   and the clustering's input (the candidates the sight test kept); the selection and clustering rules are read
+   (ledger 186). Four specimens tried (ledger 186 lists what each showed); s2c_sanavcover3 (a roofless walled
+   corridor, `steamaudio_navcover_specimen.py <saprobe> <out> 150 300,420,-880,1300 noroof`) keeps 38 unseen
+   candidates in 8 clusters, all from centres and corners. Still needed: a nav area of at least spacing^2
+   (55,800 in^2) that no probe within 236 in (3D) can see; the next idea is in the ledger.
 
 7. ~~HasTexcoordTransform in resourcecompiler~~ (done 2026-11-03: 1 for italy_cobblestone_01, so not the shift; ledger 201). (ledger 201, italy_cobblestone_01's texcoord shift). Frida on a
    standalone resourcecompiler compiling s2c_coloradjust (`compile_fresh.py s2c_rc_probe s2c_coloradjust -world
