@@ -6267,3 +6267,16 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        aggregates and agree on the rest; ours equals one run on 3 of the 17 and differs on 113, 225, 232 and 233
        where both runs agree. CAggregateMeshList::Compile sorts by CMesh pointer (180290090, A.11), so this is heap
        order.
+256. **Prop aggregate fragment order is mimalloc's block reuse** (2026-11-05 night, CS2 closed; Frida
+     tools/re/capture_aggorder.py on rc 1103 compiling atixref -world -fshallow: g_pMemAlloc Alloc / Realloc / Free
+     while BuildNode (18024b430) runs, each bucket after WRBMeshList_SortMorton and at WRB_BuildAggregate). MEASURED.
+     - tier0's allocator is mimalloc (ULowLevelAllocationScheme_mimalloc). Each prop entry's sort key (entry +0x0) is
+       a 0x1a8 object (448 bin), allocated mostly in WRB_LoadPropMeshes (rc+1d485e) and BuildNode's own prop steps.
+     - In 43 of the 64 prop aggregates the stable sort's pointer order is not the allocation order; nearly all of
+       their objects took a block freed earlier (LIFO reuse of the page's free list), spread over several 64K pages.
+       The 21 others are in allocation order. Where a block lands depends on every 448-bin allocation and free of the
+       run (682,937 frees in BuildNode alone), and cross-thread frees reach the free list nondeterministically:
+       Valve's own two -world runs disagree on 17 atixref aggregates.
+     - So no data reproduces it short of emulating the allocator over all of resourcecompiler's allocations. Ours
+       keeps creation order, which equals Valve's where no block was reused; n0.vwnod's fragment order passes under
+       the variance rule only where it matches a run. Settled as Valve-nondeterministic (heap), not ported.

@@ -44,6 +44,8 @@ Open:
   - n0.vwnod: ~~the blocklight shadow objects' light probe handshake~~ (ledger 254). Left: prop aggregate fragment
     order, which is CMesh pointer (heap) order: Valve's two runs disagree on 17 aggregates; ours differs where they
     agree on 113 (flower_sets_a), 225, 232, 233.
+    Settled 11-05 night (ledger 256): the order is mimalloc's free-list reuse of 448-bin blocks, so it is not
+    reproducible from data; left as Valve variance.
 - 1.a1-1.a9 measured, not read: the SIMD transform and the renormalise before WRB_CollectMeshEntries, field and
   aggregate list order, AllowBackfaceCulling's parent set (materialsystem2 +0x60, written at 1800364c3).
 - 1.b refusals ZE maps can reach: foliage (NeedsLocalSpaceVertices), clutter, smart prop skips; detail grass
