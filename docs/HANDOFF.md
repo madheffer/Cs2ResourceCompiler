@@ -239,6 +239,10 @@ the addon).
 - Ledger 252: WorldNodeModels' fitted Rank replaced by the DmeMesh round trip's field order (DmeFieldOrder).
   atixref `-world` 539 -> **547 of 553 files (97.45%)**; ze_hold_em_p `-world` 45/45. Left on atixref: n0.vwnod
   (A.11), metal_door_001's bucket swap (within variance), three tangent-kind meshes (OPEN 1.c7).
+- The three tangent meshes, read and measured on our side: only their packed NORMAL words differ. Valve recomputes
+  one brick02 entry whose tangents pass our copy of 1812e1450 (forcing our recompute leaves 23 of 154 words), and
+  our recompute is one step off Valve's at the packing boundaries. Both need Valve's floats: CS2_CLOSED_QUEUE A.14
+  (capture_aggstreams.py now hooks the check 1812e1450 and the recompute 1812db920).
 
 ## Earlier session (2026-11-04 evening and night, CS2 open: atixref -world world node models)
 

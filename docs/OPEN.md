@@ -33,8 +33,10 @@ Open:
   the .vwrld stamp. Left, by family:
   - ~~tangent angles one step off at the basis axis~~ (closed 11-05, ledger 251: Valve renormalises every direction in
     the model compile's DmeMeshToCMesh copy; the overlays, blocklights, cm00 objects and most aggregates now Valve's).
-    Left: agg_nomerge_inferno_plaster01yellow_brick02_blend_0 (vertex count differs; 67 tangents of another kind),
-    hr_concrete_wall_painted_001_1 and inferno_trim_wood01_painted_blend_02_0 (TangentFrameCaptureProbe lists them).
+    Left (11-05 evening, measured on our side): brick02_blend_0 and trim_wood01_painted_blend_02_0 differ only in MVTX
+    (packed NORMAL words, normals equal): Valve recomputes brick02's 243-vertex entry whose tangents ours keep, and our
+    recompute sits one step off Valve's at the packing boundaries (trim 6 words). hr_concrete_wall_painted_001_1: Valve's
+    draw 1 has 2 more vertices, likely the same recompute split. Waiting for CS2_CLOSED_QUEUE A.14.
   - ~~vism0 overlay objects (8): field order~~ (closed 11-05, ledger 252: the DmeMesh round trip writes fields by
     container then DMX type group, WorldNodeModels.DmeFieldOrder; atixref 539 -> 547 of 553, 97.45% of bytes).
   - metal_door_001's two buckets: equal to Valve's second run (the known swap, within variance).

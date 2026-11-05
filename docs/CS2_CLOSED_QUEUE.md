@@ -121,6 +121,17 @@ heavy runs with the game open at below-normal priority):
    blocklight7 models' draws, and for the overlays CMesh_ComputeTangents' (1812db920) output tangents; compare
    with ours (WorldNodeModels.ModelTangents, MeshTangents.Corners) to find which input bit differs.
 
+14. **The model compile's tangent check and recompute on three atixref aggregates** (OPEN 1.c7; queued 2026-11-05
+   evening, CS2 open: static reading and our-side experiments done). Frida, no game process: tools/re/capture_aggstreams.py
+   s2c_rc_probe atixref --match "brick02_blend|trim_wood01_painted_blend_02|hr_concrete_wall_painted_001" --dump tangent
+   (its new tangentcheck / tangentcompute stages hook 1812e1450 and 1812db920, installed RVAs through rva_map).
+   - A: Valve recomputes brick02's 243-vertex entry (and, by its two extra vertices, one hr_concrete_wall_painted_001
+     entry of draw 1) whose tangents ours accept: with our recompute forced on that entry, 154 differing words drop to
+     23. The log's firstBad says which vertex and value fail Valve's check (w, |t|^2); trace that value back.
+   - B: our recomputed tangents (MeshTangents.Corners) sit one step off Valve's at the packing boundaries (trim's
+     6 words, brick02's 23 forced): compare the tangentcompute floats with ours bit for bit. A blanket renormalise of
+     our output fixes trim but breaks 7 mesh_overlay models, so it is not the rule.
+
 ## B. CS2 and Steam closed (cubehost)
 
 1. ~~The colour-adjust cubes~~ (done 2026-11-04): three cubehost runs of Valve's s2c_coloradjust package
