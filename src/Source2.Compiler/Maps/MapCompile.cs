@@ -410,18 +410,23 @@ public static class MapCompile
             var physicsPath = $"maps/{map}/world_physics.vmdl_c".ToLowerInvariant();
             if (sites.Count > 0)
             {
-                if (!entries.TryGetValue(navPath, out var navBytes) || !entries.TryGetValue(physicsPath, out var physicsBytes))
+                if (entries.TryGetValue(navPath, out var navBytes) && entries.TryGetValue(physicsPath, out var physicsBytes))
                 {
-                    // --skip-unported: a nav it skipped leaves bomb damage nothing to sample, so that is skipped too.
-                    if (navSkipped && !entries.ContainsKey(navPath))
-                        throw new NotSupportedException("the nav it samples was skipped");
-                    return Fail(log, $"bomb damage: the package has no {navPath} or {physicsPath} to sample");
+                    var areas = generatedNav is { } nav ? NavCompile.Areas(nav.Mesh) : NavCompile.Areas(navBytes);
+                    var file = NavCompile.BombDamageFile(areas, sites, NavCompile.World(physicsBytes), addon, map)!;
+                    entries[$"maps/{map}/baked_bomb_damage.vdata_c".ToLowerInvariant()] = file;
+                    entitiesOnlyChildren.Add($"maps/{map}/baked_bomb_damage.vdata_c".ToLowerInvariant());
+                    log.WriteLine($"  bomb damage: {sites.Count} sites over {areas.Count} nav areas");
                 }
-                var areas = generatedNav is { } nav ? NavCompile.Areas(nav.Mesh) : NavCompile.Areas(navBytes);
-                var file = NavCompile.BombDamageFile(areas, sites, NavCompile.World(physicsBytes), addon, map)!;
-                entries[$"maps/{map}/baked_bomb_damage.vdata_c".ToLowerInvariant()] = file;
-                entitiesOnlyChildren.Add($"maps/{map}/baked_bomb_damage.vdata_c".ToLowerInvariant());
-                log.WriteLine($"  bomb damage: {sites.Count} sites over {areas.Count} nav areas");
+                // --skip-unported: a nav it skipped leaves bomb damage nothing to sample, so that is skipped too.
+                else if (navSkipped && !entries.ContainsKey(navPath))
+                    throw new NotSupportedException("the nav it samples was skipped");
+                // CMapCompileModifierCS2BombDamage::Run (modtools 18003ad70) logs its header, then GatherBombsites
+                // (18003b5d0) answers false without the nav mesh (context +0x18) or the world from context[2]'s
+                // vf 0, and the step ends with no file and no error: Valve's -world build from an empty package
+                // (probe01, cardtest 11-05) has no baked_bomb_damage.vdata_c (ledger 257).
+                else
+                    log.WriteLine($"  bomb damage: nothing written (the package has no {navPath} or {physicsPath})");
             }
         }
         catch (NotSupportedException ex) when (skipUnported)

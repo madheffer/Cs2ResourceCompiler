@@ -6280,3 +6280,13 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - So no data reproduces it short of emulating the allocator over all of resourcecompiler's allocations. Ours
        keeps creation order, which equals Valve's where no block was reused; n0.vwnod's fragment order passes under
        the variance rule only where it matches a run. Settled as Valve-nondeterministic (heap), not ported.
+257. **Bomb damage without a nav or world physics writes nothing** (2026-11-05 night; modtools 1015 decompiles of
+     CMapCompileModifierCS2BombDamage::Run 18003ad70, GatherBombsites 18003b5d0, BuildGrid 18003b750,
+     SampleNavAreas 18003d030). READ + MEASURED.
+     - Run logs "Baking CS2 Bomb Damage:", then GatherBombsites answers false unless the context has the nav mesh
+       (+0x18) and context[2]'s vf 0 returns the world; BuildGrid answers false when SampleNavAreas finds no nav or
+       no points. Either ends the step with no file and no error ("Bomb Damage bake completed" is not logged).
+     - Valve's -world builds of probe01 and cardtest from an empty package (fresh_compile/*_world_1105.vpk) carry no
+       baked_bomb_damage.vdata_c. compile-map failed the build there ("the package has no ... to sample"); it now
+       logs and writes nothing. Found by the parity sweep: probe01 -world 0/13 -> 13/13, cardtest 0/14 -> 14/14
+       from an empty package (no PARITY_BASE needed any more).
