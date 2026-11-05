@@ -198,7 +198,9 @@ s2c compile-addon <addon> [--cs2 <dir>] [--only <content path>]... [--bc7 amd|in
   `csgo_addons/<addon>`. Outputs go to `game/csgo_addons/<addon>` at their content paths: the material, its
   child textures beside their images, the default textures under `materials/default/`.
 - Checked: cx_full.vmat and cx_color.vmat in s2c_rc_probe give RC 1103's eight files byte for byte and no
-  others (%TEMP%/addon_ref/s2cmat_1105; AddonCompileTests against RcReference/materials/compiled).
+  others (%TEMP%/addon_ref/s2cmat_1105; AddonCompileTests against RcReference/materials/compiled). End to
+  end, s2c_addonmat (tools/coverage/addon_material_specimen.py) compiled after them: our compile-map -world
+  equals Valve's 13 files (the .vwrld with its stamp pinned).
 - Not ported: RC's up-to-date test (18016f170). Every source is compiled; a file whose bytes are already
   right is left in place, so the result on disk is the same, but a stale-but-equal output is not "skipped"
   the way RC's log would say. Other source types (models, particles, sounds, vdata) are not compiled here.

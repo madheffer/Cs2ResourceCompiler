@@ -6297,6 +6297,13 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        references, not children or associates, so -fshallow's "as needed" does not reach them: in Valve's pipeline
        they are compiled before the map (by the tools when an artist saves them, or resourcecompiler run on the
        asset itself). 8.b1 is therefore not part of the map compile; compiling an addon's sources is its own step.
+     - Exact (2026-11-05): `s2c compile-addon` (AddonCompile, main's ResourceCompiler) on cx_full.vmat and
+       cx_color.vmat writes RC 1103's eight files byte for byte (the two materials, three child textures beside their
+       images, default_ao and default_normal under materials/default/) and no others (%TEMP%/addon_ref/s2cmat_1105;
+       AddonCompileTests). With them compiled, Valve's -world -fshallow of s2c_addonmat has no missing-material
+       warning (%TEMP%/fresh_compile/s2c_addonmat.vpk), and our compile-map -world over it gives all 13 files byte
+       for byte (world.vwrld_c with S2C_WORLD_STAMP=1793883340,11095541016954127721, its stamp and fingerprint).
+       Not ported: RC's up-to-date test; other source types.
 
 256. **Prop aggregate fragment order is mimalloc's block reuse** (2026-11-05 night, CS2 closed; Frida
      tools/re/capture_aggorder.py on rc 1103 compiling atixref -world -fshallow: g_pMemAlloc Alloc / Realloc / Free
