@@ -525,6 +525,14 @@ game can answer is raised with the user first, and runs with -insecure.
     block +0x68), then the block at block +0x60 (material +0x1e0) the same way. The constructor 18003abf0 (called
     only through vtables: 1801793ac, 18012da10) stores a refcounted parent object at material +0x60 (its fifth
     argument). Not read: who installs block +0x60.
+    MEASURED 2026-11-06 (CS2 closed; capture_missingmaterial.py, the material's vf 0x48 called for the four keys at
+    1801d4dc0's return and again after every WRB_MeshEntryFlags): teleport02's error material answers not found for
+    AllowBackfaceCulling, SupportsLightmapping, SupportsAggregateInstancing and NeedsLightProbe throughout, its block
+    at +0x180 empty and no parent (+0x1e0 null); reflectivity_30 answers found and true for all four. WRB_MeshEntryFlags
+    takes found && value (every call site), so this build gives the entry none of those bits: our empty set is right,
+    and the 10-04 0x160100000 does not hold on 1.41.9.6. (Not found writes [rsp+0x18] != 0, the caller's r8 home
+    slot, into the out bool: GetBoolAttribute 18000bb4a.) s2c_prefabprobe5's teleport02 model difference has
+    another cause.
 43. **Prop aggregate grouping and order** (WRBNode_BuildPropAggregates,
     180272ce0, read): models in CDefStringLess order, one entry per prop
     and mesh, buckets by entry +0x20 (one agg_prop model per material),

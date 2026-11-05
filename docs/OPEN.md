@@ -23,7 +23,8 @@ Open:
 - ~~1.c4 two agg_nomerge aggregates' later meshlets~~ (closed 11-05, ledger 253: the fragment tangent recompute's vertex splits).
 - 1.c5 the missing-material rule (cardtest teleport02): it loads as core's materials/error.vmat (11-04 Frida), but Valve's
   flags come from CMaterial2's parent attribute block, not from error.vmat or error.vfx (11-05 read, GROUND_TRUTH 42).
-  Our empty set is what Valve's merger sees, so no output differs today.
+  Our empty set is what Valve's merger sees. 11-06 Frida: Valve's error material answers none of the entry keys
+  (found 0) when the flags are read, so the empty set is right; prefabprobe5's teleport02 model differs otherwise.
 - 1.c6 prop aggregate draw order: **models closed 11-04** (ledger 244): WRB_BuildAggregate's sort (LOD mask,
   vertex count descending, memcmp) ported; every agg_prop model is Valve's but the trim aggregate (1.c7), the
   metal_door_001 buckets equal Valve's second run. Open: n0.vwnod's fragment order in 21 aggregates, which follows
