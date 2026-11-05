@@ -18,9 +18,12 @@ none), which is what turns the flat meshes' -0 into +0. atixref at HammerMesh_Tr
 103,887 corners (capture_subdivtangents.py on rc 1103, CS2 closed).
 
 Open:
-- 1.c2 overlay tangents: the default tangent explained 11-04 (ledger 249: the material reads no tangent, the stream filter drops it, and the model compile recomputes it); 16 models now exact, the rest are 1.c7's one-step angles (CS2_CLOSED_QUEUE A.13).
-- 1.c3 95 agg_prop models' tangent angle (Valve's encoder NaN path vs ours, a last-bit source difference).
-- 1.c4 two agg_nomerge aggregates' later meshlets; 1.c5 the missing-material rule (cardtest teleport02): **11-04 Frida: it loads as materials/error.vmat** (core's, the only one; GROUND_TRUTH 42), so its flags should follow from that material; ours gives the empty set.
+- ~~1.c2 overlay tangents~~ (closed: ledgers 249 and 251; every atixref mesh_overlay model is Valve's since 11-05).
+- ~~1.c3 agg_prop tangent angles~~ (closed: every atixref agg_prop model is Valve's after ledgers 244-253; metal_door_001 within variance).
+- ~~1.c4 two agg_nomerge aggregates' later meshlets~~ (closed 11-05, ledger 253: the fragment tangent recompute's vertex splits).
+- 1.c5 the missing-material rule (cardtest teleport02): it loads as core's materials/error.vmat (11-04 Frida), but Valve's
+  flags come from CMaterial2's parent attribute block, not from error.vmat or error.vfx (11-05 read, GROUND_TRUTH 42).
+  Our empty set is what Valve's merger sees, so no output differs today.
 - 1.c6 prop aggregate draw order: **models closed 11-04** (ledger 244): WRB_BuildAggregate's sort (LOD mask,
   vertex count descending, memcmp) ported; every agg_prop model is Valve's but the trim aggregate (1.c7), the
   metal_door_001 buckets equal Valve's second run. Open: n0.vwnod's fragment order in 21 aggregates, which follows
