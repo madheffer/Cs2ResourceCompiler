@@ -1,0 +1,98 @@
+using Source2.Compiler.KeyValues;
+namespace Source2.Compiler.Compiling;
+
+/// <summary>KV3 text documents: <c>.vsndevts</c>, <c>.vdata</c>, <c>.vpcf</c>, <c>.vagrp</c>.
+/// Output: the source path plus <c>_c</c>.</summary>
+public sealed class Kv3DocumentCompiler : IResourceCompiler
+{
+    /// <inheritdoc/>
+    public IReadOnlyCollection<string> SourceExtensions { get; } =
+        PackageContainerAuthor.SpecByExtension.Where(kv => !kv.Value.ChildResource).Select(kv => kv.Key).ToArray();
+
+    /// <inheritdoc/>
+    public string OutputPathFor(string sourcePath) => sourcePath + "_c";
+
+    /// <inheritdoc/>
+    public CompileOutput Compile(CompileRequest request, ICollection<CompileDiagnostic> diagnostics)
+        => new(PackageKv3SourceCompiler.Compile(request.Source, Path.GetExtension(request.SourcePath), request.SourcePath, request.SearchPath));
+}
+
+/// <summary>Settings for <see cref="SoundCompiler"/>.</summary>
+/// <param name="Template">A <c>.vsnd_c</c> whose container frame to keep, or null to author one.</param>
+public sealed record SoundSettings(byte[]? Template = null);
+
+/// <summary>PCM WAV to <c>.vsnd_c</c> (same path, <c>.vsnd_c</c>), in the version 5 layout
+/// resourcecompiler writes (RED2, an empty DATA, the CVoiceContainerDefault CTRL;
+/// <see cref="PackageResourceBuilder.ModernizeVsnd"/>).</summary>
+public sealed class SoundCompiler : IResourceCompiler
+{
+    /// <inheritdoc/>
+    public IReadOnlyCollection<string> SourceExtensions { get; } = [".wav"];
+
+    /// <inheritdoc/>
+    public string OutputPathFor(string sourcePath) => ResourceCompiler.ReplaceExtension(sourcePath, ".vsnd_c");
+
+    /// <inheritdoc/>
+    public CompileOutput Compile(CompileRequest request, ICollection<CompileDiagnostic> diagnostics)
+        => new(PackageResourceBuilder.ModernizeVsnd(
+            PackageResourceBuilder.BuildSound((request.Settings as SoundSettings)?.Template, request.Source, request.SourcePath, request.SearchPath)));
+}
+
+/// <summary>Settings for <see cref="VectorGraphicCompiler"/>.</summary>
+/// <param name="Template">A <c>.vsvg_c</c> whose container frame to keep, or null to author one.</param>
+/// <param name="Sanitize">Normalize the SVG for Panorama's parser first (<see cref="SvgSanitizer"/>),
+/// which is not what resourcecompiler does; off, the file's own bytes are stored, as RC stores them.</param>
+public sealed record VectorGraphicSettings(byte[]? Template = null, bool Sanitize = false)
+{
+    /// <summary>0.1.129's constructor, kept for binary compatibility: no sanitizing, as RC stores the file.</summary>
+    public VectorGraphicSettings(byte[]? Template) : this(Template, false) { }
+
+    /// <summary>0.1.129's deconstruction, kept for binary compatibility.</summary>
+    public void Deconstruct(out byte[]? Template) => Template = this.Template;
+}
+
+/// <summary>Panorama SVG to <c>.vsvg_c</c> (same path, <c>.vsvg_c</c>).</summary>
+public sealed class VectorGraphicCompiler : IResourceCompiler
+{
+    /// <inheritdoc/>
+    public IReadOnlyCollection<string> SourceExtensions { get; } = [".svg"];
+
+    /// <inheritdoc/>
+    public string OutputPathFor(string sourcePath) => ResourceCompiler.ReplaceExtension(sourcePath, ".vsvg_c");
+
+    /// <inheritdoc/>
+    public CompileOutput Compile(CompileRequest request, ICollection<CompileDiagnostic> diagnostics)
+    {
+        var settings = request.Settings as VectorGraphicSettings ?? new VectorGraphicSettings();
+        return new(PackageResourceBuilder.BuildVectorGraphic(settings.Template, request.Source, request.SourcePath, request.SearchPath, settings.Sanitize));
+    }
+}
+
+/// <summary>Settings for <see cref="ImageTextureCompiler"/>: the texture options an image
+/// compiles with when there is no <c>.vtex</c> describing it.</summary>
+/// <param name="Texture">The options (format, mips, flags, BC7 encoder, sheet, mip chain...). Its
+/// image, source name and search path are taken from the request; the object is not changed.</param>
+/// <param name="Template">A <c>.vtex_c</c> whose container frame to keep, or null to author one.</param>
+public sealed record ImageTextureSettings(PackageResourceBuilder.TextureDef? Texture = null, byte[]? Template = null);
+
+/// <summary>
+/// An image (PNG, TGA, JPEG, BMP, WebP) to <c>.vtex_c</c> (same path, <c>.vtex_c</c>), with
+/// <see cref="ImageTextureSettings"/>. This is the in-house texture path, not yet
+/// resourcecompiler's bytes; the byte-exact one compiles <c>.vtex</c> sources.
+/// </summary>
+public sealed class ImageTextureCompiler : IResourceCompiler
+{
+    /// <inheritdoc/>
+    public IReadOnlyCollection<string> SourceExtensions { get; } = [".png", ".tga", ".jpg", ".jpeg", ".bmp", ".webp"];
+
+    /// <inheritdoc/>
+    public string OutputPathFor(string sourcePath) => ResourceCompiler.ReplaceExtension(sourcePath, ".vtex_c");
+
+    /// <inheritdoc/>
+    public CompileOutput Compile(CompileRequest request, ICollection<CompileDiagnostic> diagnostics)
+    {
+        var settings = request.Settings as ImageTextureSettings ?? new ImageTextureSettings();
+        var def = (settings.Texture ?? new PackageResourceBuilder.TextureDef()).CopyFor(request.Source, request.SourcePath, request.SearchPath);
+        return new(PackageResourceBuilder.BuildTexture(settings.Template, def));
+    }
+}

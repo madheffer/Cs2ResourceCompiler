@@ -1,0 +1,181 @@
+# Changelog
+
+The `Source2.Compiler` package. Versions are `0.1.<commit count of main>`; one entry per published
+version that changes something a host sees.
+
+## Unreleased (resourcecompiler 1.41.9.5 byte parity)
+
+Every resource this compiler writes now matches the resourcecompiler of the 2026-11-03 CS2 update
+(1.41.9.5) byte for byte on the RcReference fixtures, so **every compiled file's bytes change** and
+host goldens over `.vtex_c`, `.vmat_c`, `.vsnd_c`, `.vsvg_c` and KV3 resources move (vpkstuff's
+`DependencyGoldenTests`).
+
+### Changed
+- KV3 v5 writes an unsigned 0 or 1 as types 26 / 27 (tier0 20261015), RED2's uint32 fields likewise,
+  and VData records Compiler Version 2 with the ModTools strip fingerprint. The vendored VRF reads
+  types 26 / 27.
+- RED2 list and searchable sorts use V_stricmp_fast.
+- `SoundCompiler` returns the v5 container; `ModernizeVsnd` adds `m_bRegisteredVMix` and
+  `m_nResourceName`.
+- `VectorGraphicCompiler` stores the SVG as RC stores it; the Panorama sanitizer is opt-in
+  (`ResourceBuilder.BuildPanoramaSvg` still sanitizes).
+- `TgaReader` reads only descriptor bit 0x20 as RC does: a right-to-left image is no longer mirrored,
+  and the declared alpha bit count is ignored.
+
+### Added
+- `.vtex` sources with several inputs, image processors and output channel groups.
+- Mip algorithms: None, BoxInverse, MipNormal, PreserveCoverage, HemiOctAnisoRoughness,
+  AnisoRoughness_RG, HemiOctAnisoRoughness_RG_BA, HemiOctNormal, AnisoNormal, AnisoNormalRoughness,
+  Box<N>, MultiplyBox, MultiplyNoMip, RGBM (2D), AlphaWeighted, MipWidth / MipHeight / MipDepth,
+  DepthPyramidMin / Max, AutoLevels (perchannel, luminance), HeightCombine (method2, sumnormalized),
+  WrapGaussian. Every mip algorithm a CS2 shader names is ported for 2D textures.
+- Image processors: Mod2XCenter, ConvertToYCoCg, EncodeRGBM, ScaleToPowerOfTwo, FillToPowerOfTwo,
+  FillToMultipleOfFour, HeightToNormal, DilateColorInTransparentPixels.
+- Output formats: I8, IA88, A8, R8_UNORM, BGRA8888, R16, RG1616, RGBA16161616, R16F, RG1616F,
+  RGBA16161616F, R32F, RG3232F, RGB323232F, RGBA32323232F. The formats resourcecompiler itself
+  refuses ("Unsupported image format") are refused.
+- Materials: csgo_weapon's RGBA8888 children, `m_nMaxRes`, string attributes; alpha-tested materials.
+
+### Refused (not yet ported; an error names the setting)
+- Mip2DGradient, RelaxedCones, HemiOctIsoRoughnessAdjustable_RG_BA, Sharpen*, Nice, UniformRandom,
+  the cube-only algorithms, BC6H, cube and 3D textures, image `.txt` settings, AutoLevels with
+  GammaToLinear, and a channel group reading a channel its algorithm's frame does not hold.
+
+## Unreleased (texture fallback)
+
+### Added
+- `ResourceBuilder.TextureDef.Srgb`: sRGB colour or linear data; it sets the fallback's encoder
+  weights. Null (the default) is sRGB, except BC4/BC5.
+
+### Fixed
+- `ResourceBuilder.BuildTexture` wrote `FALLBACK_BITS` as BC7. CS2 uploads those 1024 bytes as
+  DXT5 for every texture, so the image it drew while a texture streamed in was block noise. The
+  fallback is now made the way resourcecompiler makes it (RC's level pick, resampler and DXT5
+  encoder): given RC's own mip chain, it is RC's bytes. Every texture's bytes change in that
+  1024-byte payload only. Header and mips are unchanged, so host goldens over whole `.vtex_c`
+  files move (vpkstuff's `DependencyGoldenTests`). The fallback no longer goes through SkiaSharp
+  or BCnEncoder.
+
+## Unreleased (VRF independence: models, textures, animations)
+
+### Added
+- `Meshes.Skeleton` (bones, parents, bind and inverse bind poses, world pose, lookup by name or
+  token) from a model, a `.vnmskel` or a render skeleton; `CompiledModel.Skeleton`, `MeshGroups`,
+  `DefaultMeshGroups` (the `m_nDefaultMeshGroupMask` rule), `MaterialGroups`, `ReferenceMeshes`.
+  Equal to VRF on every pak01 model.
+- `StringToken.Get`: the engine's name token (MurmurHash2 of the lowercased name).
+- `Textures.CompiledTexture`: a `.vtex_c` read without VRF; `GenerateBitmap` returns VRF's pixels on
+  every pak01 texture (BC1-BC7 and BC6H decoders of our own, the simple and HDR formats, embedded
+  PNG/JPEG/WebP, YCoCg / normal / hemi-octahedral codecs from the edit info). `ReadMip`,
+  `RawImageData`, the header and extra data as properties.
+- `SpriteSheet.Read`; `SpriteSheet.Frame.MoreImages` and `SpriteSheet.Image` for frames with several
+  rects, so stock multi-layer sheets write back to their own bytes.
+- `Anim`: a model's animations without VRF (`ModelAnimations.All`: embedded sequences, animation
+  groups, animation graph clips, included models), decoded per frame by `Animation.DecodeFrame`;
+  `AnimationClip.Read` for a `.vnmclip_c`. Equal to VRF on every frame of every pak01 animation.
+
+- `Meshes.Vbib`: a mesh's vertex and index buffers decoded with their layouts (CTRL descriptors,
+  inline data, binary VBIB blocks; meshopt and zstd), and VRF's attribute readers
+  (`GetVector2/3/4AttributeArray`, `GetNormalTangentArray`, `GetBlendIndicesArray`,
+  `GetBlendWeightsArray`, `GetIndices`) with `DXGI_FORMAT` and `RenderInputLayoutField`.
+  `EmbeddedMesh.Vbib`, `.MeshIndex`, `.MorphBlock`; `CompiledModel.RemapTable`; `CompiledMesh` for
+  `.vmesh_c`. Equal to VRF on every pak01 mesh.
+
+- `Gltf.GltfModelExporter`: models and meshes to GLB without VRF or SharpGLTF, as VRF's exporter
+  writes them (meshes, skin, materials, textures adapted to glTF channels and embedded, material
+  extras), on `Gltf.GltfModel`, a glTF 2.0 writer of our own. `Gltf.TextureInputs` and
+  `ShaderPrograms.FromPackages`: each material texture's inputs from the shader's programs.
+- `Materials.CompiledMaterial`: a `.vmat_c` read as VRF reads it, with dynamic expressions
+  decompiled by `Shaders.VfxEval` (VRF's decompiler, ported).
+- `StringToken.Lookup` and `Store`, over the 7,102 entity keys VRF knows.
+- `ResourceBlock.SourceOffset`: where a block sat in the file it was read from.
+- `ShaderProgram.StaticComboRules`, `ShaderCombo.CompareValue`, `ShaderVariable.ChannelCount`.
+
+### Fixed
+- KV3 node types 26 and 27 (a uint32 0 and 1 with no payload), which CS2's 2026-10 compiler
+  writes: every reader threw `Unknown KVType` on them. Measured on GFL's 2026-10-25 pack, 17 of
+  its 20 player models carry them in RED2 and four in DATA. `Kv3Type.UInt32Zero` / `UInt32One`;
+  `Kv3Tree` keeps them on a round trip, `Kv3Binary.Read` returns them as `uint`, and the writer
+  still encodes a `uint` 0 or 1 as before.
+- Binary KV3 is held to an absolute ceiling on what a block declares it decompresses to, instead of
+  4096 times its stored size. The ratio let a 454 KB zstd block declare 1.9 GB (1.8 GB peak per
+  decompile), refused valid output that compresses well (1.1M `{}` in a `.vdata` compile to 2 KB),
+  and wrapped negative for a standalone KV3 (Size 0, such as a nav mesh's), refusing every one over
+  about 1 MB. A standalone KV3 is now bounded by the rest of its stream, which must be seekable.
+- A v5 zstd block's blob frame is bounded by its compressed total, and VRF's legacy VKV3 reader
+  (binary_bc, binary_lz4) checks its sizes too; each rented 1.9 GB from a few bytes before.
+- Values are capped too, not only bytes: a block's node budget (1M + 16 per declared byte) is never
+  above `Kv3ReadLimit.MaxValues`, since zstd stores zero padding that buys declared bytes in a few
+  KB. VRF gains the same budget for its legacy VKV3 reader, which had no depth or value bound (a
+  deep file overflowed the stack; a typed array of nulls built billions of nodes) and pre-sized
+  arrays from file counts.
+- VRF refuses a block whose table size runs past the end of the file (every block reader trusted
+  it), and bounds particle snapshot (SNAP) blocks, which it reads from any file's table: their
+  size, their particle count per attribute, and out-of-range string indices. The legacy reader's
+  string table count is checked too.
+
+### Added (limits)
+- `Kv3.Kv3ReadLimit`: `MaxUncompressedBytes` (default 512 MB; the largest real block measured is
+  303 MB, de_boulder's world physics), `MaxValues` (default 16M; the most values counted in a real
+  block is 5,351,200, the same file) and `Use(bytes, values)`, an async-flow scope that only lowers
+  them. `VrfKv3ReadLimit.Use(bytes, values)` (Source2.Compiler.Vrf) scopes this package's readers
+  and VRF's together. At the defaults a hostile block can still cost about 1 GB of nodes before it
+  is refused; a host parsing uploads scopes both lower.
+  Newly required VRF patches: `vrf-kv3-read-limit`, `vrf-kv3-legacy-size-guard`,
+  `vrf-kv3-legacy-value-guard`, `vrf-kv3-legacy-capacity-guard`, `vrf-resource-block-bounds-guard`,
+  `vrf-particle-snapshot-size-guard`, `vrf-particle-snapshot-count-guard`,
+  `vrf-particle-snapshot-invalid-string`, `vrf-kv3-legacy-string-count-guard`.
+
+## 0.1.106 (production cleanup, 2026-10-14)
+
+### Added
+- `TextureDef.MipChainBgra` and `VtexCompileSettings.MipChainBgra`: a caller-made mip chain
+  (8-bit BGRA, level 0 first, each level half the one before), checked and encoded as given.
+- KV3 binary v4 writing (`Kv3V5Writer.Write(..., version: 4)`, `Kv3Binary.Write(..., version: 4)`),
+  Valve's layout: every v4 block of pak01 re-encodes to its own bytes except 17 large old-zstd ones.
+  `Kv3Binary.Version` reads a block's version.
+- `Source2.Compiler.KeyValues.KvExtensions`: ValveResourceFormat's `KVObject` helpers with the
+  same conversions (`GetIntegerProperty`, `GetArray<T>`, `GetIntegerArray`, `ToVector3`,
+  `ToMatrix4x4`, `GetEnumValue`...), for hosts moving off VRF.
+- `Kv3Text.Parse`: KV3 text read with the compiler's safety checks (nesting, stray control
+  characters) and quoted values kept strings.
+- `MurmurHash2.Hash32` and `MurmurHash2.Hash64B`.
+- `Kv3Type.Int8` (22); `Kv3Tree` reads INT8 nodes.
+- `ResourceBuilder.FindTemplateBytes(Package, extension)`.
+
+### Changed
+- `CompiledResource.Write` re-encodes an edited KV3 block in the version it was read in (4 stays
+  4; older versions are written as 5). Before, every edited block became v5.
+- The KV3 header's object and array counters saturate at 65535 in every writer (Valve's maps).
+- `ImageTextureSettings` is `(TextureDef? Texture, byte[]? Template)`: the options are a
+  `TextureDef`, no longer eight copied fields.
+- `Kv3Type.Int32AsByte` is `Kv3Type.UInt8` (the same value, 23).
+- `ShaderProgram.InputSignatures` holds `MaterialAuthoring.InputSignatureElement` (it held
+  `VsInputElement`, the same four fields).
+- `Source2ContainerAuthor.AuthorKv3Tree` is one method with an optional `editRed2`.
+- The PDB and every source are embedded in the DLL (file and line in stack traces); no `.snupkg`.
+- `ResourceFile.Write` refuses a block type that is not four ASCII characters.
+- WAV input must carry a RIFF/WAVE header.
+- `SheetAtlas.Pack` takes a `maxAtlasSize` of at most 16384.
+
+### Removed
+- `Source2ContainerAuthor.SoundSpecialDeps` and `VectorGraphicSpecialDeps` (use `SoundDeps` and
+  `VectorGraphicDeps`, the same tables), `TextureCompileDeps` (use `TextureDeps("Box")`).
+- `GeneratedTexture.MurmurHash2` (use `MurmurHash2.Hash32`).
+- `ResourceBuilder.FindMaterialTemplateBytes`, `FindModelTemplateBytes`, `FindTextureTemplateBytes`
+  (use `FindTemplateBytes(pkg, "vmat_c")` and so on).
+- `Shaders.VsInputElement`.
+
+### Fixed
+- Hostile input: every KV3 reader (v1-v5, the legacy VKV3 container, `Kv3Tree`) checks declared
+  sizes before allocating and bounds nesting and value counts; the legacy reader had no guard and
+  a deep block ended the process with a stack overflow.
+- `DirectoryContentSource` read files outside its roots through a rooted or drive-qualified path.
+- A crafted WAV chunk size made the chunk walk run backwards, possibly forever.
+- `BuildTexture` wrote a 0 width for an image padding past 32768; sizes over 16384 are refused.
+- `CloneKv` lost the low bits of 64-bit integers above 2^53.
+- Meshopt decoders, `CompiledModel`, `NmClipEdit`/`NmClipCodec`, `ShaderExpression` and
+  `SheetAtlas`: malformed input fails with `InvalidDataException` (or the documented argument
+  exception) instead of `NullReferenceException`, `IndexOutOfRangeException`, a huge allocation or
+  an endless loop.
+- `Bc7Native` loads its library from the application directory only.

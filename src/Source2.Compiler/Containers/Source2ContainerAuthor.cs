@@ -518,14 +518,7 @@ public static partial class Source2ContainerAuthor
     private static string StripExt(string path)
         => path.LastIndexOf('.') is var i && i > path.LastIndexOf('/') && i > 0 ? path[..i] : path;
 
-    /// <summary>The three special dependencies resourcecompiler stamps on a
-    /// <c>.vtex_c</c>, byte-verified on two independent real compiles.</summary>
-    public static readonly SpecialDep[] TextureSpecialDeps =
-    [
-        new("Texture Compiler Version",           "CompileTexture", 11),
-        new("Texture Compiler Version Mip None",  "CompileTexture", 1),
-        new("Texture Encode Quality",             "CompileTexture", 1, UserData: 3),
-    ];
+    // TextureSpecialDeps: ContainerFacts (main's TextureDeps("None"), the same three).
 
     /// <summary>What resourcecompiler stamps on a <c>.vsnd_c</c> (resource version
     /// 5), dumped 2026-08-10 from a real PCM WAV compile.</summary>

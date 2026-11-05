@@ -37,6 +37,14 @@ try
         "entitylump" => Commands.Entitylump(args[1..]),
         "reauthor" => Commands.Reauthor(args[1..]),
         "selftest" => SelfTest.Run(args[1..]),
+        // main's resource parity tools (merged 2026-11-05).
+        "kv3-parity" => Kv3Parity.Run(args[1..]),
+        "nmclip-parity" => NmClipParity.Run(args[1..]),
+        "container-parity" => ContainerParity.Run(args[1..]),
+        "reencode-parity" => ReencodeParity.Run(args[1..]),
+        "kv3-types" => Kv3Types.Run(args[1..]),
+        "red2-survey" => Red2Survey.Run(args[1..]),
+        "kv3-read-parity" => Kv3ReadParity.Run(args[1..]),
         _ => Unknown(args[0]),
     };
 }

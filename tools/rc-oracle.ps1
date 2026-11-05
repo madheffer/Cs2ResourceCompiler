@@ -21,7 +21,10 @@
 [CmdletBinding()]
 param(
   [string]$Cs2Root = "D:\Steam\steamapps\common\Counter-Strike Global Offensive",
-  [string]$Addon = "s2c_rc_probe"
+  # The addon the RcReference fixtures were compiled in: RC records it in RED2
+  # and FLCI, so the byte-identity test expects it. Not s2c_rc_probe, which the
+  # map compiles back up and restore.
+  [string]$Addon = "vpkstuff_rc_probe"
 )
 $ErrorActionPreference = 'Stop'
 

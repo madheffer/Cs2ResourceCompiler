@@ -1,10 +1,11 @@
 using ValveKeyValue;
-using ValveResourceFormat.Serialization.KeyValues;
+
+using Source2.Compiler.KeyValues;
 
 namespace Source2.Compiler;
 
 /// <summary>
-/// Reading shader parameters back out of a compiled material's DATA tree.
+/// Shader parameters in a compiled material's DATA tree.
 ///
 /// <para>A <c>vmat_c</c> stores its parameters as parallel arrays of
 /// <c>{ m_name, m_&lt;kind&gt;Value }</c> objects, one array per value kind
@@ -29,7 +30,8 @@ public static class VmatParams
             return null;
         foreach (var entry in arr.Values)
         {
-            if (!string.Equals(entry.GetStringProperty("m_name"), paramName, StringComparison.Ordinal))
+            if (!entry.TryGetValue("m_name", out var name) || name.ValueType != KVValueType.String
+                || !string.Equals((string)name, paramName, StringComparison.Ordinal))
                 continue;
             if (!entry.TryGetValue(valueKey, out var v) || v is null)
                 return null;
@@ -43,5 +45,22 @@ public static class VmatParams
             };
         }
         return null;
+    }
+
+    /// <summary>
+    /// <paramref name="items"/> as a material array of <c>{ m_name, &lt;valueKey&gt; }</c> objects, in
+    /// order, each value made by <paramref name="make"/>.
+    /// </summary>
+    internal static KVObject NamedArray<T>(IEnumerable<(string Name, T Value)> items, string valueKey, Func<T, KVObject> make)
+    {
+        var array = KVObject.Array();
+        foreach (var (name, value) in items)
+        {
+            var entry = KVObject.Collection();
+            entry.Add("m_name", new KVObject(name));
+            entry.Add(valueKey, make(value));
+            array.Add(entry);
+        }
+        return array;
     }
 }

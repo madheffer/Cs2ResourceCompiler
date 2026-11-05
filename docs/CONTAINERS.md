@@ -153,6 +153,35 @@ Open (GROUND_TRUTH 24):
 
 Every option is listed in [COVERAGE.md](COVERAGE.md).
 
+## Two container layers (main merged, 2026-11-05)
+
+Branch feat/addon-content merged main (the resource-compiler package line, ad2e29a) into the map
+compiler (research/map-authoring 5b02174) for 8.b1: compile-map compiling a map's addon materials and
+textures with main's exact compilers. main had rewritten the container layer off VRF onto its own
+`CompiledResource`; the map compiler writes every output through VRF's `Resource`. Same class names,
+different signatures, so both layers are kept side by side (the user's call):
+
+- **Map layer, unchanged:** `Source2ContainerAuthor`, `ResourceBuilder`, `MaterialAuthor`,
+  `Kv3V5Writer`, `Kv3SourceCompiler`, `ResourceDecompiler` and every map-side file main had edited
+  are this branch's own bytes. No map output changes from the merge.
+- **Package layer, from main under its own names:** `PackageContainerAuthor` (+ `.Vdata`),
+  `PackageResourceBuilder`, `PackageMaterialAuthor`, `PackageKv3SourceCompiler`, and main's KV3 writer
+  as `Kv3/Kv3BlockWriter`. main's added code (Materials/, Texture/Rc/, Kv3/, Compiling/, Anim/,
+  Meshes/, Shaders/, Gltf/) calls these, imports `Source2.Compiler.KeyValues` per file (the
+  project-wide using clashed with VRF's KVObject extensions), and shares `ContainerFacts`,
+  `SpecialDep` and `SavedSource` with the map layer. `GpuBc7Encoder` and `VmatParams` are main's
+  (additive: an install hook that is off by default, and `NamedArray`).
+- **Left out:** main's `Source2.Compiler.Vrf` adapter project (this branch keeps VRF in the core), and
+  what needs it: the CLI's fuzz, reserialize-parity and recompile-parity tools and the
+  HostileInput, Kv3Tree, RoundTripParity, TextureDecode and ResourceBlockCountGuard tests (the last needs main's VRF patch vrf-rerl-count-guard). They stay on main.
+- **RcReference:** the four KV3 probes are main's 11-03 recordings (today's RC). Main's
+  ResourceCompilerTests match them byte for byte. The map layer's Source2ContainerAuthorTests compare
+  trees and pass too, but whether the map layer's KV3 bytes still match today's RC (uint32 0 / 1 as
+  KV3 types 26 / 27) is not checked yet.
+
+Unifying the two layers means porting the map outputs onto `CompiledResource` and re-checking each
+one's byte parity.
+
 ## Resourcecompiler recipes and traps
 
 - **Visibility** is built inside the world step, and only when the `vis`
