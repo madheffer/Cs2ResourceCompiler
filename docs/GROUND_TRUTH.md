@@ -6228,3 +6228,17 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        after the position, and VertexPaintBlendParams (color) last.
      - Ported as WorldNodeModels.DmeFieldOrder. atixref -world: 539 -> 547 of 553 files (97.45% of bytes), the 8
        vism0 overlay objects now Valve's; ze_hold_em_p -world 45/45 files.
+253. **Aggregate fragments get the tangent check after their weld** (2026-11-05 night, CS2 closed; Frida
+     tools/re/capture_aggstreams.py A.14 on rc 1103 compiling atixref -world -fshallow; rc 0923 decompiles of
+     Step_SplittingMeshWith 180260710, CMesh_Weld 1812d80c0, 1812e1450). MEASURED + READ.
+     - The tangent check and CMesh_ComputeTangents run on atixref's three left aggregates before
+       WRB_MeshesToModelDoc (log order), called from Step_SplittingMeshWith, whose only caller is WRB_BuildAggregate
+       (180268ef5). Per fragment group it welds at 0 (a tangent still joins within 0.001 per component), runs the
+       check on the welded mesh and, when it fails, recomputes with a split list whose vertex copies go to the
+       group's entries ("Computing tangents mesh %i, %i v -> %i").
+     - Valve refuses brick02's 243-vertex fragment (vertex 236, |t|^2 0.9927, w -1), hr_concrete_wall_painted_001's
+       194 (vertex 124, 0.9719; 197 vertices after the recompute) and trim_wood01's 124 (vertex 58, w 0.36). Our welded
+       tangents equal Valve's at the check bit for bit, so only the step was missing.
+     - Ported: FragmentOrder runs ModelTangents (the check and the recompute) on each welded fragment before the sort.
+       atixref -world: 547 -> 550 of 553 files (97.96% of bytes); ze_hold_em_p 45/45. Left: n0.vwnod (A.11) and
+       metal_door_001's bucket swap (Valve's own runs differ there).

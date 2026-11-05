@@ -296,14 +296,19 @@ internal static class WorldNodeModels
         return e.Field28 != Vector4.One ? Pow(e.Field28) : Vector4.One;
     }
 
-    // Step_SplittingMeshWith (180260710) welds each fragment's CMesh (CMesh_Weld with 0), then
-    // BuildAggregate sorts: +0x58 (0 for every map mesh), welded vertex count descending, then memcmp of the vertices.
+    // Step_SplittingMeshWith (180260710, WRB_BuildAggregate's only call, 180268ef5) welds each fragment's CMesh
+    // (CMesh_Weld with 0; a tangent still joins within 0.001 per component, 1812d80c0), then runs the tangent check
+    // (1812e1450) on the welded mesh and, when it fails, CMesh_ComputeTangents (1812db920) with its split list, whose
+    // vertex copies go to the group's entries ("Computing tangents mesh %i, %i v -> %i"). A weld can leave a tangent
+    // off unit length (atixref: brick02's 243-vertex fragment, |t|^2 0.9927 at vertex 236; A.14 capture), so
+    // Valve recomputes it here, before the DmeMesh round trip renormalises (ledger 253).
+    // BuildAggregate then sorts: +0x58 (0 for every map mesh), welded vertex count descending, then memcmp of the vertices.
     private static List<WorldNodeCompile.Entry> FragmentOrder(IReadOnlyList<WorldNodeCompile.Entry> meshes)
     {
         var welded = meshes.Select(e =>
         {
             var (v, i) = Physics.MeshWeld.Weld(e.Vertices, e.Stride, e.Indices, WeldStreams(e.Facts.Streams), 0f, true);
-            return e with { Vertices = v, Indices = i };
+            return ModelTangents(e with { Vertices = v, Indices = i });
         }).ToArray();
         MsvcSort.Sort(welded, (a, b) =>
         {

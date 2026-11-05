@@ -135,7 +135,8 @@ heavy runs with the game open at below-normal priority):
    blocklight7 models' draws, and for the overlays CMesh_ComputeTangents' (1812db920) output tangents; compare
    with ours (WorldNodeModels.ModelTangents, MeshTangents.Corners) to find which input bit differs.
 
-14. **The model compile's tangent check and recompute on three atixref aggregates** (OPEN 1.c7; queued 2026-11-05
+14. ~~The model compile's tangent check and recompute on three atixref aggregates~~ (done 2026-11-05 night, ledger 253:
+   the check runs in Step_SplittingMeshWith after the fragment weld, not in the model compile; atixref 547 -> 550). Was: (OPEN 1.c7; queued 2026-11-05
    evening, CS2 open: static reading and our-side experiments done). Frida, no game process: tools/re/capture_aggstreams.py
    s2c_rc_probe atixref --match "brick02_blend|trim_wood01_painted_blend_02|hr_concrete_wall_painted_001" --dump tangent
    (its new tangentcheck / tangentcompute stages hook 1812e1450 and 1812db920, installed RVAs through rva_map).

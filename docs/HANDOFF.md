@@ -243,6 +243,8 @@ the addon).
   one brick02 entry whose tangents pass our copy of 1812e1450 (forcing our recompute leaves 23 of 154 words), and
   our recompute is one step off Valve's at the packing boundaries. Both need Valve's floats: CS2_CLOSED_QUEUE A.14
   (capture_aggstreams.py now hooks the check 1812e1450 and the recompute 1812db920).
+- Ledger 253 (CS2 closed, A.14 run): the check runs in Step_SplittingMeshWith after each aggregate fragment's weld.
+  atixref `-world` **550 of 553 (97.96%)**; left n0.vwnod (A.11) and metal_door_001's swap (within variance).
 
 ## Earlier session (2026-11-04 evening and night, CS2 open: atixref -world world node models)
 

@@ -25,7 +25,7 @@ Open:
   vertex count descending, memcmp) ported; every agg_prop model is Valve's but the trim aggregate (1.c7), the
   metal_door_001 buckets equal Valve's second run. Open: n0.vwnod's fragment order in 21 aggregates, which follows
   the CMesh pointer order of the stable sort before (heap order): CS2_CLOSED_QUEUE A.11.
-- 1.c7 atixref `-world` ParityReport, 11-05: **547 of 553 files (97.45% of bytes)** after ledger 252 (field order, CS2 open); 539 (97.05%) before it, from 521: the model compile's DmeMeshToCMesh copy renormalises every normal and tangent once more (ledger 251, A.13). Before that, 11-04 night: 521, from 486.
+- 1.c7 atixref `-world` ParityReport, 11-05: **550 of 553 files (97.96% of bytes)** after ledger 253; 547 (97.45%) after ledger 252 (field order, CS2 open); 539 (97.05%) before it, from 521: the model compile's DmeMeshToCMesh copy renormalises every normal and tangent once more (ledger 251, A.13). Before that, 11-04 night: 521, from 486.
   Ported (ledgers 248-250): the model compiler's merge order (180344ae0), draws set by set, each mesh laid out with
   its own material, the RERL sorted by V_stricmp_fast (18016c0e0), NoCollapse for instanced meshes (one draw set
   each), the mesh compile's own tangents for a mesh without valid ones (CMesh_ComputeTangents with its vertex
@@ -33,10 +33,8 @@ Open:
   the .vwrld stamp. Left, by family:
   - ~~tangent angles one step off at the basis axis~~ (closed 11-05, ledger 251: Valve renormalises every direction in
     the model compile's DmeMeshToCMesh copy; the overlays, blocklights, cm00 objects and most aggregates now Valve's).
-    Left (11-05 evening, measured on our side): brick02_blend_0 and trim_wood01_painted_blend_02_0 differ only in MVTX
-    (packed NORMAL words, normals equal): Valve recomputes brick02's 243-vertex entry whose tangents ours keep, and our
-    recompute sits one step off Valve's at the packing boundaries (trim 6 words). hr_concrete_wall_painted_001_1: Valve's
-    draw 1 has 2 more vertices, likely the same recompute split. Waiting for CS2_CLOSED_QUEUE A.14.
+    ~~Left: the three tangent aggregates~~ (closed 11-05 night, ledger 253: Step_SplittingMeshWith's tangent check after
+    the fragment weld; atixref 547 -> 550 of 553, 97.96%).
   - ~~vism0 overlay objects (8): field order~~ (closed 11-05, ledger 252: the DmeMesh round trip writes fields by
     container then DMX type group, WorldNodeModels.DmeFieldOrder; atixref 539 -> 547 of 553, 97.45% of bytes).
   - metal_door_001's two buckets: equal to Valve's second run (the known swap, within variance).
