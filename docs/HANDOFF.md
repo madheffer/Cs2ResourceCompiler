@@ -245,6 +245,8 @@ the addon).
   (capture_aggstreams.py now hooks the check 1812e1450 and the recompute 1812db920).
 - Ledger 253 (CS2 closed, A.14 run): the check runs in Step_SplittingMeshWith after each aggregate fragment's weld.
   atixref `-world` **550 of 553 (97.96%)**; left n0.vwnod (A.11) and metal_door_001's swap (within variance).
+- Ledger 254: blocklight and skybox objects keep CreateRenderObject's zero handshakes. n0.vwnod now differs only in
+  prop aggregate fragment order (CMesh pointer = heap order; Valve's own runs disagree on 17 aggregates).
 
 ## Earlier session (2026-11-04 evening and night, CS2 open: atixref -world world node models)
 
