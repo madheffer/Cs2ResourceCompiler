@@ -6267,3 +6267,33 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        aggregates and agree on the rest; ours equals one run on 3 of the 17 and differs on 113, 225, 232 and 233
        where both runs agree. CAggregateMeshList::Compile sorts by CMesh pointer (180290090, A.11), so this is heap
        order.
+
+255. **resourcecompiler's up-to-date test, and where a map's dependencies are not compiled** (2026-11-05 night, CS2
+     closed; rc 0923 decompiles of 18018b630, 1801692f0, 18016f170, 180167ad0, 180168770; strings 182782160 /
+     182781d20.) For 8.b1 (a map's addon content compiled by compile-map).
+     - Settled from the code: Hammer's `-fshallow` is "Force compile top-level resources, but only compile children
+       and associates as needed" (RC's own help, 182782160); `-fshallow2` forces children too, associates as needed.
+     - Settled from the code: 1801692f0 compiles one file. It skips a file shadowed by a higher-priority extension
+       and one in a read-only search path, then asks 18016f170 whether the output is up to date: true skips it,
+       false compiles it (or, at mode 4, `-dependency_check_only`, only logs it).
+     - Settled from the code: 18016f170 returns false at once when the file's mode (+0x60) has any bit but 4 set (a
+       forced compile). Otherwise it loads the existing compiled file's header (version 0xc), inits its edit info
+       (181c213e0, must return 2), and recompiles on the first mismatch, in this order: special dependencies
+       (180172920), special input dependencies (180172be0), each argument dependency against six typed tables
+       (180177a70 / 177ce0 / 177f40 / 1781a0 / 178400 / 178660 at +0x1d0 ... +0x428), input dependencies
+       (180172390), additional dependencies (180172390 again), child resources present (180172f60), and no
+       inputs at all ("No inputs specified, recompiling"). All equal: "All inputs have identical CRCs,
+       skipping" and 180170170 records the existing outputs.
+     - Read, not the queue: 180167ad0 registers a compiled resource as an input dependency (types must be listed
+       in CompileDependsOnResourceTypes); 180168770 is the Perforce add of inputs. Neither queues a dependency.
+     - MEASURED (2026-11-05, rc 1103, tools/coverage/addon_material_specimen.py makes s2c_addonmat: probe01 with two
+       materials that exist only as sources in the addon, materials/s2cmat/cx_full.vmat and cx_color.vmat, nothing
+       compiled; compile_fresh.py s2c_rc_probe s2c_addonmat -- -world -fshallow -v; log and package kept as
+       %TEMP%/fresh_compile/s2c_addonmat_nomats.*): the map compile does NOT compile them. It logs "Failed loading
+       resource materials/s2cmat/cx_full.vmat_c (ERROR_FILEOPEN)", lists them as strong references, logs
+       "CAssociateResourceBlockLoader::BlockingLoadResourceFileData: Trying to load an illegal resource name
+       materials/s2cmat/cx_full.vmat!" and "RESOURCE COMPILE WARNING: Mesh 'meshset_0' referencing missing material",
+       exits 0, and writes nothing under game/csgo_addons/s2c_rc_probe/materials. A map's materials are strong
+       references, not children or associates, so -fshallow's "as needed" does not reach them: in Valve's pipeline
+       they are compiled before the map (by the tools when an artist saves them, or resourcecompiler run on the
+       asset itself). 8.b1 is therefore not part of the map compile; compiling an addon's sources is its own step.
