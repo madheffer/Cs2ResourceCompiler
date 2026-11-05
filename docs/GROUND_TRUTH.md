@@ -6297,3 +6297,27 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        references, not children or associates, so -fshallow's "as needed" does not reach them: in Valve's pipeline
        they are compiled before the map (by the tools when an artist saves them, or resourcecompiler run on the
        asset itself). 8.b1 is therefore not part of the map compile; compiling an addon's sources is its own step.
+
+256. **Prop aggregate fragment order is mimalloc's block reuse** (2026-11-05 night, CS2 closed; Frida
+     tools/re/capture_aggorder.py on rc 1103 compiling atixref -world -fshallow: g_pMemAlloc Alloc / Realloc / Free
+     while BuildNode (18024b430) runs, each bucket after WRBMeshList_SortMorton and at WRB_BuildAggregate). MEASURED.
+     - tier0's allocator is mimalloc (ULowLevelAllocationScheme_mimalloc). Each prop entry's sort key (entry +0x0) is
+       a 0x1a8 object (448 bin), allocated mostly in WRB_LoadPropMeshes (rc+1d485e) and BuildNode's own prop steps.
+     - In 43 of the 64 prop aggregates the stable sort's pointer order is not the allocation order; nearly all of
+       their objects took a block freed earlier (LIFO reuse of the page's free list), spread over several 64K pages.
+       The 21 others are in allocation order. Where a block lands depends on every 448-bin allocation and free of the
+       run (682,937 frees in BuildNode alone), and cross-thread frees reach the free list nondeterministically:
+       Valve's own two -world runs disagree on 17 atixref aggregates.
+     - So no data reproduces it short of emulating the allocator over all of resourcecompiler's allocations. Ours
+       keeps creation order, which equals Valve's where no block was reused; n0.vwnod's fragment order passes under
+       the variance rule only where it matches a run. Settled as Valve-nondeterministic (heap), not ported.
+257. **Bomb damage without a nav or world physics writes nothing** (2026-11-05 night; modtools 1015 decompiles of
+     CMapCompileModifierCS2BombDamage::Run 18003ad70, GatherBombsites 18003b5d0, BuildGrid 18003b750,
+     SampleNavAreas 18003d030). READ + MEASURED.
+     - Run logs "Baking CS2 Bomb Damage:", then GatherBombsites answers false unless the context has the nav mesh
+       (+0x18) and context[2]'s vf 0 returns the world; BuildGrid answers false when SampleNavAreas finds no nav or
+       no points. Either ends the step with no file and no error ("Bomb Damage bake completed" is not logged).
+     - Valve's -world builds of probe01 and cardtest from an empty package (fresh_compile/*_world_1105.vpk) carry no
+       baked_bomb_damage.vdata_c. compile-map failed the build there ("the package has no ... to sample"); it now
+       logs and writes nothing. Found by the parity sweep: probe01 -world 0/13 -> 13/13, cardtest 0/14 -> 14/14
+       from an empty package (no PARITY_BASE needed any more).
