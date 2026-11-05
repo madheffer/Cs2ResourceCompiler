@@ -50,7 +50,8 @@ internal static class NodePropEntries
             var keys = ent.Element.Get<DmxBinary.Element>("entity_properties");
             if (ent.Hidden || keys?.Get<string>("classname") != "prop_static")
                 continue;
-            var model = keys.Get<string>("model") ?? "";
+            if (RecordModel(keys.Get<string>("model")) is not { } model)
+                continue;
             var deformed = Physics.WorldCollision.PropOf(ent).Deformer != null;
             var list = deformed ? $"{model}_{special++}" : model;
             // A deformed prop is baked too (AddStaticProps' +0x80 trigger, PropDeformer_IsSet).
@@ -199,6 +200,22 @@ internal static class NodePropEntries
         for (var k = 0; k < Math.Min(from.Length, to.Length); k++)
             map.TryAdd(from[k], to[k]);
         return map;
+    }
+
+    /// <summary>
+    /// The model path EntityLump_StaticModelRecord (180245770) files a prop under: none for an empty model key (it
+    /// returns before making a record, so the prop gives no entry and no scene object: probe_classes' bare
+    /// prop_static, ledger 258); models/dev/error.vmdl when the extension is neither vmdl nor vmdl_c
+    /// (V_stricmp_fast); else the path with its extension set to .vmdl.
+    /// </summary>
+    internal static string? RecordModel(string? model)
+    {
+        if (string.IsNullOrEmpty(model))
+            return null;
+        var ext = Path.GetExtension(model).TrimStart('.');
+        if (!Io.Tier0Strings.EqualsIgnoreCase(ext, "vmdl") && !Io.Tier0Strings.EqualsIgnoreCase(ext, "vmdl_c"))
+            return "models/dev/error.vmdl";
+        return Path.ChangeExtension(model, ".vmdl");
     }
 
     // WRBNode_PropEntry's record from the prop record (180245770): the lighting

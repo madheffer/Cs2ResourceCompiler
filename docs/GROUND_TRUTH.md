@@ -6336,3 +6336,11 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        baked_bomb_damage.vdata_c. compile-map failed the build there ("the package has no ... to sample"); it now
        logs and writes nothing. Found by the parity sweep: probe01 -world 0/13 -> 13/13, cardtest 0/14 -> 14/14
        from an empty package (no PARITY_BASE needed any more).
+258. **A prop_static's model path as the static model record takes it** (2026-11-06; rc 0923 decompile of
+     EntityLump_StaticModelRecord 180245770). READ + MEASURED.
+     - The record returns before doing anything when the model key (+0x108) is empty; a path whose extension
+       (V_GetFileExtension) is neither "vmdl" nor "vmdl_c" (V_stricmp_fast) becomes models/dev/error.vmdl; any other
+       gets V_SetExtension ".vmdl". So a prop_static with no model has no record: no entry, no scene object.
+     - Ported as NodePropEntries.RecordModel, used by the baked prop list and the prop aggregate / standalone list.
+       probe_classes lit (-s2cbake, Valve's driver 32.0.16.1088 reference): its bare prop_static had given n0.vwnod a
+       second scene object with an empty model; now 144 of 145 files, only the .nav (survival play area, not ported).

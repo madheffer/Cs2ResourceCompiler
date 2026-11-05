@@ -152,7 +152,8 @@ internal static class NodePropAggregates
             if (keys?.Get<string>("classname") != "prop_static" || NodePropEntries.Baked(ent.Element, keys))
                 continue;
             var prop = Physics.WorldCollision.PropOf(ent);
-            Add(new Placed(keys.Get<string>("model") ?? "", keys, PropTransform.Matrix(prop.Origin, prop.Angles, prop.Scales), id, keys.Get<string>("skin")));
+            if (NodePropEntries.RecordModel(keys.Get<string>("model")) is { } model)
+                Add(new Placed(model, keys, PropTransform.Matrix(prop.Origin, prop.Angles, prop.Scales), id, keys.Get<string>("skin")));
         }
         var meshes = new List<Mesh>();
         var meshIndex = new Dictionary<(string, int, string), int>();
