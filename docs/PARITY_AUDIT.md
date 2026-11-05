@@ -585,12 +585,13 @@ separate source2-assets repository; that repository is outside this audit.
 
 Scripts are byte exact against a user's resourcecompiler. Everything else in this chunk is an authoring path for
 mod content, built on VRF's serializer with its own encoders, whose stated contract is decoded-tree identity; it is
-not a resourcecompiler port and cannot be bit exact as it stands (8.c1, 8.c2). The map compile's own reach gap is
-8.b1: a map's addon content is still Valve-compiled.
+not a resourcecompiler port and cannot be bit exact as it stands (8.c1, 8.c2). The map compile's own reach gap was
+8.b1: settled 2026-11-05 (GROUND_TRUTH 255): RC's map compile does not compile a map's addon content at all; `s2c
+compile-addon` does it as its own step, exact on the measured materials.
 
 Next steps, by maps affected:
-1. **8.b1** (every map with custom content): decide whether this repo or source2-assets owns material and texture
-   compiles (memory: parity work landed there), then wire that compiler into compile-map.
+1. **8.b1** (every map with custom content): done as `s2c compile-addon` (feat/addon-content, main merged); left:
+   RC's up-to-date test, models and other source types, the service calling it.
 2. **8.c1 / 8.c2**: either restate the single-resource scope as "not part of the bit-parity port" or move each type
    onto Valve's encoders (resourcecompiler's texture compile path, the same bc7e build Texture/Rc uses).
 3. **8.a1**: read the vmat_c DATA writer (CompileMaterial) for the field order.

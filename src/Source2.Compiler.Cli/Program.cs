@@ -32,6 +32,7 @@ try
         "map-diff" => Commands.MapDiff(args[1..]),
         "map-physics" => Commands.MapPhysics(args[1..]),
         "compile-map" => Commands.CompileMap(args[1..]),
+        "compile-addon" => CompileAddonCommand.Run(args[1..]),
         "build-cubemaps" => Commands.BuildCubemaps(args[1..]),
         "map-validate" => Commands.MapValidate(args[1..]),
         "entitylump" => Commands.Entitylump(args[1..]),
@@ -122,6 +123,13 @@ static void Usage()
                     and pathing bake (custom data is refused by name, as is the
                     lighting bake with neither -s2cbake nor -vrad3output). --skip-unported runs the rest and
                     leaves those as the package has them.
+
+      s2c compile-addon <addon> [--cs2 <dir>] [--only <content path>]... [--bc7 amd|intel] [-n]
+                    The addon's own .vmat and .vtex sources -> game/csgo_addons/<addon>,
+                    with their child textures, as resourcecompiler writes them when run
+                    on each asset. A map compile never compiles the materials it uses
+                    (GROUND_TRUTH 255): run this before compile-map. Files whose bytes
+                    are already right are left alone; -n compiles and writes nothing.
 
       s2c build-cubemaps <game/csgo_addons/<addon>/maps/<map>.vpk>
                     [--no-scripted-camera] [--intermediates <dir>] [--game <dir>]

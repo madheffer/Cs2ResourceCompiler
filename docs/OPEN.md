@@ -147,5 +147,8 @@ Open (each refused with an error naming it; RC probes already compiled in algori
 - `.vpcf` legacy schema migration (RC_PARITY G2); `.vagrp` has no ground truth (G4).
 - Owned by source2-assets, not this repo: glTF animations and morphs, model internals readers, the full
   VfxProgramData reader, sound decode, ETC2 decode.
-- 8.b1: a map's addon content is still compiled by Valve's RC in compile-map; wiring our compilers in is a
-  scope decision.
+- 8.b1 (2026-11-05, feat/addon-content): a map compile never compiles the materials it uses (GROUND_TRUTH 255,
+  measured); `s2c compile-addon <addon>` compiles an addon's .vmat / .vtex sources with main's compilers,
+  equal to RC's eight files for cx_full + cx_color (AddonCompileTests). Open: RC's up-to-date test (18016f170)
+  is not ported (every source is compiled, unchanged bytes left in place); other source types (models,
+  particles, sounds) not covered; the service must call it before compile-map.

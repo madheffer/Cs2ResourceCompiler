@@ -149,7 +149,8 @@ Open (GROUND_TRUTH 24):
 - what an entities-only build clears;
 - `-entities` with no package in place;
 - the world step once geometry exists;
-- compiling the addon content a map references.
+- compiling the addon content a map references: not part of the map compile (GROUND_TRUTH 255); see
+  `s2c compile-addon` below.
 
 Every option is listed in [COVERAGE.md](COVERAGE.md).
 
@@ -181,6 +182,27 @@ different signatures, so both layers are kept side by side (the user's call):
 
 Unifying the two layers means porting the map outputs onto `CompiledResource` and re-checking each
 one's byte parity.
+
+## `s2c compile-addon` (8.b1)
+
+RC's map compile never compiles the materials a map uses: with them only as sources it reports them missing,
+exits 0 and writes nothing (GROUND_TRUTH 255, measured on s2c_addonmat). In Valve's pipeline they are compiled
+before the map, by the tools or by RC run on each asset. `s2c compile-addon <addon>` is that step:
+
+```
+s2c compile-addon <addon> [--cs2 <dir>] [--only <content path>]... [--bc7 amd|intel] [-n]
+```
+
+- Every `.vmat` and `.vtex` under `content/csgo_addons/<addon>` (maps/ excluded), in ordinal order, through
+  main's `ResourceCompiler` with RC's search order (the addon, `csgo`, `core`) and RED2 search path
+  `csgo_addons/<addon>`. Outputs go to `game/csgo_addons/<addon>` at their content paths: the material, its
+  child textures beside their images, the default textures under `materials/default/`.
+- Checked: cx_full.vmat and cx_color.vmat in s2c_rc_probe give RC 1103's eight files byte for byte and no
+  others (%TEMP%/addon_ref/s2cmat_1105; AddonCompileTests against RcReference/materials/compiled).
+- Not ported: RC's up-to-date test (18016f170). Every source is compiled; a file whose bytes are already
+  right is left in place, so the result on disk is the same, but a stale-but-equal output is not "skipped"
+  the way RC's log would say. Other source types (models, particles, sounds, vdata) are not compiled here.
+- `--bc7` picks whose BC7 to reproduce (RC's blocks depend on the CPU vendor's rcpps; references are AMD's).
 
 ## Resourcecompiler recipes and traps
 
