@@ -65,6 +65,12 @@ What a CS2 map can reach, read from resourcecompiler 0923, so that "not ported" 
   shadow (SerializeLightMap's 4x4).
 - **Checked 2026-11-03 with -s2cbake on the 11-01 driver**: probe01 and cardtest, every lighting file Valve's
   (cardtest's unloadable material included, L19).
+- **Rechecked 2026-11-06** (tree 72b49c8 + nav classifier, CS2 1.41.9.6, driver 32.0.16.1088, ParityReport
+  from the .vmap with -s2cbake against %TEMP%/vrad3_refs/driver_32.0.16.1088): probe01 24/24, cardtest 26/26,
+  probe_classes 144/144 (every file but the .nav: Valve's heap pointer variance on the first two, the
+  trigger_survival_playarea refusal on probe_classes), all 7 lightmap files Valve's on each. s2c_prefabprobe5
+  23/32 as OPEN.md 6.c6 says: teleport02 and two agg_merge models' MVTX, the lighting that follows them, and the
+  bomb damage refusal (a func_bomb_target in a prefab) with the .vmap_c child list it changes.
 
 ## Milestones to 80%
 
