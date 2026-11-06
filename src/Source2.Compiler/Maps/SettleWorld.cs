@@ -111,6 +111,9 @@ public static partial class SettleWorld
         /// <summary>The material's texture parameters: name to texture path.</summary>
         public IReadOnlyDictionary<string, string> Textures { get; init; } = new Dictionary<string, string>();
 
+        /// <summary>The vmat_c's own vector attributes (m_vectorAttributes), which CMaterial2's vf 0x70 finds.</summary>
+        public IReadOnlyDictionary<string, System.Numerics.Vector4> VectorAttributes { get; init; } = new Dictionary<string, System.Numerics.Vector4>();
+
         /// <summary>
         /// The loaded material's attribute store (the vmat_c's attributes and every render mode's program
         /// attributes, <see cref="MaterialAttributes.OfModes"/>), built on first use; null for a material not loaded.

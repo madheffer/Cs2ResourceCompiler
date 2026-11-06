@@ -96,9 +96,12 @@ combo binds; ours took the artist one by name.
 Done 11-04 later (cc475d5): rtx combos with no C# transpile bake on the GPU (Valve's SPIR-V, the block from the
 combo's write sequence), so 6.b1 no longer refuses a GPU bake; a translucent material's default hit group opacity
 (8e5d8c3). atixref now bakes: lightmap_chart_color byte for byte, irradiance / directional / direct shadows differ
-all over the atlas (31,171 shadow texels). Every atixref material block equals vrad3's captured one but bindless
-indices, words past a blend block's last field and g_flDetailBlendFactor on two csgo_vertexlitgeneric combo 16
-materials. Next for atixref: localise the differing texels to instances (charts -> meshes) before guessing.
+all over the atlas (31,171 shadow texels). 11-06 (ledger 259, CS2 open): the default hit group takes
+LightSim_Albedo from the vmat_c (the two blocklight materials: black, no texture) and artist values clamp to the
+variable's range (g_flDetailBlendFactor); every atixref material block now equals vrad3's but bindless indices.
+atixref irradiance differs on 3.81M of 12.32M lit luxels (from 4.51M); direct shadows still on 95,886 (R), spread
+over 6,041 charts (most near z 14000, repeated props); five maps re-checked exact. Next: the shadow luxels' cause
+(geometry or any-hit, not the material blocks); `tools/vrad3/chart_diff.py <job> <ours>` lists charts per file.
 
 Open: 6.c6 -s2cbake not compared on c2m2; s2c_prefabprobe5's lighting differs where its world geometry does
 (scene_meshes.kv3 and the packing differ with it: 1.c5's teleport02 and two agg_merge models); 6.a1 / 6.a2 the

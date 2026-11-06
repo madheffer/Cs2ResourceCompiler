@@ -792,8 +792,9 @@ public sealed class RtxScene
     /// (-1), the material flags at +24 (180098660's 1, 2, 5), zero at +28. The
     /// shader reads the albedo, the colour texture times the instance colour.
     /// A translucent material's opacity: texture 0xfa77b522 (not named) at +20,
-    /// else LightSim_Opacity at +12. Not ported (it throws): LightSim_Albedo
-    /// (vf 0x70's width not read).
+    /// else LightSim_Opacity at +12. LightSim_Albedo from the vmat_c's vector
+    /// attributes (vf 0x70 copies three floats); one only the shader declares
+    /// is not ported (it throws).
     /// </summary>
     private static byte[] DefaultBlock(string material, SettleWorld.MaterialInfo? info, uint flags, IReadOnlyList<RtxShaderLibrary.Attribute> attributes,
                                        Func<string?, bool, bool, int> texture)
@@ -802,9 +803,28 @@ public sealed class RtxScene
         BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(12), 1f);
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(16), -1);
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(20), -1);
-        if (attributes.Any(a => a.Name == "LightSim_Albedo"))
-            throw new NotSupportedException($"{material}: LightSim_Albedo in the default hit group block is not ported");
-        var colour = attributes.FirstOrDefault(a => a.Name == "LightSim_DiffuseAlbedoTexture") ?? attributes.FirstOrDefault(a => a.Name == "RepresentativeTexture");
+        // vf 0x70 (materialsystem2 18000bea0) finds LightSim_Albedo in the material's store, which the vmat_c's
+        // m_vectorAttributes fill (toolsblocklight and toolssolidblocklight: (0, 0, 0)): its three components,
+        // each clamped as 180098cd0 does, and no colour texture (+16 stays -1).
+        var albedo = info?.VectorAttributes.TryGetValue("LightSim_Albedo", out var v) == true ? v : (System.Numerics.Vector4?)null;
+        if (albedo == null && attributes.Any(a => a.Name == "LightSim_Albedo"))
+            throw new NotSupportedException($"{material}: LightSim_Albedo from the shader in the default hit group block is not ported");
+        if (albedo is { } a3)
+        {
+            static float Clamp(float c)
+            {
+                if (0.99f <= c)
+                    c = 0.99f;
+                if (c <= 0f)
+                    c = 0f;
+                return c;
+            }
+            BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(0), Clamp(a3.X));
+            BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(4), Clamp(a3.Y));
+            BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(8), Clamp(a3.Z));
+        }
+        var colour = albedo != null ? null
+            : attributes.FirstOrDefault(a => a.Name == "LightSim_DiffuseAlbedoTexture") ?? attributes.FirstOrDefault(a => a.Name == "RepresentativeTexture");
         if (colour?.Binding is { } parameter)
         {
             if (info == null || !info.Textures.TryGetValue(parameter, out var path))
@@ -913,9 +933,38 @@ public sealed class RtxScene
                     var artist = Artist(d) ?? Default(d);
                     return VfxEval.Evaluate(ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression), n => Value(n, d.Name, artist), features, TextureAverage);
                 }
+                case VfxVariableSourceType.__SetByArtist__:
+                    return Artist(d) is { } set ? ArtistInRange(d, set) : Default(d);
                 default:
                     return Artist(d) ?? Default(d);
             }
+        }
+        // materialsystem2's SET_BY_ARTIST read (GetValueFromMaterialParamAsVector4D 18002f3b0, and
+        // GetValueFromDynamicMaterialParam 18002c000 the same way): each component of the material's value clamped
+        // to the variable's range (description +0x18c min, +0x19c max for floats; the int range +0x15c / +0x16c as
+        // floats), a bool as 1 when non-zero. A defaulted variable is not clamped.
+        static float[] ArtistInRange(VfxVariableDescription d, float[] value)
+        {
+            var r = (float[])value.Clone();
+            for (var i = 0; i < r.Length && i < 4; i++)
+            {
+                if (d.VfxType is >= VfxVariableType.Bool and <= VfxVariableType.Bool4)
+                {
+                    r[i] = r[i] != 0f ? 1f : 0f;
+                    continue;
+                }
+                var isInt = d.VfxType is >= VfxVariableType.Int and <= VfxVariableType.Int4;
+                if (!isInt && d.VfxType is not (>= VfxVariableType.Float and <= VfxVariableType.Float4))
+                    continue;
+                float lo = isInt ? d.IntMins[i] : d.FloatMins[i], hi = isInt ? d.IntMaxs[i] : d.FloatMaxs[i];
+                var x = r[i];
+                if (x <= lo)
+                    x = lo;
+                if (hi <= x)
+                    x = hi;
+                r[i] = x;
+            }
+            return r;
         }
         // The static combo's write sequence places every variable it uses: RegisterOffset in 4-byte words of the block.
         var all = program.Rtx.GetStaticCombo(combo).AllVariables.Fields.Where(f => f.RegisterOffset >= 0).ToList();

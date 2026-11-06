@@ -6352,6 +6352,28 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Ported as NodePropEntries.RecordModel, used by the baked prop list and the prop aggregate / standalone list.
        probe_classes lit (-s2cbake, Valve's driver 32.0.16.1088 reference): its bare prop_static had given n0.vwnod a
        second scene object with an empty model; now 144 of 145 files, only the .nav (survival play area, not ported).
+
+259. **The default hit group's albedo from the vmat_c, and artist values clamped to the variable's range**
+     (2026-11-06, CS2 open; scenesystem 20261015 and materialsystem2 20261015 decompiles, checked against
+     Valve's atixref host capture %TEMP%/hostcap_atixref). READ + MEASURED.
+     - PathTraceScene_MaterialData (scenesystem 180098cd0) asks the material for LightSim_Albedo through
+       CMaterial2 vf 0x70 (materialsystem2 18000bea0: the key in the store's 12-hash chunks, the chain, then the
+       parent set; three floats copied) before any colour texture. toolsblocklight and toolssolidblocklight
+       carry LightSim_Albedo = (0, 0, 0, 0) in their own m_vectorAttributes, so their block is albedo (0, 0, 0)
+       with +16 = -1 (no g_tColor), not the colour texture ours bound. Ported: MaterialInfo.VectorAttributes,
+       RtxMaterials.DefaultBlock (components clamped 0..0.99 as 180098cd0 does). A LightSim_Albedo only the
+       shader declares still refuses.
+     - SET_BY_ARTIST values: GetValueFromMaterialParamAsVector4D (materialsystem2 18002f3b0) and
+       GetValueFromDynamicMaterialParam (18002c000) clamp each component of the material's value to the
+       variable description's range (floats +0x18c min / +0x19c max, read from the VCS's m_flMin / m_flMax by
+       1800b01f0; ints +0x15c / +0x16c as floats; bools to 0 or 1). A defaulted variable is not clamped.
+       rock_b's g_flDetailBlendFactor 1.1 and web_joist_001_base's 2.0 become the declared maximum 1.0, as in
+       Valve's block. Ported: RtxMaterials.MaterialBlock (ArtistInRange). Not read: whether the
+       artist-and-expression source clamps its artist input.
+     - atixref, -s2cbake GPU path against Valve's job on driver 32.0.16.1088: every material block word now equals
+       Valve's but bindless indices. Irradiance differs on 3.81M of 12.32M lit luxels (R), from 4.51M; direct
+       shadows unchanged (95,886 R luxels), so their cause is elsewhere (tools/vrad3/chart_diff.py localises
+       them to charts).
 260. **Surface properties (.vsurf) as resourcecompiler compiles them** (2026-11-06; rc 0923 decompiles of
      CResourceCompilerSurfaceProperties vf11 18012e470, 18012eb80, 18012e360, the context's 180175570 / 180175420;
      the 1103 build's 18012e640 / 18012ed50 / 18012e530 are the same instructions with relocations masked; RC 20261103

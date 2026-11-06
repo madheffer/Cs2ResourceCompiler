@@ -231,7 +231,20 @@ the addon).
     Debug test build; time a Release build and Valve's own step before sizing it. Any change
     that could alter bytes waits for the user's OK (parity before speed).
 
-## Latest session (2026-11-05 evening, CS2 open: 1.41.9.6 patch check, world node field order)
+## Latest session (2026-11-06 evening, CS2 open: atixref bake material blocks)
+
+- Ledger 259: the default hit group's LightSim_Albedo from the vmat_c's m_vectorAttributes (toolsblocklight /
+  toolssolidblocklight: black, no colour texture; MaterialInfo.VectorAttributes, RtxMaterials.DefaultBlock), and
+  SET_BY_ARTIST values clamped to the variable's min / max (materialsystem2 18002f3b0 / 18002c000;
+  RtxMaterials.ArtistInRange). Every atixref material block equals Valve's capture but bindless indices.
+- atixref -s2cbake (GPU, driver 32.0.16.1088 job): irradiance 3.81M of 12.32M lit luxels differ (from 4.51M); direct
+  shadows unchanged at 95,886. probe01, cardtest, probe_classes, s2c_coloradjust and ze_hold_em_p re-baked byte for
+  byte (jobs: %TEMP%/vrad3_refs/driver_32.0.16.1088 and %TEMP%/fresh_compile).
+- New: tools/vrad3/chart_diff.py (differing luxels per lightmap chart, with each chart's world box).
+- heavy.py --allow-cs2 now really starts the job below normal while cs2.exe runs (it only said so before).
+- Debug builds only: Release treats VRF's NU1903 (ILCompiler 10.0.8 advisory) as an error.
+
+## Earlier session (2026-11-05 evening, CS2 open: 1.41.9.6 patch check, world node field order)
 
 - Patch 1.41.9.6: only client, server and pulse_system rebuilt; the toolchain is byte-identical to 11-03 and the
   compile is unchanged (rc-oracle, 7/7 cs_script_demo scripts). The cs_script API changes are runtime only.
