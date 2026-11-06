@@ -6462,8 +6462,17 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - A prop key the .vmap leaves out reads as the class's FGD default: a prop_static with no rendertocubemaps key
        compiles with object flag 0x400 (prop_static's default is 1). Hammer saves every key, so only generated maps
        (specimens, the decompiler's output) leave keys out.
-     - Ported: NodePropEntries (flags, skin), NodeEntryHeader.Prop (bit 1, FGD defaults). On s2c_foliagels the
-       .vmap_c, every object name and the three sumac_poison_tree nomerge models are Valve's. Open, measured: the
-       entry's +0x1c8 matrix (the prop's transform, which Valve's nomerge scene objects carry in m_vTransform; ours
-       are identity), and generic_tree_large_1's nomerge models (texcoord format 37 vs our 34, field 3 format 10 vs
-       28, one vertex more, m_flUvDensity set).
+     - The entry's +0x1c8 matrix: WRBNode_BakePropMeshes (1802b3060) records the prop's own matrix (+0x10, R S
+       with the origin) for a mesh whose flags lack bit 0, else the identity at 182771b20; AddStaticProps copies it
+       to the entry; CompileInstanced (18026ed20) hands its first entry's to CreateRenderObject (18026bab0, ninth
+       argument), which the scene object writes as m_vTransform.
+     - Ported: NodePropEntries (flags, skin, matrix), NodeEntryHeader.Prop (bit 1, FGD defaults), the instanced
+       object's transform. On s2c_foliagels the .vmap_c, n0.vwnod and the three sumac_poison_tree nomerge models are
+       Valve's (18 of 27 files; the .vwrld stamp aside). Open, measured: generic_tree_large_1's eight nomerge models
+       (texcoord R16G16_SNORM vs our R16G16_FLOAT, field 3 R16G16B16A16_FLOAT vs our R8G8B8A8_UNORM, one vertex more,
+       m_flUvDensity set): the draw-set stream formats in WorldNodeModels, ledger 263's open question. Not read:
+       whether the env map pick (180270430, "the +0x1c8 matrix applied") moves the bounds or only their centre for a
+       local-space entry; EnvMaps and AssignByCentre still use the model-space vertices.
+     - Not ported, read: a lit build's aggregate-instance path in 1802b3060 (a lightmapped prop that can aggregate:
+       flags 3 | 8 kept, or bit 0x10 with "should be clutter" for a local-space one under
+       AggregateInstanceStreamVertexThreshold).

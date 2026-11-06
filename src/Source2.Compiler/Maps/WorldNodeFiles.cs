@@ -112,7 +112,7 @@ public static class WorldNodeFiles
             var f = o.Meshes[0].Facts;
             var (cubemap, probe, boost) = o.EntryHandshakes ? (f.Cubemap, f.LightProbe, Boost(f)) : (0, 0, 1f);
             sceneObjects.Add(new(ModelPath(o.Name), o.Flags, o.OverlayOrder, cubemap, probe, boost, o.FadeStart, o.FadeEnd)
-                             { LightingOrigin = o.LightingOrigin });
+                             { LightingOrigin = o.LightingOrigin, Transform = o.Transform });
         }
         var aggregates = new List<WorldNodeSceneTrees.Aggregate>();
         foreach (var a in result.Aggregates)

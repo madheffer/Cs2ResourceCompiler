@@ -55,8 +55,9 @@ Open:
   reaches one of these (39 csgo_foliage props); no clutter or smart prop note on any of them. Their other notes are
   content that is not compiled (brush entity materials, Mako's own models: 8.b1).
   1.b1 partly ported 11-06 (ledger 264): the prop-wide flag 8 from NeedsLocalSpaceVertices, the nomerge routing, the
-  skin by name hash, FGD defaults for missing prop keys. Left: the nomerge scene objects' transform (entry +0x1c8)
-  and the tree's vertex layout on s2c_foliagels.
+  skin by name hash, FGD defaults for missing prop keys, the nomerge objects' transform (entry +0x1c8). Left: the
+  tree's vertex layout on s2c_foliagels (WorldNodeModels' draw-set formats, ledger 263), the env map pick for a
+  local-space entry, and a lit build's aggregate-instance path for local-space props.
 - Cross-cutting stale docs listed at the end of PARITY_AUDIT (GEOMETRY.md, MapGeometry.cs, VisClusters.cs ...).
 
 ## 2. Physics and collision

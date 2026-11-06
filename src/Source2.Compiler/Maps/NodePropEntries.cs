@@ -195,7 +195,7 @@ internal static class NodePropEntries
                         }
                     PropTransform.Apply(vertices, stride, 0, 3, 6, 10, 16, matrix, PropTransform.AxesOf(info?.Shader, info?.Params), flags);
                     var indices = Enumerable.Range(start, count).Select(i => Index(i) + bas - lo).ToArray();
-                    yield return new NodeMeshEntries.Entry(id, material, stride, loaded.Streams, vertices, indices) { Record = RecordOf(keys), Source = keys, Placement = flags };
+                    yield return new NodeMeshEntries.Entry(id, material, stride, loaded.Streams, vertices, indices) { Record = RecordOf(keys), Source = keys, Placement = flags, Matrix = (flags & PropTransform.Place) == 0 ? matrix : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0] };
                 }
         }
     }

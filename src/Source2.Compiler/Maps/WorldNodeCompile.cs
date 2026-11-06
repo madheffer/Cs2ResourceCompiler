@@ -68,6 +68,12 @@ internal static class WorldNodeCompile
         /// those objects keep the record's 0, 0 and 1 (atixref's blocklight _shadow objects: probe 0, ledger 254).
         /// </summary>
         public bool EntryHandshakes { get; init; } = true;
+
+        /// <summary>
+        /// The 3x4 matrix CreateRenderObject (18026bab0, its ninth argument) stores: CompileInstanced (18026ed20)
+        /// passes its first entry's +0x1c8, a local-space prop's own matrix (ledger 264); null writes identity.
+        /// </summary>
+        public float[]? Transform { get; init; }
     }
 
     /// <summary>An aggregate scene object: its name, layer and meshes in draw order.</summary>
@@ -502,7 +508,7 @@ internal static class WorldNodeCompile
             // object's +0x38, +0x3c and +0x68, as the vis merger's object does.
             objects.Add(CreateRenderObject(settings.NodePrefix, $"{prefix}{counters.Instanced++}_{FileBase(g[0].Material, 0x18)}", layer, 0,
                                            f.ObjectFlags, f.Attributes, f.Field1a6 != 0, g)
-                        with { FadeStart = f.Field_b0, FadeEnd = f.FadeMax, LightingOrigin = f.Origin });
+                        with { FadeStart = f.Field_b0, FadeEnd = f.FadeMax, LightingOrigin = f.Origin, Transform = f.Matrix });
         }
     }
 
