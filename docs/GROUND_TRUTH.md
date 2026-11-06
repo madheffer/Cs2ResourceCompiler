@@ -6421,3 +6421,28 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        strings counted nothing, references kept their written spelling and a KV3 source's RERL kept first-seen order:
        none of the RcReference fixtures has two references out of order or a resource_name, so nothing caught it.
        s2c_kv3_cm1's two prewarm .vmat weak references (written in the other order) are RC's.
+263. **The ModelDoc compiler: a static .vmdl from model DMX files** (2026-11-06; rc 0923 decompiles of 180344980,
+     180d49a80, 180d49d20, 180d47970, DmeMeshToCMesh 180d47b90, 180d463b0, 180d473d0, 180d46590, 1818bde50,
+     1818be180, CMesh_Append 1812d6c70, ModelCompile_WeldMesh 1803447d0, ModelCompile_ReadMeshArgs 1802f9cc0,
+     MeshInputLayouts 1802f5680, BuildDrawSets 1802f69f0, CMesh_BuildPackedInputLayout 181364720 and its table
+     183014ae8; Valve's references from the installed 1.41.9.6 resourcecompiler, two runs each). READ, MEASURED.
+     - `Models/DmxModelMeshes` + `Models/ModelDocCompiler` (docs/MODELS.md): a DMX binary_seqids 9 file reads with
+       the binary 9 layout; the mesh's "bind" base state, its vertexFormat fields in order, one vertex per corner,
+       values copied by 180d46590, face sets grouped per DmeMesh by material + %f lightmap scale (case-insensitive
+       symbol table) and appended by CMesh_Append (same streams: one block, indices offset). A .vmdl compiles with
+       preserve_tangents 0: ModelCompile_WeldMesh always recomputes tangents (WorldNodeModels.Build gains
+       preserveTangents). RED2: the .vmdl and each mesh file with CRC32, the arguments 1802f9cc0 reads recorded as
+       FloatArgs at their defaults (meshlets_max_* -1.0f), IsChildResource 0.
+     - dkr_remix's 111 render-only models (tools/pipeline/model_corpus_render.txt; Valve's two runs identical on
+       all 111): 95 byte for byte, 9 refused, 7 differ. The 7: six by one packed tangent frame word each (the
+       shared recompute, OPEN 1.c7 / CS2_CLOSED_QUEUE A.14) and skybox_bottom (below).
+     - Open, refused by ModelDocCompiler: (a) the fourth layout 1802f5680 builds for a non-map mesh, the standard
+       streams its material leaves unread, written as an extra unbound vertex buffer (skybox_bottom; three of its
+       name conditions are not read); (b) the set match compares all four layouts, depth ones included (built
+       whenever the material has a depth list: dkr_remix urban_trees_* keep branches and bark apart); (c) texcoord
+       precision in the match: coaster_railing_01's parts past 16 and within 16 share one float32 set, while
+       atixref's blocklight shadows keep past-16 and within-1 parts apart. Treating every texcoord as the table's
+       R16G16_FLOAT in the match fixed (c) and broke three atixref blocklight models (550 -> 547 of 553), so it was
+       reverted; the field 181364720 stores the table format in, and BuildDrawSets' settings object +0x1f9
+       (embedded_map_mesh), need the disassembly. s2c_foliagels' generic_tree_large_1 nomerge objects (peer
+       report: Valve R16G16_SNORM where we write R16G16_FLOAT) are the same question on the map side.

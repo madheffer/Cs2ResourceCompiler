@@ -75,14 +75,16 @@ internal static class WorldNodeModels
 
     /// <param name="mapMesh">embedded_map_mesh: the model compiler splits the depth stream (FUN_1802f9cc0: with SplitDepthStream, not pooled) and compresses texcoords (ModelCompile_BuildDrawSets) only for a map mesh; a brush entity's model keeps one buffer and float texcoords.</param>
     /// <param name="layout">The signature the layout follows, when not the first draw's material's.</param>
+    /// <param name="preserveTangents">The compile's preserve_tangents argument: 1 for a world node model (WRB_CompileNodeModel),
+    /// 0 for a .vmdl, whose meshes ModelCompile_WeldMesh (1803447d0) always hands CMesh_ComputeTangents.</param>
     public static Built Build(string name, IReadOnlyList<WorldNodeCompile.Entry> meshes, bool aggregate, Func<string, MaterialFacts> material, bool mapMesh = true,
-                              MaterialFacts? layout = null)
+                              MaterialFacts? layout = null, bool preserveTangents = true)
     {
         // A world node's meshes reach the model compile through WRB_MeshesToModelDoc's round trip (DmeCopy);
         // a brush entity's do not: atixref's 144 entity models are Valve's without it, 15 of them differ with it.
         WorldNodeCompile.Entry Copy(WorldNodeCompile.Entry e) => mapMesh ? DmeCopy(e) : e;
-        var groups = aggregate ? FragmentOrder(meshes).Select(e => new List<WorldNodeCompile.Entry> { ModelTangents(Copy(e)) }).ToList()
-                               : ByMaterial([.. meshes.Select(e => ModelTangents(Copy(e)))]);
+        var groups = aggregate ? FragmentOrder(meshes).Select(e => new List<WorldNodeCompile.Entry> { ModelTangents(Copy(e), preserveTangents) }).ToList()
+                               : ByMaterial([.. meshes.Select(e => ModelTangents(Copy(e), preserveTangents))]);
         var draws = new List<DrawInput>();
         foreach (var g in groups)
         {
@@ -375,7 +377,7 @@ internal static class WorldNodeModels
     // corner's, and a later corner whose tangent differs (|dx|, |dy| or |dz| >= 1e-4, or w) gets a copy of
     // the vertex appended to the mesh. The 1e-7 weld that follows is NodeDraw's. atixref: a material that
     // reads no tangent loses the stream to PrepareForMerge's filter, so Valve recomputes it here.
-    private static WorldNodeCompile.Entry ModelTangents(WorldNodeCompile.Entry e)
+    private static WorldNodeCompile.Entry ModelTangents(WorldNodeCompile.Entry e, bool preserve = true)
     {
         var streams = e.Facts.Streams;
         int Offset(Func<WrbMeshEntry.Stream, bool> match)
@@ -392,7 +394,7 @@ internal static class WorldNodeModels
         var stride = e.Stride;
         var count = e.Vertices.Length / stride;
         var tangentAt = Offset(x => x.Name.ContainsAscii("tangent") && x.Count == 4);
-        if (tangentAt >= 0 && Enumerable.Range(0, count).All(v =>
+        if (preserve && tangentAt >= 0 && Enumerable.Range(0, count).All(v =>
             {
                 var at = (v * stride) + tangentAt;
                 var w = e.Vertices[at + 3];
