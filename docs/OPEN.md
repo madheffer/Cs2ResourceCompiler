@@ -151,6 +151,10 @@ Open (each refused with an error naming it; RC probes already compiled in algori
 - Materials: a DXT5 child probe (stickers need defaults that are not installed); undeclared `Texture*` params
   (RC drops them, we refuse).
 - `.vpcf` legacy schema migration (RC_PARITY G2); `.vagrp` has no ground truth (G4).
+- 11-06 (branch resources/kv3-types off main, ledgers 260-262): `.vsurf` and `.vcompmat` compile as RC's byte for byte,
+  and every KV3 type now gets RC's shared reference passes (weak references, soundevent references, sorted RERL).
+  Open: `.vcompmat` texture inputs (18015a270's child texture compile); the content existence checks; `panorama:`
+  strings (1800f8d90); `.vpost`, `.vsndstck`, `.vrmap`, `econitem`, Panorama layout / style / dynamic images.
 - Owned by source2-assets, not this repo: glTF animations and morphs, model internals readers, the full
   VfxProgramData reader, sound decode, ETC2 decode.
 - 8.b1 (2026-11-05, feat/addon-content): a map compile never compiles the materials it uses (GROUND_TRUTH 255,

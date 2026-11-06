@@ -6352,3 +6352,50 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Ported as NodePropEntries.RecordModel, used by the baked prop list and the prop aggregate / standalone list.
        probe_classes lit (-s2cbake, Valve's driver 32.0.16.1088 reference): its bare prop_static had given n0.vwnod a
        second scene object with an empty model; now 144 of 145 files, only the .nav (survival play area, not ported).
+260. **Surface properties (.vsurf) as resourcecompiler compiles them** (2026-11-06; rc 0923 decompiles of
+     CResourceCompilerSurfaceProperties vf11 18012e470, 18012eb80, 18012e360, the context's 180175570 / 180175420;
+     the 1103 build's 18012e640 / 18012ed50 / 18012e530 are the same instructions with relocations masked; RC 20261103
+     probes s2c_kv3_surf1-3 on the main line, branch resources/kv3-types). READ + MEASURED.
+     - RC picks a compiler from game/bin/assettypes_common.txt (m_CompilerIdentifier); vsurf names
+       CompileSurfaceProperties: resource version 1, RED2 rows KV3 Compiler Version 2 and Surface Properties Compiler
+       Version 2. The list must hold an entry named "default" (its members are read into a table nothing uses).
+     - Each entry becomes a new table: its base chain merged first, deepest base first (the base is the first entry
+       of the whole list with that name; earlier entries are already compiled, later ones as written; a visited set
+       refuses a loop), every base member but "hidden" (key token 0x244342da) at any depth, tables merged member by
+       member and anything else set; then the entry's own members; then m_nameHash (string token of the compiled
+       table's surfacePropertyName, uint32) and m_baseNameHash (the base's token, 0 without one, uint32). Members are
+       found by the lower-cased name, so a set keeps the first spelling and its place.
+     - The name becomes a surface_prop subasset definition, listed once (A-Z folded); every audiosounds value of the
+       compiled table, inherited ones too, a soundevent subasset reference, counts added. A nameless entry takes its
+       base's name, so RC refuses it as a duplicate (s2c_kv3_surf3: "Surface Property "default" is a duplicate of
+       "default"").
+     - Ported as SurfacePropertiesCompile; s2c_kv3_surf1 (a stock compile decompiled) and s2c_kv3_surf2 (base chains,
+       a base later in the list, hidden at both depths, keys in other case) are RC's byte for byte.
+261. **Composite material kits (.vcompmat): the strip pass** (2026-11-06; rc 0923 decompiles of
+     CResourceCompilerVCompMat vf11 18015aa40, 180159960, 18015a270, 181eb70f0, 181eb7070, 181eae3f0; RC 20261103
+     probes s2c_kv3_cm1 and cm3). READ + MEASURED.
+     - CompileVCompMat (assettypes_common.txt): resource version 0, RED2 rows Composite Materials Compiler Version 1
+       and KV3 Compiler Version 2. No m_Points refuses.
+     - 180159960 removes the root's m_KVthumbnail and each point's m_ModelName, m_nSequenceIndex, m_flCycle,
+       m_nMeshGroupMask, m_bEnableChildModel, m_ChildModelName and m_KVModelStateChoices, and every input container and
+       property mutator whose m_bEnabled is false (absent reads true), back to front. It also fails the compile when an
+       include or a specific container material is not in the content tree; that check changes no byte and is not made.
+     - 18015a270 then compiles a child texture for each loose variable of an enabled container with a
+       m_strTextureContentAssetPath (its vtex template with $TEXTURE_REPLACEMENT_TOKEN, named "%s_%s_%x.vtex"). Not
+       ported: refused by name. cm3's disabled container carries one and compiles, as RC's does.
+     - Ported as CompositeMaterialCompile; cm1 and cm3 are RC's byte for byte.
+262. **What the shared KV3 compile does with every type's tree** (2026-11-06; rc 0923 decompiles of
+     CResourceCompilerKV3::vf0 1800fa170 -> 1800f9db0, 1800f8950, 1800f8b70, 1800f8d90, context vf0 180166b40 and vf1
+     180166c10, the edit info finalize 18016c650; RC 20261103 probe s2c_kv3_cm1). READ + MEASURED.
+     - After the type's own vf11, 1800f8950 fixes up every resource and resource_name string in place
+       (FixupResourceName_NoExtension, ResourcePath: dot segments, lower case, forward slashes; a rooted or absolute
+       path is "Bad resource reference"), keeping the flag.
+     - 1800f8b70: a soundevent: string is a soundevent subasset reference (count 1 each); a resource: string goes to
+       the strong set (RERL), a resource_name: string to the weak set, each keyed by the resource id. The finalize sorts
+       the weak list with std_sort_ResourceRefs (18017a5a0, V_stricmp_fast of the name) into m_WeakReferenceList, and
+       RERL's writer sorts the strong ones the same way. 1800f8d90 turns panorama: image names into references (not
+       ported, refused).
+     - Ported as Kv3References for every KV3 text type. Before it, m_WeakReferenceList was always empty, soundevent:
+       strings counted nothing, references kept their written spelling and a KV3 source's RERL kept first-seen order:
+       none of the RcReference fixtures has two references out of order or a resource_name, so nothing caught it.
+       s2c_kv3_cm1's two prewarm .vmat weak references (written in the other order) are RC's.

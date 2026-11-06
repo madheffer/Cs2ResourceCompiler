@@ -1,7 +1,7 @@
 using Source2.Compiler.KeyValues;
 namespace Source2.Compiler.Compiling;
 
-/// <summary>KV3 text documents: <c>.vsndevts</c>, <c>.vdata</c>, <c>.vpcf</c>, <c>.vagrp</c>.
+/// <summary>KV3 text documents: <c>.vsndevts</c>, <c>.vdata</c>, <c>.vpcf</c>, <c>.vagrp</c>, <c>.vsurf</c>, <c>.vcompmat</c>.
 /// Output: the source path plus <c>_c</c>.</summary>
 public sealed class Kv3DocumentCompiler : IResourceCompiler
 {
