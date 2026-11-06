@@ -126,7 +126,8 @@ internal static class NodePropAggregates
     /// closing bounds minimum (x, y), the Morton origin.
     /// </summary>
     public static List<Aggregate> FromWorld(DmxBinary.Document doc, GameContent content, Func<string, MeshEntryFlags.IAttributes> attributes,
-                                            Vector2 nodeMin, List<string>? notes = null, List<StandaloneProp>? standalone = null)
+                                            Vector2 nodeMin, List<string>? notes = null, List<StandaloneProp>? standalone = null,
+                                            FgdSchema? schema = null)
     {
         var (_, entities) = MapMeshes.ReadWithEntities(doc);
         var copyIds = NodePropEntries.CopyIds(doc, content);
@@ -201,7 +202,7 @@ internal static class NodePropAggregates
                     var c = calls[call];
                     var material = !string.IsNullOrEmpty(materialOverride) ? materialOverride : remap.GetValueOrDefault(c.Material, c.Material);
                     var flags = MeshEntryFlags.Compute(attributes(material), record);
-                    var header = NodeEntryHeader.Prop(keys, id, modelName, record, attributes(material));
+                    var header = NodeEntryHeader.Prop(keys, id, modelName, record, attributes(material), schema: schema);
                     var input = new MeshLists.Input(flags.Flags, header.ObjectFlags, 0, header.FadeMax, false, false);
                     if (!MeshLists.CanAggregate(input))
                         all = false;

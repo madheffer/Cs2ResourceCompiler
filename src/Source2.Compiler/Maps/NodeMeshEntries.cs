@@ -35,6 +35,9 @@ internal static class NodeMeshEntries
         /// </summary>
         public MeshEntryFlags.Record Record { get; init; } = new(0, 0, 0, false, null, false);
 
+        /// <summary>A baked prop's placement flags (+0x168, <see cref="PropTransform"/>): 3, or 8 in local space.</summary>
+        public int Placement { get; init; } = PropTransform.Place | PropTransform.Texcoords;
+
         /// <summary>The node it came from: the CMapMesh element, or a prop's entity_properties.</summary>
         public DmxBinary.Element? Source { get; init; }
 

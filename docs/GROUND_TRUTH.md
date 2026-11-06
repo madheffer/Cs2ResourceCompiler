@@ -6446,3 +6446,24 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        reverted; the field 181364720 stores the table format in, and BuildDrawSets' settings object +0x1f9
        (embedded_map_mesh), need the disassembly. s2c_foliagels' generic_tree_large_1 nomerge objects (peer
        report: Valve R16G16_SNORM where we write R16G16_FLOAT) are the same question on the map side.
+264. **Local-space props (AddStaticProps' flag 8) and the prop's skin** (2026-11-06; rc 0923 decompiles of
+     WRBNode_AddStaticProps 180255b90, WRBNode_PropMaterials 1802b6db0 with 18174e510 / 18174e7d0 / 1802b6a10,
+     EntityLump_StaticModelRecord 180245770, the hash 1800c7c10; ShaderAttributeProbe on 1.41.9.6's shaders; specimen
+     s2c_foliagels, tools/coverage/foliage_localspace_specimen.py, against RC 20261103's -world compile). READ + MEASURED.
+     - The prop's flags (+0x168) are one value for all its draws: 8 when any material of 1802b6db0's list (the draw
+       materials of the model's meshes in the prop's LOD and mesh group masks, through its material group) answers
+       NeedsLocalSpaceVertices (0x3b7ef4e7, vf 0x48), else 3. Only csgo_simple_liquid (every combo) and csgo_foliage's
+       vs with S_FOLIAGE_ANIMATION=1 declare it; 25 stock materials answer true (FoliageLocalSpaceProbe).
+     - After WRB_MeshEntryFlags, a mesh whose flags lack bit 0 gains attribute bit 1, so the entry goes to the
+       instanced list and compiles as its own "nomerge" object (flags & 2 gives object flag 0x20000, as before).
+     - The skin is a name: the record stores the skin string's lowercase MurmurHash2 (seed 0x31415926) at +0x188, and
+       18174e7d0 finds it among the model's group hashes. A skin "1" names no group, so the model keeps its own
+       materials (we used to take it as an index).
+     - A prop key the .vmap leaves out reads as the class's FGD default: a prop_static with no rendertocubemaps key
+       compiles with object flag 0x400 (prop_static's default is 1). Hammer saves every key, so only generated maps
+       (specimens, the decompiler's output) leave keys out.
+     - Ported: NodePropEntries (flags, skin), NodeEntryHeader.Prop (bit 1, FGD defaults). On s2c_foliagels the
+       .vmap_c, every object name and the three sumac_poison_tree nomerge models are Valve's. Open, measured: the
+       entry's +0x1c8 matrix (the prop's transform, which Valve's nomerge scene objects carry in m_vTransform; ours
+       are identity), and generic_tree_large_1's nomerge models (texcoord format 37 vs our 34, field 3 format 10 vs
+       28, one vertex more, m_flUvDensity set).

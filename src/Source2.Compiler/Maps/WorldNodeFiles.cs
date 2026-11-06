@@ -55,7 +55,7 @@ public static class WorldNodeFiles
         // entries into their chart meshes with lightmap uvs (Lighting.LightmapNodeBake).
         var bakes = baked is not null;
         var world = WorldNodeBuild.WorldEntries(document, content, shaders, RendersAsWorld, buildBakes: bakes);
-        var props = WorldNodeBuild.PropEntries(document, content, shaders, notes, buildBakes: bakes);
+        var props = WorldNodeBuild.PropEntries(document, content, shaders, notes, buildBakes: bakes, schema: schema);
         var descriptors = NodeOverlays.FromWorld(document);
         Func<List<WorldNodeBuild.Built>, List<WorldNodeBuild.Built>>? bake = null;
         if (bakes)
@@ -133,7 +133,7 @@ public static class WorldNodeFiles
         }
         var counters = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var standalone = new List<NodePropAggregates.StandaloneProp>();
-        foreach (var agg in NodePropAggregates.FromWorld(document, content, Attributes, new Vector2(nodeMin.X, nodeMin.Y), notes, standalone))
+        foreach (var agg in NodePropAggregates.FromWorld(document, content, Attributes, new Vector2(nodeMin.X, nodeMin.Y), notes, standalone, schema))
         {
             var prefix = $"agg_prop_{Path.GetFileNameWithoutExtension(agg.Material.Replace('\\', '/'))}_";
             var n = counters.GetValueOrDefault(prefix);
@@ -157,7 +157,7 @@ public static class WorldNodeFiles
         // GROUND_TRUTH 47's open question; walk order here).
         foreach (var p in standalone)
         {
-            var header = NodeEntryHeader.Prop(p.Keys, p.NodeId, p.Model, NodePropEntries.RecordOf(p.Keys), MaterialAttributes.Empty, placementFlags: 0);
+            var header = NodeEntryHeader.Prop(p.Keys, p.NodeId, p.Model, NodePropEntries.RecordOf(p.Keys), MaterialAttributes.Empty, placementFlags: 0, schema: schema);
             var (cubemap, probe) = p.Bounds is { } bounds
                 ? EnvVolumes.ForEntry(new Vector3(float.MaxValue), "", (1ul << 20) | (1ul << 21), () => bounds, volumes) : (0, 0);
             var lod = int.TryParse(p.Keys.Get<string>("lodlevel"), out var l) ? l : -1;

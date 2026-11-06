@@ -95,9 +95,13 @@ public sealed record NodeEntryHeader
     /// </summary>
     public static NodeEntryHeader Prop(DmxBinary.Element keys, int nodeId, string model, MeshEntryFlags.Record record,
                                        MeshEntryFlags.IAttributes material, int placementFlags = PropTransform.Place | PropTransform.Texcoords,
-                                       bool baked = false)
+                                       bool baked = false, FgdSchema? schema = null)
     {
-        string? Key(string name) => keys.Get<string>(name);
+        // A key the .vmap leaves out reads as the class's FGD default, as the record does: a
+        // prop_static with no rendertocubemaps key compiles with flag 0x400 (default 1;
+        // s2c_foliagels against Valve's compile). Hammer saves every key, so only
+        // generated maps leave keys out.
+        string? Key(string name) => keys.Get<string>(name) ?? schema?.KeyOf(keys.Get<string>("classname") ?? "prop_static", name)?.Default;
         bool On(string name) => Key(name) is "1" or "true" or "True";
         float Number(string name, float fallback) => float.TryParse(Key(name), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : fallback;
         var tint = Vector4.One;
@@ -128,7 +132,11 @@ public sealed record NodeEntryHeader
             Byte1a0 = 1,
             Byte1a2 = 0,
             Byte1a3 = (byte)(On("emissive") ? 1 : 0),
-            Attributes = flags.Flags,
+            // AddStaticProps (180255b90, after WRB_MeshEntryFlags): a mesh whose placement
+            // flags lack bit 0 (a local-space prop, flags 8) gains attribute bit 1 (no
+            // merge), so it joins the instanced list and compiles as its own "nomerge"
+            // object (s2c_foliagels against Valve's compile).
+            Attributes = flags.Flags | ((placementFlags & PropTransform.Place) == 0 ? 2UL : 0UL),
             TextureWidth = flags.Width,
             TextureHeight = flags.Height,
             SkyboxSlot = flags.SkyboxSlot,
