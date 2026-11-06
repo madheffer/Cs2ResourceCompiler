@@ -33,6 +33,56 @@ public class FoliageLocalSpaceProbe(ITestOutputHelper output)
             output.WriteLine($"  objectFlags {mesh["m_objectFlags"]} ({mesh["m_objectFlags"]?.ValueType}) draw {mesh["m_nDrawCallIndex"]}");
     }
 
+    /// <summary>
+    /// <c>MODELLAYOUT=&lt;vpk&gt;|&lt;model file&gt;[|&lt;vertices&gt;]</c>: each vertex buffer's layout (semantic, index,
+    /// format, offset) and each draw's material, vertex count and uv density; with a count, that many vertices' raw words.
+    /// </summary>
+    [Fact]
+    public void ModelLayout()
+    {
+        if (Environment.GetEnvironmentVariable("MODELLAYOUT") is not { Length: > 0 } spec || spec.Split('|') is not [var vpkPath, var file, .. var rest])
+            return;
+        using var package = new Package();
+        package.Read(vpkPath);
+        package.ReadEntry(package.FindEntry(file)!, out var bytes);
+        using var resource = new Resource();
+        resource.Read(new MemoryStream(bytes));
+        var model = (ValveResourceFormat.ResourceTypes.Model)resource.DataBlock!;
+        var show = rest.Length > 0 ? int.Parse(rest[0], System.Globalization.CultureInfo.InvariantCulture) : 0;
+        foreach (var (mesh, _, name, lod) in model.GetEmbeddedMeshesAndLoD())
+        {
+            foreach (var call in mesh.Data.GetArray("m_sceneObjects").SelectMany(s => s.GetArray("m_drawCalls")))
+                output.WriteLine($"draw {call.GetStringProperty("m_material")} vb {call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")} " +
+                                 $"verts {call.GetInt32Property("m_nVertexCount")} uvdensity {call["m_flUvDensity"]}");
+            for (var b = 0; b < mesh.VBIB.VertexBuffers.Count; b++)
+            {
+                var vb = mesh.VBIB.VertexBuffers[b];
+                output.WriteLine($"vb {b}: {vb.ElementCount} x {vb.ElementSizeInBytes}: " +
+                                 string.Join(", ", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex} {f.Format} @{f.Offset}")));
+                for (var v = 0; v < Math.Min(show, (int)vb.ElementCount); v++)
+                    output.WriteLine("  " + string.Join(" ", Enumerable.Range(0, (int)vb.ElementSizeInBytes / 4)
+                        .Select(w => BitConverter.ToUInt32(vb.Data, (int)(v * vb.ElementSizeInBytes) + (w * 4)).ToString("x8", System.Globalization.CultureInfo.InvariantCulture))));
+            }
+        }
+    }
+
+    /// <summary><c>PROPSTREAMS=&lt;vmap&gt;</c>: each baked prop entry's material, placement, streams and first vertex.</summary>
+    [Fact]
+    public void PropStreams()
+    {
+        if (Environment.GetEnvironmentVariable("PROPSTREAMS") is not { Length: > 0 } vmap || CS2Fixtures.StockPak() is not { } pak)
+            return;
+        var game = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(pak)!, ".."));
+        var addon = Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(vmap)))!;
+        using var content = new GameContent(pak, Path.Combine(game, "csgo_addons", addon));
+        foreach (var e in NodePropEntries.FromWorld(Maps.MapSource.Read(vmap), content))
+        {
+            output.WriteLine($"{e.NodeId} {e.Material} placement {e.Placement} stride {e.Stride}: " +
+                             string.Join(", ", e.Streams.Select(s => $"{s.Name}@{s.First}x{s.Count} t{s.Type:x}")));
+            output.WriteLine("  " + string.Join(" ", e.Vertices.Take(e.Stride).Select(x => x.ToString("G6", System.Globalization.CultureInfo.InvariantCulture))));
+        }
+    }
+
     [Fact]
     public void Explore()
     {

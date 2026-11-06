@@ -143,23 +143,33 @@ internal static class TJunctionFix
         return new Vector3((float)(x / l), (float)(y / l), (float)(z / l));
     }
 
-    /// <summary>1812d91c0: each corner's edge (corner k to k + 1) twinned with the opposite edge on the same two vertices, -1 without.</summary>
-    static int[] Twins(Mesh m)
+    /// <summary>
+    /// 1812d91c0: each corner's edge (corner k to k + 1) as the other triangle on it, -1 without. The edges are
+    /// keyed by their unordered vertex pair (min, max), each holding the first triangle that used it and the
+    /// latest other one; a corner takes the first unless that is its own triangle, then the latest. So an edge
+    /// is open only when no other triangle uses those two vertices, in either direction (generic_tree_large_1's
+    /// cards share edges in the same direction: s2c_foliagels, TJunctionFixReplay).
+    /// </summary>
+    internal static int[] Twins(Mesh m)
     {
-        var edges = new Dictionary<(int, int), int>();
+        var edges = new Dictionary<(int, int), (int First, int Last)>();
         var count = m.Indices.Count / 3 * 3;
-        for (var c = 0; c < count; c++)
+        (int, int) Key(int c)
         {
             var a = m.Indices[c];
             var b = m.Indices[c - c % 3 + (c % 3 + 1) % 3];
-            edges.TryAdd((a, b), c);
+            return a <= b ? (a, b) : (b, a);
+        }
+        for (var c = 0; c < count; c++)
+        {
+            var key = Key(c);
+            edges[key] = edges.TryGetValue(key, out var e) ? (e.First, c / 3) : (c / 3, -1);
         }
         var twin = new int[count];
         for (var c = 0; c < count; c++)
         {
-            var a = m.Indices[c];
-            var b = m.Indices[c - c % 3 + (c % 3 + 1) % 3];
-            twin[c] = edges.TryGetValue((b, a), out var o) ? o : -1;
+            var e = edges[Key(c)];
+            twin[c] = e.First == c / 3 ? e.Last : e.First;
         }
         return twin;
     }

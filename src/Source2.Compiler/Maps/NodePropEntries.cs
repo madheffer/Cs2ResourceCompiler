@@ -367,7 +367,12 @@ internal static class NodePropEntries
     {
         var positions = VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
         var nf = vb.InputLayoutFields.First(f => f.SemanticName == "NORMAL");
-        var tf = vb.InputLayoutFields.First(f => f.SemanticName == "TEXCOORD");
+        // Texcoord 0 is the two-component TEXCOORD of lowest semantic index, as MeshGeometry.Classify names
+        // it (the loader table 183bb3dd0's texcoord 0), not the layout's first TEXCOORD: generic_tree_large_1
+        // lays out a three-component TEXCOORD4 (PivotPaint) before its TEXCOORD0 (s2c_foliagels, ledger 264).
+        var tf = vb.InputLayoutFields.Where(f => f.SemanticName == "TEXCOORD" && Lighting.MeshGeometry.Components(f) == 2)
+            .OrderBy(f => f.SemanticIndex).Cast<VBIB.RenderInputLayoutField?>().FirstOrDefault()
+            ?? vb.InputLayoutFields.First(f => f.SemanticName == "TEXCOORD");
         var t1 = vb.InputLayoutFields.FirstOrDefault(f => f.SemanticName == "TEXCOORD" && f.SemanticIndex == 1);
         var hasColor = cf.SemanticName != null;
         var v = new float[count * Stride];

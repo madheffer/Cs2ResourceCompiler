@@ -6468,11 +6468,35 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        argument), which the scene object writes as m_vTransform.
      - Ported: NodePropEntries (flags, skin, matrix), NodeEntryHeader.Prop (bit 1, FGD defaults), the instanced
        object's transform. On s2c_foliagels the .vmap_c, n0.vwnod and the three sumac_poison_tree nomerge models are
-       Valve's (18 of 27 files; the .vwrld stamp aside). Open, measured: generic_tree_large_1's eight nomerge models
-       (texcoord R16G16_SNORM vs our R16G16_FLOAT, field 3 R16G16B16A16_FLOAT vs our R8G8B8A8_UNORM, one vertex more,
-       m_flUvDensity set): the draw-set stream formats in WorldNodeModels, ledger 263's open question. Not read:
-       whether the env map pick (180270430, "the +0x1c8 matrix applied") moves the bounds or only their centre for a
-       local-space entry; EnvMaps and AssignByCentre still use the model-space vertices.
+       Valve's (18 of 27 files; the .vwrld stamp aside). Not read: whether the env map pick (180270430, "the +0x1c8
+       matrix applied") moves the bounds or only their centre for a local-space entry; EnvMaps and AssignByCentre
+       still use the model-space vertices.
+     - generic_tree_large_1's eight nomerge models (2026-11-06 later): their streams are now Valve's word for word, from
+       four rules:
+       - A prop draw's texcoord 0 is the two-component TEXCOORD of lowest semantic index (MeshGeometry.Classify's
+         rule, WRB_LoadPropMeshes' table 183bb3dd0), not the layout's first TEXCOORD: the tree lays out a
+         three-component TEXCOORD4 (PivotPaint) first, and we had loaded PivotPaint's x, y as the texcoord (which
+         also zeroed m_flUvDensity and made the set float).
+       - CMesh_BuildPackedInputLayout (181364720) takes a stream's format from its 31-row table at 183014ae8 (name by
+         V_stricmp_fast and index; PivotPaint R16G16B16A16_FLOAT, FoliageAnimation, VertexPaintTintColor,
+         OverlayProjectionDirection and VertexPaintBlendParams R8G8B8A8_UNORM, Data_Branch* R16G16_FLOAT ...), a name
+         the table lacks by component count (183014ec0: R32, R32G32, R32G32B32, R32G32B32A32_FLOAT). Ported as
+         WorldNodeModels.TableFormat for the streams the layout does not treat by name; the format-0 rows
+         (blendweights, blendindices) are handled past LAB_181364a09, not read, and keep R8G8B8A8_UNORM.
+       - The packer (181365ce0) zeroes a field and writes min(stream, format) components; only a stream named
+         "color" pads to (0, 0, 0, 1). We padded every RGBA8 w with 1 and every half4 w with 1.
+       - The T-junction fix's twins (1812d91c0) are keyed by the unordered vertex pair, first and latest triangle:
+         an edge is open only when no other triangle uses the pair in either direction (we needed the reverse
+         pair). atixref's capture still 662 of 662 exact (TJunctionFixReplay); on s2c_foliagels' capture the corners
+         only we snapped dropped from 447 to 87.
+       Open, measured: 72 of the 321 nomerge10 positions. On Valve's own FixTJunctions input (TJunctionFixReplay,
+       tools/vis/capture_nodeentries.py s2c_rc_probe s2c_foliagels) our fix leaves the four tree entries unlike
+       Valve's: 311 corners Valve snaps and we do not, 87 the other way, every one a snap or not. Ruled out: a
+       position weld before the fix (both move only part of 360 shared-position groups), shared CMeshes (the
+       entries' pointers differ), stale corners in the turn test (the disassembly at 18025bdd1-18025be46 stores the
+       triangle's corners first; Ghidra dropped the stores), a second pass (180259d30 runs each job once). Vertex 16
+       of entry 16, which Valve snaps, lies on no open edge of any entry, so no record can match it by the rule as
+       read: next is a Frida trace of 18025cf80's flags per triangle for that entry.
      - Not ported, read: a lit build's aggregate-instance path in 1802b3060 (a lightmapped prop that can aggregate:
        flags 3 | 8 kept, or bit 0x10 with "should be clutter" for a local-space one under
        AggregateInstanceStreamVertexThreshold).

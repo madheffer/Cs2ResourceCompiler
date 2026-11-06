@@ -58,7 +58,32 @@ internal static class WorldNodeModels
     }
 
     // DXGI formats the node models use.
-    private const uint R32G32B32Float = 6, R16G16B16A16Float = 10, R32G32Float = 16, R8G8B8A8Unorm = 28, R16G16Float = 34, R16G16Unorm = 35, R16G16Snorm = 37, R32Uint = 42;
+    private const uint R32G32B32A32Float = 2, R32G32B32Float = 6, R16G16B16A16Float = 10, R32G32Float = 16, R8G8B8A8Unorm = 28, R16G16Float = 34, R16G16Unorm = 35, R16G16Snorm = 37, R32Float = 41, R32Uint = 42;
+
+    // CMesh_BuildPackedInputLayout's stream table (181364720, 31 rows of name, index, format at 183014ae8; rc 0923):
+    // the format of a stream the layout does not treat by name, first match by name (V_stricmp_fast) and index.
+    // Only a name the table lacks takes the count table; a row of format 0 (blendweights, blendindices) is
+    // handled after LAB_181364a09, not read, and keeps the measured R8G8B8A8_UNORM (TableFormat returns 0).
+    private static readonly (string Name, int Index, uint Format)[] StreamFormats =
+    [
+        ("position", 0, 6), ("normal", 0, 0), ("normal", 0, 42), ("normal", 0, 0), ("texcoord", 0, 34), ("texcoord", 1, 34),
+        ("texcoord", 0, 34), ("texcoord", 1, 34), ("tangent", 0, 0), ("color", 0, 28), ("blendweights", 0, 0), ("blendweights", 0, 0),
+        ("blendindices", 0, 0), ("VertexPaintBlendParams", 0, 28), ("VertexPaintBlendParams", 1, 28), ("VertexGenericIntegerData", 0, 42),
+        ("OverlayProjectionDirection", 0, 28), ("VertexPaintTintColor", 0, 28), ("FoliageAnimation", 0, 28), ("PivotPaint", 0, 10),
+        ("Data_Branch1xy", 0, 34), ("Data_Branch1zBranch2x", 0, 34), ("Data_Branch2yz", 0, 34), ("color", 1, 28), ("texcoord", 2, 41),
+        ("texcoord", 3, 35), ("texcoord", 3, 35), ("texcoord", 3, 6), ("texcoord", 6, 6), ("texcoord", 4, 10), ("TanFrameQuat", 0, 42),
+    ];
+
+    // Its fallback by component count (183014ec0): none, R32_FLOAT, R32G32_FLOAT, R32G32B32_FLOAT, R32G32B32A32_FLOAT.
+    private static readonly uint[] FormatsByCount = [0, R32Float, R32G32Float, R32G32B32Float, R32G32B32A32Float];
+
+    private static uint TableFormat(string name, int index, int count)
+    {
+        foreach (var (n, i, f) in StreamFormats)
+            if (i == index && Io.Tier0Strings.EqualsIgnoreCase(n, name))
+                return f;
+        return count < 5 ? FormatsByCount[count] : 0;
+    }
 
     // A draw before packing: material, built geometry, stream layout and its source facts.
     private sealed record DrawInput(string Material, NodeDraw.Result Geometry, int Stride, IReadOnlyList<WrbMeshEntry.Stream> Streams, WrbMeshEntry Facts)
@@ -656,7 +681,7 @@ internal static class WorldNodeModels
                 "normal" or "vertexgenericintegerdata" => R32Uint,
                 "pervertexlighting" => R16G16B16A16Float,
                 "lightmapuv" => R16G16Unorm,
-                _ => R8G8B8A8Unorm,
+                _ => TableFormat(s.Name, s.Index, s.Count) is var f and not 0 ? f : R8G8B8A8Unorm,
             };
             var buffer = splits && !Reads(facts.Depth, s) ? 1 : 0;
             var offset = offsets[buffer];
@@ -704,6 +729,7 @@ internal static class WorldNodeModels
 
     private static int FormatSize(uint format) => format switch
     {
+        R32G32B32A32Float => 16,
         R32G32B32Float => 12,
         R16G16B16A16Float => 8,
         R32G32Float => 8,
@@ -716,11 +742,25 @@ internal static class WorldNodeModels
         {
             var at = offsets[slot.Stream];
             var o = to[slot.Field.Offset..];
+            // 181365ce0's general path: the field is zeroed and min(stream, format) components written; only a
+            // stream named "color" pads to (0, 0, 0, 1) first. blendindices / blendweight(s) branch off at its first
+            // name checks to a skinning path, not read: they keep the (0, 0, 0, 1) pad we had (Mako's pipes).
+            var name = slot.Stream[..slot.Stream.IndexOf(':')];
+            var color = name.Equals("color", StringComparison.OrdinalIgnoreCase) || name.Equals("blendindices", StringComparison.OrdinalIgnoreCase)
+                        || name.Equals("blendweight", StringComparison.OrdinalIgnoreCase) || name.Equals("blendweights", StringComparison.OrdinalIgnoreCase);
+            var count = slot.Count;
             switch (slot.Field.Format)
             {
+                case R32G32B32A32Float:
+                    for (var k = 0; k < 4; k++)
+                        BitConverter.TryWriteBytes(o[(k * 4)..], Pad(v, at, count, color, k));
+                    break;
+                case R32Float:
+                    BitConverter.TryWriteBytes(o, v[at]);
+                    break;
                 case R32G32B32Float:
                     for (var k = 0; k < 3; k++)
-                        BitConverter.TryWriteBytes(o[(k * 4)..], v[at + k]);
+                        BitConverter.TryWriteBytes(o[(k * 4)..], Pad(v, at, count, color, k));
                     break;
                 case R32G32Float:
                     for (var k = 0; k < 2; k++)
@@ -740,7 +780,7 @@ internal static class WorldNodeModels
                     break;
                 case R16G16B16A16Float:
                     for (var k = 0; k < 4; k++)
-                        BitConverter.TryWriteBytes(o[(k * 2)..], ToHalf(k < slot.Count ? v[at + k] : 1f));
+                        BitConverter.TryWriteBytes(o[(k * 2)..], ToHalf(Pad(v, at, count, color, k)));
                     break;
                 case R32Uint when slot.Stream.StartsWith("normal:", StringComparison.OrdinalIgnoreCase):
                     var n = new Vector3(v[at], v[at + 1], v[at + 2]);
@@ -760,12 +800,15 @@ internal static class WorldNodeModels
                     break;
                 default:
                     for (var k = 0; k < 4; k++)
-                        // A colour short of four components reads (0, 0, 0, 1) for the rest (181365ce0).
-                        o[k] = k < slot.Count ? Unorm8(v[at + k]) : k == 3 ? (byte)255 : (byte)0;
+                        o[k] = Unorm8(Pad(v, at, count, color, k));
                     break;
             }
         }
     }
+
+    // A stream's component k, or the pad past its count: 1 for w of a "color" stream, else 0 (181365ce0).
+    private static float Pad(ReadOnlySpan<float> v, int at, int count, bool color, int k)
+        => k < count ? v[at + k] : color && k == 3 ? 1f : 0f;
 
     // As ConvertFloatToChannel: clamped, scaled and truncated (the lightmap's texcoord 3).
     private static ushort Unorm16(float v)
