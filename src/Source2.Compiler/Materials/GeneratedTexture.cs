@@ -88,17 +88,54 @@ public sealed record GeneratedTexture(IReadOnlyList<GeneratedTextureInput> Input
     /// <c>___OverrideInputData___</c> fingerprint.</summary>
     public uint LogicalCrc => MurmurHash2.Hash32(Encoding.UTF8.GetBytes(LogicalText()), LogicalCrcSeed);
 
-    /// <summary>The child resource path: the first input with its <c>.</c> as <c>_</c>, the CRC
-    /// in lowercase hex, then <c>.vtex</c> (<c>'%s_%x.%s'</c>).</summary>
+    /// <summary>The child resource path: the input it is named after (<see cref="NamedInput"/>)
+    /// with its <c>.</c> as <c>_</c>, the CRC in lowercase hex, then <c>.vtex</c>
+    /// (<c>'%s_%x.%s'</c>).</summary>
     public string ChildPath
     {
         get
         {
-            var first = Inputs[0].FileName;
+            var first = NamedInput();
             int dot = first.LastIndexOf('.');
             var stem = dot > first.LastIndexOf('/') ? first[..dot] + "_" + first[(dot + 1)..] : first;
             return $"{stem}_{LogicalCrc:x}.vtex";
         }
+    }
+
+    /// <summary>
+    /// The input a child is named after (ProcessTexture, rc 0923 18010aa00, its loop over the
+    /// inputs before the <c>'%s_%x.%s'</c> format): the first
+    /// input, then for each later one in order, while the pick is a shader default (its path
+    /// holds <c>materials/default/</c> or <c>materials\default\</c>, V_stristr_fast) any input
+    /// that is not one replaces it; a <c>[</c> constant gives way to a later input that is
+    /// neither; any other pick ends the walk. A constant left at the end names the child after
+    /// the material and the output variable, which is not ported (constant inputs are not).
+    /// </summary>
+    internal string NamedInput()
+    {
+        static bool IsDefault(string f) =>
+            f.Contains("materials/default/", StringComparison.OrdinalIgnoreCase)
+            || f.Contains("materials\\default\\", StringComparison.OrdinalIgnoreCase);
+        var pick = Inputs[0].FileName;
+        for (int i = 1; i < Inputs.Count; i++)
+        {
+            var next = Inputs[i].FileName;
+            if (IsDefault(pick))
+            {
+                if (!IsDefault(next))
+                    pick = next;
+            }
+            else if (pick.StartsWith('['))
+            {
+                if (!next.StartsWith('[') && !IsDefault(next))
+                    pick = next;
+            }
+            else
+                break;
+        }
+        if (pick.StartsWith('['))
+            throw new InvalidOperationException($"A child texture made of constant inputs only ({pick}) is named after its material; not ported.");
+        return pick;
     }
 
     private static void Str(StringBuilder b, string name, string value)

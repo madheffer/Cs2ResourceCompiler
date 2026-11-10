@@ -6446,3 +6446,40 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        reverted; the field 181364720 stores the table format in, and BuildDrawSets' settings object +0x1f9
        (embedded_map_mesh), need the disassembly. s2c_foliagels' generic_tree_large_1 nomerge objects (peer
        report: Valve R16G16_SNORM where we write R16G16_FLOAT) are the same question on the map side.
+264. **source1import's .vmat form compiles as RC compiles it** (2026-11-10; tier0 0923 decompiles of
+     LoadKV3FromKV3OrKV1 1800cd310, LoadKV3FromKV1Text_Translated 1800cccc0, 1800cdce0, 1800cf9c0, 1800ce210 and
+     the value typing 1800cf320 (strtoll 1802c29a4 -> 1802c1f50, 64-bit; strtod 1802c1470); rc 0923 decompiles of
+     CResourceCompilerMaterial::CompileResourceInternal 18010f480, 18010e280, 18010e430, 18010e550, 18010f200,
+     the sort 1801156e0 -> 180115f60, AddSubassetReference 180175420 (context vf3, vtable 18277e6f0), the
+     feature combo record 181fa2f30 / 181faa3b0 / 181fac660, ProcessTexture 18010aa00; Valve's references from
+     the installed resourcecompiler, 11-10). READ, MEASURED.
+     - `Materials/VmatSource`: tier0 types each KV1 value by its text: empty -> string; 18 chars `0x..` -> uint64
+       (refused); strtod ends past strtoll and at the end, no ERANGE -> double `(double)(float)d`; strtoll ends at
+       the end and fits int32 -> int; else string. ValveKeyValue 0.70 retypes numbers itself (`"1.000"` -> 1), so
+       the vmat is read by `Kv1Text`, a raw-text reader of plain KV1 (quoted strings, plain tokens, braces, //
+       comments, UTF-8 BOM) that refuses what tier0's tokenizer is not ported for (`#`, `=`, `\"`, `/*`,
+       UTF-16, duplicate keys, backslashes in values the compile reads).
+     - `MaterialCompiler`: 18010f480 walks the root once: int -> m_intParams (kept as a float, refused past
+       2^24), double -> m_floatParams, `''` or `[` string -> m_vectorParams (V_sscanf `[%f %f %f %f]` into
+       zeros), other strings no param (texture paths; `SkyTexture`); tables by name (V_stricmp_fast):
+       attributes / DecalAttributes / SystemAttributes -> attributes (int -> int attribute, plus a float one
+       outside SystemAttributes; double -> float; `''`/`[` -> vector; other string -> string; tables inside
+       skipped); ToolAttributes and dynamicparams are refused (not ported); every other table is skipped,
+       `legacy_import` included (RC never names it). Every list is sorted with V_stricmp_fast (was ordinal).
+       Searchable: the feature combo's values that are not 0 (181fac660 decode, context vf18; was "the F_
+       values the vmat sets"), then int, float, string attributes in that order, later writes replacing
+       earlier ones. A string attribute PhysicsSurfaceProperties is a surface_prop subasset reference (count 1).
+       181faa3b0 pins the static combos of each mode whose name contains "Tool" (strstr, 18274ef4c), so their
+       attributes never count (lightmappedgeneric's ToolsVis environmentmapped).
+     - `GeneratedTexture.NamedInput` (18010aa00): the child is named after the first input, a
+       `materials/default/` pick replaced by the next non-default input, a `[` constant by the next image.
+     - Verified: probes s1i_lmg and s1i_attrs (RcReference/materials, CRLF, quoted, both attribute tables,
+       legacy_import, edge typings) byte for byte with their children; the 77 material tests pass. Porter
+       addon ze_el_salto_del_angel_v1 (200 vmats) RC-compiled into a scratch addon (tools/re/rc_addon_materials.py):
+       105 of the 107 vmats s2c compiles are Valve's bytes.
+     - Open: (a) 181fa2f30's walk over every other free static combo with its rule checks (we take each
+       non-Tool, no-fallback mode's settings); (b) a child's display size (METADATA) comes from its first input,
+       where RC's differs for a default normal + material roughness (27 el_salto `_rough` children, 140 bytes);
+       (c) not compiled yet: constant `[r g b]` texture inputs (named `<material>_<variable>`), image `.txt`
+       settings, cube textures (sky.vfx `g_tSkyTexture`), dynamicparams, csgo_lightmapped_4wayblend's two extra
+       default children in RED2 (blendproddirtgrass).

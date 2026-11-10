@@ -80,11 +80,11 @@ public sealed class MaterialCompiler : IResourceCompiler
                 images[input.FileName] = Find(mounts, input.FileName)
                     ?? throw new InvalidOperationException($"{input.FileName} (for {request.SourcePath}) was not found in any content mount.");
 
-        var searchable = Searchable(shaders, textures, images, Feature, values);
+        var searchable = Searchable(shaders, textures, images, Feature, values, vmat.Attributes);
         // 18010c660 adds RepresentativeTextureWidth/Height to DATA when it meets the attribute
         // named RepresentativeTexture (csgo_weapon has none: cx_weapon's m_intAttributes is empty).
         var data = BuildData(request.SourcePath, vmat, shaders, textures, images, searchable.ContainsKey("RepresentativeTexture"));
-        var red2 = BuildRed2(request, settings, shaders, textures, images, mounts, searchable);
+        var red2 = BuildRed2(request, settings, shaders, textures, images, mounts, searchable, vmat.Attributes);
 
         var container = new CompiledResource(new ResourceFile { Version = Source2ContainerAuthor.MaterialResourceVersion });
         container.SetKv3("RED2", red2, Kv3Formats.Get("generic"));
@@ -111,54 +111,77 @@ public sealed class MaterialCompiler : IResourceCompiler
         IReadOnlyList<MaterialTexture> textures, IReadOnlyDictionary<string, (string SearchPath, byte[] Bytes)> images,
         bool representative)
     {
-        // Params as the .vmat sets them, typed by their name's prefix (RC keeps names the shader
-        // does not declare: cx_order's F_SPECULAR, g_flFadeExponent), each kind sorted by name.
+        // Params as the .vmat sets them, typed as RC types them (VmatSource: tier0 gives each KV1
+        // value a KV3 type from its text, 18010f480 files ints, doubles and '['-strings), so RC
+        // keeps names the shader does not declare (cx_order's F_SPECULAR, g_flFadeExponent).
+        // Every list is sorted by name with V_stricmp_fast (1801156e0 -> 180115f60).
         var ints = new List<(string Name, int Value)>();
         var floats = new List<(string Name, float Value)>();
         var vectors = new List<(string Name, float[] Value)>();
-        var textureInputs = shaders.Features.Variables.Where(v => v.IsMaterialTexture).Select(v => v.Name).ToHashSet(StringComparer.Ordinal);
         foreach (var (key, value) in vmat.Values)
         {
-            var c = System.Globalization.CultureInfo.InvariantCulture;
-            if (textureInputs.Contains(key))
-                continue;
-            if (key.StartsWith("F_", StringComparison.Ordinal) || key.StartsWith("g_n", StringComparison.Ordinal))
-                ints.Add((key, int.Parse(value, c)));
-            else if (key.StartsWith("g_fl", StringComparison.Ordinal))
-                floats.Add((key, float.Parse(value, c)));
-            else if (key.StartsWith("g_v", StringComparison.Ordinal))
-                vectors.Add((key, ParseVector(value, materialPath, key)));
-            else
-                throw new InvalidOperationException($"{materialPath}: '{key}' has a name RC's typing is not measured on.");
+            var typed = VmatSource.TypeOf(value, materialPath, key);
+            switch (typed.Kind)
+            {
+                case VmatSource.Kv1Kind.Int:
+                    ints.Add((key, IntThroughFloat(typed.Int, materialPath, key)));
+                    break;
+                case VmatSource.Kv1Kind.Double:
+                    floats.Add((key, (float)typed.Double));
+                    break;
+                case VmatSource.Kv1Kind.String when value.Length == 0 || value[0] == '[':
+                    vectors.Add((key, VmatSource.ParseVector(value, materialPath, key)));
+                    break;
+            }
         }
-        ints.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
-        floats.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
-        vectors.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
+
+        // The attribute tables (VmatSource.Attributes); the representative size joins the ints
+        // (18010c660 adds it to the same list before the sort).
+        var intAttributes = new List<(string Name, int Value)>();
+        var floatAttributes = new List<(string Name, float Value)>();
+        var vectorAttributes = new List<(string Name, float[] Value)>();
+        var stringAttributes = new List<(string Name, string Value)>();
+        foreach (var a in vmat.Attributes)
+        {
+            switch (a.Kind)
+            {
+                case VmatAttributeKind.Int:
+                    intAttributes.Add((a.Name, IntThroughFloat(VmatSource.TypeOf(a.Text, materialPath, a.Name).Int, materialPath, a.Name)));
+                    break;
+                case VmatAttributeKind.Float:
+                    floatAttributes.Add((a.Name, AttributeFloat(a.Text, materialPath, a.Name)));
+                    break;
+                case VmatAttributeKind.Vector:
+                    vectorAttributes.Add((a.Name, VmatSource.ParseVector(a.Text, materialPath, a.Name)));
+                    break;
+                case VmatAttributeKind.String:
+                    stringAttributes.Add((a.Name, a.Text));
+                    break;
+            }
+        }
+        if (representative)
+        {
+            var (w, h) = RepresentativeSize(textures, images);
+            intAttributes.Add(("RepresentativeTextureHeight", h));
+            intAttributes.Add(("RepresentativeTextureWidth", w));
+        }
 
         var root = KVObject.Collection();
         root.Add("m_materialName", new KVObject(materialPath));
         root.Add("m_shaderName", new KVObject(vmat.Shader));
-        root.Add("m_intParams", VmatParams.NamedArray(ints, "m_nValue", v => new KVObject(v)));
-        root.Add("m_floatParams", VmatParams.NamedArray(floats, "m_flValue", v => new KVObject((double)v)));
-        root.Add("m_vectorParams", VmatParams.NamedArray(vectors, "m_value", v =>
-        {
-            var a = KVObject.Array();
-            foreach (var f in v) a.Add(new KVObject((double)f));
-            return a;
-        }));
-        root.Add("m_textureParams", VmatParams.NamedArray(textures.Select(t => (t.Name, t.ResourcePath)), "m_pValue",
+        root.Add("m_intParams", VmatParams.NamedArray(ByName(ints), "m_nValue", v => new KVObject(v)));
+        root.Add("m_floatParams", VmatParams.NamedArray(ByName(floats), "m_flValue", v => new KVObject((double)v)));
+        root.Add("m_vectorParams", VmatParams.NamedArray(ByName(vectors), "m_value", Vector));
+        root.Add("m_textureParams", VmatParams.NamedArray(ByName(textures.Select(t => (t.Name, t.ResourcePath))), "m_pValue",
             v => new KVObject(v) { Flag = KVFlag.Resource }));
         root.Add("m_dynamicParams", KVObject.Array());
         root.Add("m_dynamicTextureParams", KVObject.Array());
-        if (representative)
-        {
-            var (w, h) = RepresentativeSize(textures, images);
-            root.Add("m_intAttributes", VmatParams.NamedArray([("RepresentativeTextureHeight", h), ("RepresentativeTextureWidth", w)], "m_nValue", v => new KVObject(v)));
-        }
-        else
-            root.Add("m_intAttributes", KVObject.Array());
-        foreach (var key in new[] { "m_floatAttributes", "m_vectorAttributes", "m_textureAttributes", "m_stringAttributes", "m_renderAttributesUsed" })
-            root.Add(key, KVObject.Array());
+        root.Add("m_intAttributes", VmatParams.NamedArray(ByName(intAttributes), "m_nValue", v => new KVObject(v)));
+        root.Add("m_floatAttributes", VmatParams.NamedArray(ByName(floatAttributes), "m_flValue", v => new KVObject((double)v)));
+        root.Add("m_vectorAttributes", VmatParams.NamedArray(ByName(vectorAttributes), "m_value", Vector));
+        root.Add("m_textureAttributes", KVObject.Array());
+        root.Add("m_stringAttributes", VmatParams.NamedArray(ByName(stringAttributes), "m_value", v => new KVObject(v)));
+        root.Add("m_renderAttributesUsed", KVObject.Array());
         return PackageContainerAuthor.NarrowIntegers(root);
     }
 
@@ -176,20 +199,48 @@ public sealed class MaterialCompiler : IResourceCompiler
         return (w, h);
     }
 
-    private static float[] ParseVector(string value, string path, string key)
+    private static List<(string Name, T Value)> ByName<T>(IEnumerable<(string Name, T Value)> items) =>
+        EditInfo.Red2Sorted(items, i => i.Name);
+
+    private static KVObject Vector(float[] v)
     {
-        var parts = value.Trim().TrimStart('[').TrimEnd(']').Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length is < 1 or > 4)
-            throw new InvalidOperationException($"{path}: '{key}' is not a vector: {value}");
-        var v = new float[4];
-        for (int i = 0; i < parts.Length; i++)
-            v[i] = float.Parse(parts[i], System.Globalization.CultureInfo.InvariantCulture);
-        return v;
+        var a = KVObject.Array();
+        foreach (var f in v) a.Add(new KVObject((double)f));
+        return a;
+    }
+
+    // 18010e280 keeps an int as (float)(int)value and DATA reads it back as an int; past 2^24 that
+    // loses bits, and the read back is not ported, so such values are refused.
+    private static int IntThroughFloat(long value, string path, string key) =>
+        Math.Abs(value) <= 1 << 24 ? (int)value
+            : throw new InvalidOperationException($"{path}: '{key}' = {value} is past 2^24; RC keeps ints as floats and that read back is not ported.");
+
+    // A float attribute: a double as stored ((float) of the KV3 double), or an int of an attribute
+    // table other than SystemAttributes (1800c7e20 of the KV3 int).
+    private static float AttributeFloat(string text, string path, string key)
+    {
+        var typed = VmatSource.TypeOf(text, path, key);
+        return typed.Kind == VmatSource.Kv1Kind.Int ? IntThroughFloat(typed.Int, path, key) : (float)typed.Double;
+    }
+
+    // The material's value for a shader expression's parameter: a vector variable reads a vector
+    // value, any other an int or double one.
+    private static float[] ParamValue(string value, bool vector, string path, string key)
+    {
+        if (vector)
+            return VmatSource.ParseVector(value, path, key);
+        var typed = VmatSource.TypeOf(value, path, key);
+        return typed.Kind switch
+        {
+            VmatSource.Kv1Kind.Int => [IntThroughFloat(typed.Int, path, key), 0, 0, 0],
+            VmatSource.Kv1Kind.Double => [(float)typed.Double, 0, 0, 0],
+            _ => throw new InvalidOperationException($"{path}: '{key}' = \"{value}\" is not a number the shader can read."),
+        };
     }
 
     private static KVObject BuildRed2(CompileRequest request, MaterialCompileSettings settings, ShaderSet shaders,
         IReadOnlyList<MaterialTexture> textures, IReadOnlyDictionary<string, (string SearchPath, byte[] Bytes)> images,
-        IReadOnlyList<ContentMount> mounts, KVObject searchable)
+        IReadOnlyList<ContentMount> mounts, KVObject searchable, IReadOnlyList<VmatAttribute> attributes)
     {
         var root = KVObject.Collection();
 
@@ -233,8 +284,38 @@ public sealed class MaterialCompiler : IResourceCompiler
         var children = KVObject.Array();
         foreach (var path in generated.Select(g => g.ChildPath).Distinct().Order(StringComparer.Ordinal))
             children.Add(new KVObject(path));
-        EditInfo.AddTail(root, searchable, children);
+        EditInfo.AddTail(root, searchable, children, SurfacePropReferences(attributes));
         return PackageContainerAuthor.NarrowIntegers(root);
+    }
+
+    // 18010f480: each string attribute named PhysicsSurfaceProperties (V_stricmp_fast) is a
+    // surface_prop subasset reference (context vf3 = AddSubassetReference 180175420, count + 1;
+    // an empty name adds nothing). Null when there is none, as RC leaves the table.
+    private static KVObject? SurfacePropReferences(IReadOnlyList<VmatAttribute> attributes)
+    {
+        var names = new List<string>();
+        var counts = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        foreach (var a in attributes)
+        {
+            if (a.Kind != VmatAttributeKind.String || a.Text.Length == 0
+                || Io.Tier0Strings.StricmpFast(a.Name, "PhysicsSurfaceProperties") != 0)
+                continue;
+            if (counts.TryGetValue(a.Text, out var n))
+                counts[a.Text] = n + 1;
+            else
+            {
+                counts[a.Text] = 1;
+                names.Add(a.Text);
+            }
+        }
+        if (names.Count == 0)
+            return null;
+        var table = KVObject.Collection();
+        foreach (var name in names)
+            table.Add(name, new KVObject(counts[name]));
+        var root = KVObject.Collection();
+        root.Add("surface_prop", table);
+        return root;
     }
 
     /// <summary>An image's <c>.txt</c> settings file as RC records it: read from the first mount that
@@ -251,7 +332,7 @@ public sealed class MaterialCompiler : IResourceCompiler
     // values the material sets and RC's own keys; sorted ignoring case.
     private static KVObject Searchable(ShaderSet shaders, IReadOnlyList<MaterialTexture> textures,
         IReadOnlyDictionary<string, (string SearchPath, byte[] Bytes)> images, Func<int, int> feature,
-        IReadOnlyDictionary<string, string> values)
+        IReadOnlyDictionary<string, string> values, IReadOnlyList<VmatAttribute> attributes)
     {
         var entries = new Dictionary<string, KVObject>(StringComparer.Ordinal);
         var byHash = shaders.Features.Variables.GroupBy(v => ShaderExpression.ParamHash(v.Name)).ToDictionary(g => g.Key, g => g.First());
@@ -261,7 +342,7 @@ public sealed class MaterialCompiler : IResourceCompiler
                 throw new InvalidOperationException($"A shader expression reads parameter {hash:X8}, which the shader does not declare.");
             if (values.TryGetValue(v.Name, out var s))
             {
-                var f = v.Type == 3 || v.Type == 4 ? ParseVector(s, shaders.Name, v.Name) : [float.Parse(s, System.Globalization.CultureInfo.InvariantCulture), 0, 0, 0];
+                var f = ParamValue(s, v.Type == 3 || v.Type == 4, shaders.Name, v.Name);
                 return new Vector4(f[0], f[1], f[2], f[3]);
             }
             return v.Type == ShaderVariable.Int
@@ -272,7 +353,14 @@ public sealed class MaterialCompiler : IResourceCompiler
         // The combo of every mode the shader runs itself (no fallback): the default one, and the
         // ones a mode fixes (unlit's Depth mode, S_MODE_DEPTH 1, adds DepthPassBatchID). Which
         // mode wins when two disagree on a value is not measured; the first one seen does here.
-        var modeSettings = shaders.Features.Modes.Where(m => m.Fallback.Length == 0).Select(m => m.StaticComboSettings)
+        // RC gathers the combo's attributes in 181fa2f30, walking every static combo the feature
+        // combo leaves free; 181faa3b0 first pins the combos of each mode whose name contains
+        // "Tool" (strstr, 18274ef4c), so ToolsVis' S_MODE_TOOLS_VIS 1 attributes
+        // (lightmappedgeneric's environmentmapped) never count. That walk over the other free
+        // combos and its rule checks are not ported: this takes each remaining mode's settings.
+        var modeSettings = shaders.Features.Modes
+            .Where(m => m.Fallback.Length == 0 && !m.Name.Contains("Tool", StringComparison.Ordinal))
+            .Select(m => m.StaticComboSettings)
             .Prepend(new Dictionary<string, int>()).ToList();
         foreach (var program in shaders.Programs)
         foreach (var modeCombo in modeSettings)
@@ -296,9 +384,15 @@ public sealed class MaterialCompiler : IResourceCompiler
                     entries.TryAdd(a.Name, value);
             }
         }
-        foreach (var combo in shaders.Features.StaticCombos)
-            if (values.TryGetValue(combo.Name, out var v))
-                entries[combo.Name] = new KVObject(int.Parse(v, System.Globalization.CultureInfo.InvariantCulture));
+        // 18010f480 decodes the feature combo (181fac660) and hands every feature whose value is
+        // not 0 to the searchable data (context vf18), set by the material or not.
+        for (int i = 0; i < shaders.Features.StaticCombos.Count; i++)
+        {
+            var combo = shaders.Features.StaticCombos[i];
+            int v = Math.Clamp(feature(i), combo.Min, combo.Max);
+            if (v != 0)
+                entries[combo.Name] = new KVObject(v);
+        }
         entries["IsChildResource"] = new KVObject(0);
         entries["shader"] = new KVObject(shaders.Name);
         if (entries.ContainsKey("RepresentativeTexture"))
@@ -307,6 +401,19 @@ public sealed class MaterialCompiler : IResourceCompiler
             entries["RepresentativeTextureHeight"] = new KVObject(h);
             entries["RepresentativeTextureWidth"] = new KVObject(w);
         }
+        // 18010f480, after the shader's attributes, the feature values and "shader": every int
+        // attribute (context vf18), then every float one (vf17), then every string one (vf19),
+        // each setting its name; vector attributes go nowhere. A later write replaces an earlier
+        // one: an int of an attributes table is a float attribute too and lands as the float
+        // (s1i_attrs: S2cIntAttr = 3.0, RC 11-10).
+        foreach (var kind in new[] { VmatAttributeKind.Int, VmatAttributeKind.Float, VmatAttributeKind.String })
+            foreach (var a in attributes.Where(a => a.Kind == kind))
+                entries[a.Name] = kind switch
+                {
+                    VmatAttributeKind.Int => new KVObject(IntThroughFloat(VmatSource.TypeOf(a.Text, shaders.Name, a.Name).Int, shaders.Name, a.Name)),
+                    VmatAttributeKind.Float => new KVObject((double)AttributeFloat(a.Text, shaders.Name, a.Name)),
+                    _ => new KVObject(a.Text),
+                };
 
         var root = KVObject.Collection();
         // RC sorts the table by V_stricmp_fast at the RED2 finalize (EditInfo.Red2Sorted):

@@ -59,6 +59,10 @@ public class MaterialCompilerTests
     [InlineData("cx_order")]
     [InlineData("cx_alphatest")]
     [InlineData("cx_weapon")]
+    // source1import's form (GROUND_TRUTH 264): CRLF, quoted values, SystemAttributes, an
+    // attributes table and the legacy_import block; values typed as tier0 types them.
+    [InlineData("s1i_lmg")]
+    [InlineData("s1i_attrs")]
     public void Vmat_CompilesToResourceCompilersBytes(string name)
     {
         if (Compile(name) is not { } result) { CS2Fixtures.Skip("shaders_pc_dir.vpk"); return; }
@@ -89,6 +93,10 @@ public class MaterialCompilerTests
     [InlineData("cx_order")]
     [InlineData("cx_alphatest")]
     [InlineData("cx_weapon")]
+    // source1import's form (GROUND_TRUTH 264): CRLF, quoted values, SystemAttributes, an
+    // attributes table and the legacy_import block; values typed as tier0 types them.
+    [InlineData("s1i_lmg")]
+    [InlineData("s1i_attrs")]
     public void Vmat_WithChildren_CompilesToResourceCompilersFiles(string name)
     {
         if (Compile(name, children: true) is not { } result) { CS2Fixtures.Skip("shaders_pc_dir.vpk"); return; }

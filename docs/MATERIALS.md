@@ -9,18 +9,28 @@ Build: `resourcecompiler.dll` 1.41.9.0 (sha256 `d1115f9f9b976db6...`, the 2026-1
 
 A `.vmat` (KV1 `Layer0 { shader ...; TextureColor "x.png"; F_...; g_... }`) compiles to the
 `.vmat_c` plus one child `.vtex_c` per texture the shader's static combo reads. RC writes the
-children beside their first input image (`materials/default/...` for shader defaults), named
-`<first input file, '.' as '_'>_<logical CRC as %x>.vtex` (`'%s_%x.%s'`, 18010bc8b).
+children beside the input they are named after, named
+`<that input file, '.' as '_'>_<logical CRC as %x>.vtex` (`'%s_%x.%s'`, 18010bc8b). The input
+(ProcessTexture 18010aa00, ledger 264): the first one, but a `materials/default/` pick gives way to
+the next input that is not a default, and a `[` constant to the next image (a normal + roughness
+child of a default normal is named after the material's roughness image).
 
-- DATA: `m_materialName`, `m_shaderName`, the params the `.vmat` sets (int/float/vector, not
-  the shader's defaults), `m_textureParams` = every output texture the combo reads, pointing at
+- DATA: `m_materialName`, `m_shaderName`, the params the `.vmat` sets (not the shader's
+  defaults), typed by their text the way tier0's KV1 load types it (ledger 264: an int is an int
+  param, a double a float param, an empty or `[` string a vector param, any other string is no
+  param), each list sorted with V_stricmp_fast; the `attributes`, `DecalAttributes` and
+  `SystemAttributes` tables as `m_int/float/vector/stringAttributes` (source1import's
+  `PhysicsSurfaceProperties` is a string attribute and a `surface_prop` subasset reference;
+  `legacy_import` and any other table are skipped), `m_textureParams` = every output texture the combo reads, pointing at
   the child, and `RepresentativeTextureWidth/Height` from the colour texture.
 - RED2: input dependencies of every image (and its optional `.txt`), every argument and special
   dependency of the texture compiles, `Material Compiler Version` 25, and the shader as
   `vpk:<absolute path of shaders_pc.vpk>/<shader>.vfx` with the shader's `m_nVersion` as its
   fingerprint (csgo_complex 5), plus each mode's fallback shader (`csgo_depth_only.vfx` 1). The
   absolute path is the machine's install, so a compile must be told it to match RC.
-- `m_SearchableUserData`: the shader's attributes, the F_ values set, the representative texture.
+- `m_SearchableUserData`: the shader's attributes (modes named `*Tool*` never count), every feature
+  whose value is not 0 (set or not), the representative texture, then the int, float and string
+  attributes in that order, a later write replacing an earlier one (ledger 264).
 - INSG: the vertex input signature of the shader's static combo.
 
 ## Which textures: the shader's program files
