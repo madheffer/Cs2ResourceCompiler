@@ -225,8 +225,55 @@ FILL_TO_POWER_OF_TWO records the first input's size when it differs from the tex
 All 13 probe children and all 12 probe materials compile identical to RC, children included
 (`Vmat_WithChildren_CompilesToResourceCompilersFiles`).
 
+## Source1import vmats (porter addons, ledger 264, 2026-11-10)
+
+Valve's source1import (the map porter's input) writes each `.vmat` as KV1 text with CRLF line ends
+and every value quoted, plus two blocks the hand-written probes never had: `SystemAttributes`
+(`PhysicsSurfaceProperties`) and `legacy_import` (the whole S1 VMT nested under its shader name).
+`s2c compile-addon` refused all of them before; it now reads them the way RC does:
+
+- `VmatSource` reads the text with `Kv1Text`, a raw reader that keeps each value's text, because
+  tier0 types values by text (`"1.000"` is a float param, `"1"` an int param) and ValveKeyValue
+  retypes numbers itself. Syntax it is not ported for (`#base`, `=`, escapes, duplicate keys,
+  UTF-16, `ToolAttributes`, `dynamicparams`) is refused, not guessed.
+- Keys without a type prefix (`SkyTexture`, `g_bFogEnabled`) are typed by their value, as RC does.
+- `legacy_import` and every other unknown table are skipped; the three attribute tables become
+  `m_*Attributes`, and `PhysicsSurfaceProperties` also a `surface_prop` subasset reference.
+- Four rules the porter vmats showed were wrong before: lists sorted with V_stricmp_fast (was
+  ordinal), searchable data holds every nonzero feature combo, `*Tool*` modes add no searchable
+  attributes, and a child is named after the first input that is not a `materials/default/` image.
+
+Probes: `RcReference/materials/s1i_lmg.vmat` (csgo_lightmappedgeneric, source1import's exact form)
+and `s1i_attrs.vmat` (csgo_complex: both attribute tables, a nested table, edge typings such as
+`"1.000"`, empty and short vectors). Both equal RC byte for byte with their children
+(`MaterialCompilerTests`); `VmatSourceTests` covers typing, vector scanning and refusals.
+
+Checking a whole addon against RC (resourcecompiler alone touches no game process, so it may run
+with CS2 open; go through heavy.py):
+
+    python tools/re/rc_addon_materials.py <porter addon> <new probe addon>
+    s2c compile-addon <new probe addon> -n
+
+The first copies the addon's materials into a fresh probe addon and RC-compiles every `.vmat`
+there; the second reports which of our files are byte-identical. Delete the probe addon's content
+and game folders afterwards.
+
+Result on ze_el_salto_del_angel_v1 (200 vmats, RC references made 11-10): 107 compile, 105 of
+those `.vmat_c` are RC's bytes. The rest are texture features, not the vmat form:
+
+- differ: `sky_day01_01` (sky.vfx `g_tSkyTexture` is a cube texture), `blendproddirtgrass`
+  (csgo_lightmapped_4wayblend: RC's RED2 has two more default children);
+- 27 `_rough` child `.vtex_c` differ only in METADATA (140 bytes): we take the display size from
+  the first input, the 1x1 default normal, and RC does not; its rule is not read yet;
+- refused (97): constant `[r g b]` texture inputs (58, named `<material>_<variable>`), image
+  `.txt` settings (27), `dynamicparams` (8), the cube sky, one unsupported image.
+
 ## Open
 
+- Source1import (above): constant texture inputs, cube textures, `dynamicparams`,
+  `ToolAttributes`, 4wayblend's extra default children, a default-normal child's display size, and
+  181fa2f30's walk over the remaining free static combos with its rule checks (we take each
+  non-Tool, no-fallback mode's settings).
 - Which mode wins when two modes give an attribute different values (first seen, here).
 - Intel's `rsqrtps` table is dumped and wired but has no Intel-machine RC reference to check against.
 - Done 11-03 (docs/TEXTURES.md "Mip algorithms", "Image processors"): `PreserveCoverage`
