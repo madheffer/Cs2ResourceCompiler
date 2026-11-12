@@ -1,6 +1,18 @@
 {
  "functions": [
   {
+   "addr": "180f88460",
+   "name": "MapNode_WorldTransforms",
+   "module": "s2c:entities",
+   "note": "mode 1/2: up the parents (vf 0x600) while vf 0x400; a node referenced through 'target' collects its referrers (g_pDataModel vf 0x3b8 / 0x3c0 on 1800d3270's handle), recurses into each in that order, then composes its own transform (vf 0x110, 180ffd750); no kind-0 reference starts from its own (180f82b60). Ledger 46"
+  },
+  {
+   "addr": "180fc6f40",
+   "name": "MapNode_FindByClassWildcard",
+   "module": "s2c:entities",
+   "note": "(node, out, pattern, flags): MapWorld_GatherLights' 'light_*' search"
+  },
+  {
    "addr": "18023b500",
    "name": "WorldRendererBuilder_Construct",
    "module": "s2c:baked/lighting",
@@ -124,7 +136,7 @@
    "addr": "180fb5440",
    "name": "NavGen_CollectAvoidMarkups",
    "module": "s2c:baked/nav",
-   "note": "'NavGen' 'AVOID'"
+   "note": "'NavGen' 'AVOID': each 0x48-byte record copied whole into a 0x50 markup, then the AVOID tag and a cleared flag byte"
   },
   {
    "addr": "180f209f0",
@@ -172,7 +184,181 @@
    "addr": "180f203b0",
    "name": "NavGen_CollectLinkAreas",
    "module": "s2c:baked/nav",
-   "note": "'ai_nav_link_area'"
+   "note": "CNavGenInput +0xc0 (ledgers 175, 177): 180fc6f40 for 'ai_nav_link_area' (mode 2 classname, flags 3 visible nodes and sub-worlds), IsA CMapNavLink; per instance path (one, the identity, after the bake) start = (step matrix x node) translation, end = start + locatoroffset (+0x185c)"
+  },
+  {
+   "addr": "180f2ddc0",
+   "name": "MapEntity_ClassNameMatches",
+   "module": "s2c:baked/nav",
+   "note": "the game class (handle +0x538) name +0x98, V_CompareNameWithWildcards(pattern, name, 0); an empty name never matches (search mode 2)"
+  },
+  {
+   "addr": "180fefbc0",
+   "name": "MapEntity_TargetNameMatches",
+   "module": "s2c:baked/nav",
+   "note": "vfn 0x7e0 targetname (the name 180fca010 hashes into the world 200 name buckets), V_CompareNameWithWildcards(pattern, name, 0) (search mode 1)"
+  },
+  {
+   "addr": "181063b90",
+   "name": "CMapNavLink_Create",
+   "module": "s2c:baked/nav",
+   "note": "0x18b0 bytes: width +0x1858 128, locatoroffset +0x185c (128, 0, 0), locatorangles +0x1868 (0, 180, 0), type +0x1888 0"
+  },
+  {
+   "addr": "181064a10",
+   "name": "CMapNavLink_IsA",
+   "module": "s2c:baked/nav",
+   "note": "CMapNavLink, CMapEntity, CMapGameDataNode, CMapEntityIONode"
+  },
+  {
+   "addr": "181064ab0",
+   "name": "CMapNavLink_UpdateLocators",
+   "module": "s2c:baked/nav",
+   "note": "CMapNavLinkLocator children +0x4a8 0 at the origin, 1 at origin + locatoroffset; created when missing; scripts/npc_units.vdata and navlinks.vdata"
+  },
+  {
+   "addr": "181065c90",
+   "name": "CMapNavLink_ExportToLump",
+   "module": "s2c:entities/lump",
+   "note": "CMapEntity_ExportToLump, then width, locatoroffset and locatorangles (\"%f %f %f\"), nav_link_movement (\"__ground__\" for type 4), the reverse for types 0 and 4"
+  },
+  {
+   "addr": "181065ee0",
+   "name": "CMapNavLink_CopyFrom",
+   "module": "s2c:baked/nav",
+   "note": "type, width, offset, angles, the two movement strings and the preview strings"
+  },
+  {
+   "addr": "181068680",
+   "name": "CMapNavLink_AttributeTable",
+   "module": "s2c:baked/nav",
+   "note": "navlink_type, width, locatoroffset, locatorangles, nav_link_movement, nav_link_preview, nav_link_movement_reverse, nav_link_preview_reverse (hammer_embedded_properties)"
+  },
+  {
+   "addr": "18106b4f0",
+   "name": "CMapNavLink_SetLocatorOffset",
+   "module": "s2c:baked/nav",
+   "note": "change tracking under the name 'locatorOffset', then +0x185c"
+  },
+  {
+   "addr": "1810663e0",
+   "name": "CMapNavLink_TypeChoices",
+   "module": "s2c:baked/nav",
+   "note": "navlink_type's editor choices: Generic, Climb Up, Jump Down, Vault Over, Ground (0 to 4)"
+  },
+  {
+   "addr": "181067770",
+   "name": "CMapNavLink_TypeToString",
+   "module": "s2c:baked/nav",
+   "note": "navlink_type as its MapNavLinkType_t name (table 18300fa90, 0x20-byte rows: value, name, display name), \"\" past 4"
+  },
+  {
+   "addr": "181067b60",
+   "name": "CMapNavLink_TypeFromString",
+   "module": "s2c:baked/nav",
+   "note": "V_stricmp_fast against each MapNavLinkType_t name of 18300fa90, an unknown name 0"
+  },
+  {
+   "addr": "18106b6d0",
+   "name": "CMapNavLink_SetType",
+   "module": "s2c:baked/nav",
+   "note": "change tracking under 'navlink_type', then +0x1888"
+  },
+  {
+   "addr": "18106b850",
+   "name": "CMapNavLink_SetWidth",
+   "module": "s2c:baked/nav",
+   "note": "+0x1858 as given"
+  },
+  {
+   "addr": "18106b350",
+   "name": "CMapNavLink_SetLocatorAngles",
+   "module": "s2c:baked/nav",
+   "note": "change tracking under 'locatorAngles', then +0x1868 as given"
+  },
+  {
+   "addr": "18106b6b0",
+   "name": "CMapNavLink_SetMovement",
+   "module": "s2c:baked/nav",
+   "note": "nav_link_movement into +0x1878"
+  },
+  {
+   "addr": "18106b6c0",
+   "name": "CMapNavLink_SetMovementReverse",
+   "module": "s2c:baked/nav",
+   "note": "nav_link_movement_reverse into +0x1880"
+  },
+  {
+   "addr": "18106b830",
+   "name": "CMapNavLink_SetPreview",
+   "module": "s2c:baked/nav",
+   "note": "nav_link_preview into +0x1890 (not exported)"
+  },
+  {
+   "addr": "18106b840",
+   "name": "CMapNavLink_SetPreviewReverse",
+   "module": "s2c:baked/nav",
+   "note": "nav_link_preview_reverse into +0x1898 (not exported)"
+  },
+  {
+   "addr": "181065610",
+   "name": "CMapNavLink_SetScales",
+   "module": "s2c:baked/nav",
+   "note": "vf 0x98: always (1, 1, 1)"
+  },
+  {
+   "addr": "181065720",
+   "name": "CMapNavLink_OnLocatorChanged",
+   "module": "s2c:baked/nav",
+   "note": "locator 0 differing: the link takes its origin and angles, locatoroffset kept in place; locator 1: locatoroffset and locatorangles = locator 1 - link"
+  },
+  {
+   "addr": "181064300",
+   "name": "CMapNavLinkLocator_IsA",
+   "module": "s2c:baked/nav",
+   "note": "CMapNavLinkLocator, CMapProceduralLocator, CMapLocator, CMapTransform (vtable 182362db0, vf 0xc8 181076410)"
+  },
+  {
+   "addr": "180fca3d0",
+   "name": "CMapWorld_PostLoad",
+   "module": "s2c:baked/nav",
+   "note": "the world itself into its entity list (+0x1828), then every node of the tree (180fc4e40)"
+  },
+  {
+   "addr": "180fca010",
+   "name": "CMapWorld_OnNodeAdded",
+   "module": "s2c:baked/nav",
+   "note": "a CMapEntityIONode not yet listed: AddToTail on +0x1828 (index on the node, 180fefb50) and its targetname into the 200 name buckets (+0x1840)"
+  },
+  {
+   "addr": "180fcb150",
+   "name": "CMapWorld_OnNodeRemoved",
+   "module": "s2c:baked/nav",
+   "note": "FastRemove from +0x1828 when the node is at its stored slot: the last entry moves into the slot; a node found elsewhere is not removed, only its slot cleared (-1); then out of the name buckets (ledger 179)"
+  },
+  {
+   "addr": "180fef240",
+   "name": "CMapEntityIONode_ListSlot",
+   "module": "s2c:baked/nav",
+   "note": "the node's slot in its world's entity list (set by 180fefb50); OnNodeAdded lists only a node whose slot is negative (ledger 179)"
+  },
+  {
+   "addr": "180f6d410",
+   "name": "MapDoc_DeleteNode",
+   "module": "s2c:baked/nav",
+   "note": "flags 3 from the bake; unregisters the subtree (180f684c0) and runs the queued deletes"
+  },
+  {
+   "addr": "180f684c0",
+   "name": "MapDoc_UnregisterSubtree",
+   "module": "s2c:baked/nav",
+   "note": "children first; a CMapInstance whose target no other instance names (180f8e9e0) has its target deleted too"
+  },
+  {
+   "addr": "180f7a350",
+   "name": "CMapNode_SetVisible",
+   "module": "s2c:baked/nav",
+   "note": "the visibility state byte +0x370 (180f8f920 starts it at 1)"
   },
   {
    "addr": "180fb15e0",
@@ -235,6 +421,36 @@
    "note": "debug gen/render clips"
   },
   {
+   "addr": "180fb6cf0",
+   "name": "NavGen_MovableEntry",
+   "module": "s2c:baked/nav",
+   "note": "a movable entry (0x90 at ctx +0x18) out: the id path, the 3x4 matrix at +0x38, the gravity byte +0x88"
+  },
+  {
+   "addr": "180fdee80",
+   "name": "CMapEntity::vf21_WorldToLocal",
+   "module": "s2c:baked/nav",
+   "note": "vf 0xa0's world matrix through 18125aba0 (the inverse)"
+  },
+  {
+   "addr": "180105f50",
+   "name": "NodeIdPath_Hash",
+   "module": "s2c:baked/nav",
+   "note": "MurmurHash2 of the id path's ints, seed 0x3501a674 (an out-of-line tail first); a movable mesh's polygon tag"
+  },
+  {
+   "addr": "1818ef5e0",
+   "name": "CNavMesh_SetMovableMeshes",
+   "module": "s2c:baked/nav",
+   "note": "per navsystem entry: 180105f50 of the id path as the key, the entry copied"
+  },
+  {
+   "addr": "1818ed5a0",
+   "name": "CNavArea_MovableTag",
+   "module": "s2c:baked/nav",
+   "note": "1818f58c0 over the mesh's +0x2d0 map, keyed by the area's +0x60; -1 for a static area"
+  },
+  {
    "addr": "180fb5ce0",
    "name": "NavGen_CollectMovableMeshes",
    "module": "s2c:baked/nav",
@@ -242,9 +458,15 @@
   },
   {
    "addr": "180f4aed0",
-   "name": "NavGen_CollectAvoidMaterials",
+   "name": "NavGen_CollectAvoidModels",
    "module": "s2c:baked/nav",
-   "note": "'nav_attribute_avoid': the compile context's AVOID list that 180fb5440 turns into markups"
+   "note": "per node of the table at [ctx + 8] (0x28-byte slots, list +0x10 / +0x18; node at entry +0x40): the first CModelHelper (dynamic_cast from CBaseHelper), its model's KV3 (helper +0xb8, +0x38) member nav_data (18174cf40), bool nav_attribute_avoid (181eae3f0, hash 5bd259e0); a hit adds node bounds +0x14c with min + (18, 18, 0), max - (18, 18, 0), then the 3x4 node vfn 0xa0 writes (0x48 bytes); reached through 180fb6b80 from 1800fdd3b"
+  },
+  {
+   "addr": "180fb6b80",
+   "name": "NavGen_CollectAvoidModels_Thunk",
+   "module": "s2c:baked/nav",
+   "note": "rcx = [rcx + 8]; non-null jumps to 180f4aed0 with the AVOID list in rdx"
   },
   {
    "addr": "180fc8c80",
@@ -353,6 +575,12 @@
    "name": "CNavToolsPhysicsInterface_TraceShape",
    "module": "s2c:baked/nav",
    "note": "query: interacts with the mask, +0x2f / +0x30 from the caller, flags 0x49; result fraction +0xac, normal +0x90, start-solid +0xbb, the hit attributes at +0x50 and their first qword | 1 at +0x28"
+  },
+  {
+   "addr": "18129b060",
+   "name": "ClosestPointOnTriangleF",
+   "module": "s2c:baked/nav",
+   "note": "Ericson's regions in floats (NavMeshLadders.ClosestPointOnTriangle; oracle-exact)"
   },
   {
    "addr": "1818d1fa0",
@@ -514,7 +742,43 @@
    "addr": "1813319d0",
    "name": "MapBuilder_CMeshToHalfEdge",
    "module": "s2c:mapbuilder",
-   "note": "one vertex per CMesh vertex; triangles repeating an index skipped; streams then bone weights"
+   "note": "one vertex per CMesh vertex; triangles repeating an index skipped; streams then bone weights; MeshID, NoCollapse (+0x14c), PackToSharedVB (+0x14d), UseBaseVertex, UseTintColor, TintColor as DmeMesh attributes"
+  },
+  {
+   "addr": "18243b690",
+   "name": "CMeshToHalfEdge_StreamRows",
+   "module": "s2c:mapbuilder",
+   "note": "0x2c rows: name[0x20], float count +0x20, per face vertex +0x24, half-edge type +0x28; named rows, then by count 1-4 at 18243b820 (types 3, 8, 11, 17); 'invalid' (18243b958, type 0) adds nothing"
+  },
+  {
+   "addr": "1812e0b10",
+   "name": "CMesh_FindBlendStreams",
+   "module": "s2c:mapbuilder",
+   "note": "the lowest-index blendweight(s) and blendindices streams, which CMeshToHalfEdge passes over"
+  },
+  {
+   "addr": "181320d30",
+   "name": "HalfEdgeData_AddField",
+   "module": "s2c:mapbuilder",
+   "note": "appends a field (name, type) to a half-edge data list; -1 when the name exists"
+  },
+  {
+   "addr": "180d4f480",
+   "name": "HalfEdge_WriteDmeMesh",
+   "module": "s2c:geometry/mesh-export",
+   "note": "vertex fields (+0x38), then face-vertex (+0xb0), each as 180d4cfe0 type 12, float 180d4cc00, Vector2 180d4cdf0, Vector3 180d4cfe0, Vector4 180d4d1d0, int 180d4ca10, color 180d4d3c0; blend fields 180d4f1f0 after: WorldNodeModels.DmeFieldOrder"
+  },
+  {
+   "addr": "1822b73e0",
+   "name": "HalfEdge_TypeToDmeGroup",
+   "module": "s2c:geometry/mesh-export",
+   "note": "0x2c rows: half-edge type, DMX group +8 (2 int, 3 float, 8 color, 9 Vector2, 10 Vector3, 11 Vector4)"
+  },
+  {
+   "addr": "180d463b0",
+   "name": "DmeMeshToCMesh_ListFields",
+   "module": "s2c:geometry/mesh-export",
+   "note": "the vertex data's fields in its vertex format order, those the mesh's +0x84 mask takes"
   },
   {
    "addr": "18131e190",
@@ -940,7 +1204,49 @@
    "addr": "1810dca50",
    "name": "HammerMesh_UpdateExtraAttributeStreams",
    "module": "s2c:geometry/mesh-export",
-   "note": "adds VertexPaintTintColor / VertexPaintBlendParams / VertexPaintBlendParams1 when a material input has that name (table 18237b480); arg 2 removes unwanted ones (ledger 164)"
+   "note": "with arg 2 set removes VertexPaintTintColor / VertexPaintBlendParams / VertexPaintBlendParams1 no material input names, then adds the ones an input names (table 18237b480: per-vertex float4, defaults 1,1,1,1 / 0 / 0) in that order (ledgers 164, 201)"
+  },
+  {
+   "addr": "1810c27d0",
+   "name": "AddExtraAttributeStream",
+   "module": "s2c:geometry/mesh-export",
+   "note": "row n of 18237b480: per-vertex (+0x14 1) into the attribute grid +0xb20 (5 x 6 slots of 0x30, name +0x18, index +0x32) by name and index; a new one through 1810c1f70 with the row's type byte (+0x18) and defaults (+0x1c); an existing one keeps its data (ledger 201)"
+  },
+  {
+   "addr": "1810d9e70",
+   "name": "RemoveExtraAttributeStream",
+   "module": "s2c:geometry/mesh-export",
+   "note": "row n of 18237b480: the slot of that name and index removed from +0xb20 (1810d9630) and the face-vertex grid +0x1570 (1810da2a0) (ledger 201)"
+  },
+  {
+   "addr": "18237b480",
+   "name": "ExtraAttributeStreamTable",
+   "module": "s2c:geometry/mesh-export",
+   "note": "data: 0x38-byte rows {name, index +8, +0xc, +0x10, element kind +0x14 (1 vertex, 3 face), type byte +0x18, float4 default +0x1c}: VertexPaintTintColor (1,1,1,1), VertexPaintBlendParams 0, VertexPaintBlendParams1 0, then PerVertexLighting and VertexPaintDetailWeight (outside 1810dca50's three) (ledger 201)"
+  },
+  {
+   "addr": "183014fa0",
+   "name": "MeshStandardAttributeNames",
+   "module": "s2c:geometry/mesh-export",
+   "note": "data: 23 standard mesh attributes (position, normal, tangent, color, texcoord 0, texcoord 1, materialindex, blendweight 0-3, blendindex 0-3, textureAxisU/V 0-1, textureScale 0-1, flags, lightmapScaleBias); indices at 18243e6d0, counts at 18243e730 (ledger 201)"
+  },
+  {
+   "addr": "181087410",
+   "name": "HammerMesh_AddStandardAttribute",
+   "module": "s2c:geometry/mesh-export",
+   "note": "standard attribute n of 183014fa0 into the grid (its slot word at +0x5b8 + 2n) when absent (ledger 201)"
+  },
+  {
+   "addr": "1810d9930",
+   "name": "HammerMesh_RemoveStandardAttribute",
+   "module": "s2c:geometry/mesh-export",
+   "note": "clears standard attribute n's slot (+0x5b8 + 2n) and its data (ledger 201)"
+  },
+  {
+   "addr": "1810dfff0",
+   "name": "ConvertMeshForBuilder_KeepsTexcoords",
+   "module": "s2c:geometry/mesh-export",
+   "note": "inside 1810dff20: per material, bool attribute HasTexcoordTransform (0x2661694a, vf 0x48) 1, or 0x7c928c7c present and 0, stops the texcoord shift (ledger 201)"
   },
   {
    "addr": "181ef9b30",
@@ -1048,7 +1354,7 @@
    "addr": "180d47b90",
    "name": "DmeMeshToCMesh",
    "module": "s2c:geometry/mesh-export",
-   "note": "stream layout from the DMX; CMesh +0x184 = V_powf(2, the face set's lightmapScaleBias)"
+   "note": "stream layout from the DMX; CMesh +0x184 = V_powf(2, the face set's lightmapScaleBias); +0x14c NoCollapse, +0x14d PackToSharedVB, +0x14e UseBaseVertex, +0x148 MeshID, +0x14f UseTintColor from the DmeMesh"
   },
   {
    "addr": "180d5c570",
@@ -1408,7 +1714,13 @@
    "addr": "1812db920",
    "name": "CMesh_ComputeTangents",
    "module": "s2c:geometry/mesh-export",
-   "note": "MikkTSpace-style (182080a60) when UseMikkTSpace; corners whose tangents differ by 1e-4 or in w split their vertex"
+   "note": "MikkTSpace-style (182080a60) when UseMikkTSpace; a missing tangent stream appended (type 0x2b); a vertex takes its first corner's tangent, a later corner differing by 1e-4 or in w gets an appended copy"
+  },
+  {
+   "addr": "1812e1450",
+   "name": "CMesh_HasValidTangents",
+   "module": "s2c:geometry/mesh-export",
+   "note": "the first 4-float stream named *tangent*: w = +-1 and |t|^2 within 0.001 of 1 (or 0) at every vertex"
   },
   {
    "addr": "182080a60",
@@ -1450,7 +1762,7 @@
    "addr": "181360310",
    "name": "OverlayDesc::OverlayDesc",
    "module": "s2c:geometry/overlays",
-   "note": ""
+   "note": "+0x64..+0x6c FLT_MAX (the overlay entry's +0x80 origin), +0x70 empty (ledger 245)"
   },
   {
    "addr": "181360610",
@@ -1636,7 +1948,7 @@
    "addr": "1801d30d0",
    "name": "WRB_LoadPropMeshes",
    "module": "s2c:geometry/world-nodes",
-   "note": "a model's draw calls as CMeshes of 18 floats a vertex (position, normal, tangent, texcoord, color, texcoord); vertices from the resource system's geometry info (vf 0xf0), unpacked there"
+   "note": "a model's draw calls as CMeshes of 18 floats a vertex (position, normal, tangent, texcoord, color, texcoord) plus the extra fields; vertices from the resource system's geometry info (vf 0xf0), unpacked there; the color stream renamed by the colour field's shader semantic or the material's attribute (1801d3050) when the material has a signature, extras named the same way, typed 0x22 (DXGI 0x2a/0x2b) or by component count (ledger 243)"
   },
   {
    "addr": "1812d7510",
@@ -2314,13 +2626,31 @@
    "addr": "180d46590",
    "name": "DmeMeshToCMesh_CopyAttribute",
    "module": "s2c:geometry/world-nodes",
-   "note": "one vertex attribute by type (+0x1c & 0x3f): float3 points through the matrix, directions turned by it and renormalised (zero length: +0s), float4 directions the same with w kept; the map path hands an identity whose zeros are all +0"
+   "note": "one vertex attribute by type (+0x1c & 0x3f): float3 points through the matrix, directions turned by it and renormalised (zero length: +0s), float4 directions the same with w kept; a float3 direction skips the renormalise when its CMesh stream byte +0x1c is set; a direction is a stream whose name has position (not the first), normal, bentnormal or tangent (not after speed/balance/wrinkle); the map path and the world node model compile hand an identity whose zeros are all +0 (ledgers 37, 251)"
   },
   {
    "addr": "1802f69f0",
    "name": "ModelCompile_BuildDrawSets",
    "module": "s2c:geometry/world-nodes",
    "note": "draw-set groups (400 bytes: four layouts, then the meshes) from the mesh list (+0x14c instanced, +0x14d), each through 1802f6840"
+  },
+  {
+   "addr": "18016c0e0",
+   "name": "Resource_WriteRERL",
+   "module": "s2c:infra",
+   "note": "the RERL block: entries std::sorted (18017a5a0) by V_stricmp_fast of the name, then ids and names written; the only caller is 180171830"
+  },
+  {
+   "addr": "18017a5a0",
+   "name": "std_sort_ResourceRefs",
+   "module": "s2c:infra",
+   "note": "MSVC introsort of the 0xe0-byte reference entries by V_stricmp_fast of the name"
+  },
+  {
+   "addr": "18017be30",
+   "name": "std_insertion_sort_ResourceRefs",
+   "module": "s2c:infra",
+   "note": "insertion pass of 18017a5a0 (V_stricmp_fast of the name)"
   },
   {
    "addr": "1802fc990",
@@ -2428,7 +2758,31 @@
    "addr": "1802ed7f0",
    "name": "CResourceCompilerMesh::AddDrawDescriptors",
    "module": "s2c:geometry/world-nodes",
-   "note": "per draw: vertices renumbered by first use in the incoming index buffer, then vcache, overdraw at 1.03, UV density"
+   "note": "per draw: vertices renumbered by first use in the incoming index buffer, then vcache, overdraw at 1.03, UV density; m_vTintColor = V_powf(c, 2.2) (18126a260) of the CMesh tint +0x154 when UseTintColor +0x14f (ledger 245)"
+  },
+  {
+   "addr": "18126a260",
+   "name": "V_powf_Gamma22",
+   "module": "s2c:geometry/world-nodes",
+   "note": "V_powf(x, 2.2f)"
+  },
+  {
+   "addr": "1812e5580",
+   "name": "CMesh_SetTint",
+   "module": "s2c:geometry/world-nodes",
+   "note": "+0x14f UseTintColor = 1, +0x154 the tint (ledger 245)"
+  },
+  {
+   "addr": "180296ed0",
+   "name": "std_sort_AggregateMeshes",
+   "module": "s2c:geometry/world-nodes",
+   "note": "BuildAggregate's mesh list (16-byte refs), comparator as 1802a0ff0 (ledger 244)"
+  },
+  {
+   "addr": "1802a0ff0",
+   "name": "std_insertion_sort_AggregateMeshes",
+   "module": "s2c:geometry/world-nodes",
+   "note": "comparator: CMesh +0x58 ascending, vertex count +0x18 descending, memcmp of count x stride +0x1c floats (ledger 244)"
   },
   {
    "addr": "1812b9370",
@@ -2476,7 +2830,73 @@
    "addr": "18033f200",
    "name": "ModelCompile_WeldMeshes",
    "module": "s2c:geometry/world-nodes",
-   "note": "CMesh_Weld at 1e-7 over the model's meshes (via 1803447d0)"
+   "note": "CMesh_Weld at 1e-7 over the model's meshes (via 1803447d0), then the merge 180344ae0"
+  },
+  {
+   "addr": "180344980",
+   "name": "ModelCompile_LoadAndMergeMeshes",
+   "module": "s2c:geometry/world-nodes",
+   "note": "the mesh compile's meshes from the DmeModel (180d49a80), WeldMesh with preserve_tangents, then the merge 180344ae0"
+  },
+  {
+   "addr": "18020be10",
+   "name": "WRB_SetNodeModelArgs",
+   "module": "s2c:geometry/world-nodes",
+   "note": "the node model's compile arguments from WRB_CompileNodeModel's block: preserve_tangents (byte 0, 1), generate_draw_bounds, embedded_map_mesh (1), embedded_aggregate_mesh, keep_vertices, create_pooled_vb, generate_meshlets"
+  },
+  {
+   "addr": "180344ae0",
+   "name": "ModelCompile_MergeMeshes",
+   "module": "s2c:geometry/world-nodes",
+   "note": "groups untaken later meshes by material (V_stricmp), +0x184, tint and stream layout; a group of 2+ is CMesh_Concatenate'd and appended, its members removed, so unmerged meshes keep their order before the merged groups"
+  },
+  {
+   "addr": "180d49a80",
+   "name": "ModelCompile_LoadDmeModelMeshes",
+   "module": "s2c:models/modeldoc",
+   "note": "options record for DmeMeshToCMesh (+0x84 mask -1, +0x89 0, +0x8a 0: a vertex per corner, +0x8b 1: group face sets, +0x8c 1, +0x8d 0), walks the DmeModel (180d49d20), returns its CMeshes"
+  },
+  {
+   "addr": "180d49d20",
+   "name": "DmeModel_WalkMeshes",
+   "module": "s2c:models/modeldoc",
+   "note": "the model's bind base state (1818b59f0) gives each joint its matrix; each child DmeDag: its joint's matrix else its own transform's, concatenated with the identity (182771b20), its DmeMesh to 180d47970, children through 180d49bb0"
+  },
+  {
+   "addr": "180d47970",
+   "name": "DmeDag_MeshToCMeshes",
+   "module": "s2c:models/modeldoc",
+   "note": "mode 1: the mesh's 'bind' base state (1818be180) into DmeMeshToCMesh with the dag matrix and import scale"
+  },
+  {
+   "addr": "1818bde50",
+   "name": "DmeFaceSet_TriangulateFace",
+   "module": "s2c:models/modeldoc",
+   "note": "a face of three corners copied as listed; longer ones projected (18125b510) and triangulated (18136f810)"
+  },
+  {
+   "addr": "1818be180",
+   "name": "DmeMesh_FindBaseState",
+   "module": "s2c:models/modeldoc",
+   "note": "base state by name, V_stricmp_fast"
+  },
+  {
+   "addr": "1818b59f0",
+   "name": "DmeModel_FindBaseState",
+   "module": "s2c:models/modeldoc",
+   "note": "the model's base state (transform list) by name"
+  },
+  {
+   "addr": "180cb1b50",
+   "name": "DmeMesh_Field100",
+   "module": "s2c:models/modeldoc",
+   "note": "returns +0x100; DmeMeshToCMesh sets NoCollapse on grouped meshes when > 0 (what it counts is not read)"
+  },
+  {
+   "addr": "183014ae8",
+   "name": "CMesh_PackedLayoutStreamTable",
+   "module": "s2c:models/modeldoc",
+   "note": "data: 31 (name, semantic index, DXGI format) rows CMesh_BuildPackedInputLayout looks up first; texcoord 0/1 R16G16_FLOAT; count table 183014ec0 after"
   },
   {
    "addr": "1803447d0",
@@ -2569,6 +2989,24 @@
    "note": "Added aggregate with %i meshes, %i fragments; %s_lr%i_%s"
   },
   {
+   "addr": "1802619c0",
+   "name": "WRB_AggregateStreamUnion",
+   "module": "s2c:geometry/world-nodes",
+   "note": "the union of a (CMesh, ref) list's streams (name case-blind, index, count, +0x1d), first seen first, offsets summed; every mesh not in that layout relaid by 1812e4040 (ledger 246)"
+  },
+  {
+   "addr": "1812e4040",
+   "name": "CMesh_RelayoutStreams",
+   "module": "s2c:geometry/world-nodes",
+   "note": "a mesh into a given stream table: stride max(offset + count), zeroed buffer, floats copied from the stream of the same index, count and name, else 0 (ledger 246)"
+  },
+  {
+   "addr": "1801d4dc0",
+   "name": "WRB_LoadMaterials",
+   "module": "s2c:geometry/world-nodes",
+   "note": "names + '.vmat' through the resource system (vf 0x70) into handles; a missing one resolves to materials/error.vmat (ledger 42)"
+  },
+  {
    "addr": "180296ed0",
    "name": "std_sort_AggregateFragments",
    "module": "s2c:geometry/world-nodes",
@@ -2578,7 +3016,7 @@
    "addr": "180296c80",
    "name": "std_sort_AggregateEntries",
    "module": "s2c:geometry/world-nodes",
-   "note": "the run's 0x238 entries by their CMesh, the fragments' comparator"
+   "note": "the run's 0x238 entries by their CMesh, the fragments' comparator (1802a0ff0's; ledger 244)"
   },
   {
    "addr": "18025fab0",
@@ -2614,7 +3052,7 @@
    "addr": "18026ed20",
    "name": "CClassifiedMeshList::CompileInstanced",
    "module": "s2c:geometry/world-nodes",
-   "note": "vf 0x38: entries hashed by (+0x40 node id, +0xa8); a group all CanAggregate with +0x21 goes to the stash, else one object %s%d_%s (global counter DAT_183bb3764), cluster 0"
+   "note": "vf 0x38: entries hashed by (+0x40 node id, +0xa8); a group all CanAggregate with +0x21 goes to the stash, else one object %s%d_%s (global counter DAT_183bb3764), cluster 0; the object takes the first entry's +0xb0/+0xb4/+0x80 (fades, origin) and SetTint per tinted entry (ledger 245)"
   },
   {
    "addr": "180271160",
@@ -2950,7 +3388,7 @@
    "addr": "1810d5f40",
    "name": "MaterialEditor_LowPrecisionUvInputs",
    "module": "s2c:geometry/mesh-export",
-   "note": "shader inputs named LowPrecisionUv*/uv* by texcoord index; editor UI, not the compile"
+   "note": "per material input (Material_GetInputList), the texcoord index the mesh semantic table (181366d90) gives a semantic starting with lowprecisionuv or uv; CMapMesh_NameSlotsAfterOverride adds texcoord 1 when one is 1, else removes it (ledger 201)"
   },
   {
    "addr": "180233190",
@@ -4300,7 +4738,7 @@
    "addr": "1810dcca0",
    "name": "CMapMesh_NameSlotsAfterOverride",
    "module": "s2c:entities/settle",
-   "note": ""
+   "note": "with arg 2 set (ledger 201): texcoord 1 by MaterialEditor_LowPrecisionUvInputs (add 181087410 attribute 5, remove 1810d9930; face textureAxisU/V 1 and textureScale 1 alongside), then HammerMesh_UpdateExtraAttributeStreams(mesh, 1)"
   },
   {
    "addr": "1812d87e0",
@@ -4498,19 +4936,223 @@
    "addr": "180f5ff40",
    "name": "MapDoc_CollapseInstance",
    "module": "s2c:entities/lump",
-   "note": "the copy from vf 0x860 (CMapInstance::vf268), then the id remap 180f90cb0"
+   "note": "visibility state off (+0x370): deleted (180f6d410, flags 3); else the copy from vf 0x860 (CMapInstance::vf268; CMapPrefab_Collapse for a prefab), then the id remap 180f90cb0; no copy and vf 0x868 false: deleted (ledgers 181, 183)"
   },
   {
    "addr": "180f60740",
    "name": "MapDoc_BakeInstances",
    "module": "s2c:entities/lump",
-   "note": "rounds until none collapses: tile meshes, then every CMapInstance-typed node (prefabs too) in tree order"
+   "note": "rounds until none collapses: terrain features (180f60af0), tile meshes (180f5f490), then every CMapInstance-typed node (prefabs too) collected by 180f86e70 (flags 0xd) once per round and collapsed in that order; the filter drops only non-instances (vf 0x868 / 0x870 are 1800de990, return 0) (ledger 179)"
+  },
+  {
+   "addr": "180f60af0",
+   "name": "MapDoc_BakeTerrainFeatures",
+   "module": "s2c:entities/lump",
+   "note": "each CMapTerrainFeature (180f57ff0) whose visibility state +0x370 is on and vf 0x850 says so is deleted; first step of each bake round"
+  },
+  {
+   "addr": "180f57ff0",
+   "name": "MapWorld_CollectTerrainFeatures",
+   "module": "s2c:entities/lump",
+   "note": "180f86e70 for 'CMapTerrainFeature', mode 1"
+  },
+  {
+   "addr": "1810158a0",
+   "name": "CMapInstance::vf69",
+   "module": "s2c:entities/lump",
+   "note": "joining a world: the node's own vf69, then 181019590 with the target its element handle (+0x558) resolves to (ledger 180)"
+  },
+  {
+   "addr": "181019590",
+   "name": "CMapInstance_ResolveTarget",
+   "module": "s2c:entities/lump",
+   "note": "a target in another world (not the instance's, not null, vf 0x888 false) with two or more referrers (180f8ba70 kind 0), or in another document, is cloned (180f86a90) into the instance's world (180f5f230) and the handle moved to the clone (181017400); with fewer it is moved into the instance's world (vf 0x1c8), its listed nodes joining right after the instance (s2c_aheadprobe: 0 and 1 other referrers); then SetTarget (ledgers 180, 183)"
+  },
+  {
+   "addr": "1810197f0",
+   "name": "CMapInstance_SetTarget",
+   "module": "s2c:entities/lump",
+   "note": "+0x550 = the target; resets the old and new target's cached referrer counts (180f8f0d0)"
+  },
+  {
+   "addr": "181018fa0",
+   "name": "CMapInstance_ClearTarget",
+   "module": "s2c:entities/lump",
+   "note": "resets the target's cached referrer counts, clears the handle and +0x550"
+  },
+  {
+   "addr": "1810ecf10",
+   "name": "CVisibilityMgr::vf10",
+   "module": "s2c:entities/lump",
+   "note": "init: 'nodes' at +0x498, 'hiddenFlags' at +0x4c0, +0x508 = 0 (its only writer)"
+  },
+  {
+   "addr": "1810eeba0",
+   "name": "VisibilityMgr_NodeShown",
+   "module": "s2c:entities/lump",
+   "note": "true unless mask & hiddenFlags[node] & ~+0x508 (VisibilityMgr_IsNodeVisible passes mask 0xb: flag 4 alone does not hide; ledger 181)"
+  },
+  {
+   "addr": "1810f2750",
+   "name": "VisibilityMgr_StoredVisible",
+   "module": "s2c:entities/lump",
+   "note": "the per-node visible byte of the document's set at +0x730 (true when absent)"
+  },
+  {
+   "addr": "180f8ba70",
+   "name": "MapNode_ReferrerCount",
+   "module": "s2c:entities/lump",
+   "note": "the instances whose 'target' attribute names the node, by vf 0x858 kind (0, 1; 3 the sum), counted through the element referrers once and cached at +0x388 / +0x38c until 180f8f0d0 resets them (ledger 180)"
+  },
+  {
+   "addr": "180f8f0d0",
+   "name": "MapNode_ResetReferrerCounts",
+   "module": "s2c:entities/lump",
+   "note": "+0x388 = -1 (both counts); the only writer of -1 besides the node's init 180f8f920"
+  },
+  {
+   "addr": "180f88920",
+   "name": "MapNode_CollectReferrers",
+   "module": "s2c:entities/lump",
+   "note": "the instances whose 'target' names the node (180f8ba70 kind 3 sizes the list); CMapInstance_Collapse deletes the target (180f63d00) when this finds exactly one"
+  },
+  {
+   "addr": "180fc5010",
+   "name": "MapWorld_RegisterSubtree",
+   "module": "s2c:entities/lump",
+   "note": "per node in preorder: OnNodeAdded, then vf 0x228 (the node joining the world), then its children"
+  },
+  {
+   "addr": "180f75010",
+   "name": "CMapNode::vf57",
+   "module": "s2c:entities/lump",
+   "note": "reparent: off the old world's lists (180fcb650), onto the new parent (vf 0x1f8), then 180fc5010 under the new world"
+  },
+  {
+   "addr": "180f86a90",
+   "name": "MapNode_Clone",
+   "module": "s2c:entities/lump",
+   "note": "a copy of a node and its subtree (used for a target cloned by 181019590)"
+  },
+  {
+   "addr": "180f5f230",
+   "name": "MapDoc_AddNode",
+   "module": "s2c:entities/lump",
+   "note": "adds a node to the document under the given parent"
+  },
+  {
+   "addr": "180f86e70",
+   "name": "MapNode_CollectByClass",
+   "module": "s2c:entities/lump",
+   "note": "per child: sub-worlds skipped with flag 1; flag 4 skips a node (and its subtree) with 180f8ba70 >= 1 (an instance target); flag 0x10 vf 0x188, flag 0x20 the visibility state; mode 0 recurses before appending (children first), mode 1 after; flag 8 tests IsA (vf 0x770) else vf 0x3c0"
+  },
+  {
+   "addr": "1800de990",
+   "name": "ReturnFalse",
+   "module": "s2c:entities/lump",
+   "note": "CMapInstance vf 0x868 and vf 0x870"
+  },
+  {
+   "addr": "18234a700",
+   "name": "CMapPrefab::vftable",
+   "module": "s2c:entities/lump",
+   "note": "vf 0x860 CMapPrefab_Collapse (180f96d40), vf 0x868 1800de990 (false): a prefab whose collapse makes no group is deleted (ledger 183)"
+  },
+  {
+   "addr": "181018a30",
+   "name": "CMapPrefab_LoadedWorld",
+   "module": "s2c:entities/lump",
+   "note": "the prefab's map world (+0x550); with 1 and none loaded, looks the handle +0x558 up; CMapPrefab_Collapse returns nothing without it (ledger 183)"
   },
   {
    "addr": "180f7aa30",
-   "name": "CMapNode::vf205",
+   "name": "CMapNode_SaveParticleSnapshot",
    "module": "s2c:entities/lump",
-   "note": "snapshot path generator"
+   "note": "vf 0x588 fills a CParticleSnapshot; empty: warning, no file; else 181371f50 serializes it and SaveKV3 text generic saves the auxiliary snapshot_file (Maps/ParticleSnapshots.cs)"
+  },
+  {
+   "addr": "181083850",
+   "name": "CMapMesh_FillParticleSnapshot",
+   "module": "s2c:entities/lump",
+   "note": "CMapMesh vf 0x588: a particle per face corner, the open edge loops' corners (181395050) then every faced half-edge by handle, deduped; streams position 0xc, normal 0xd, color 0xb (mesh +0x10de, unidentified)"
+  },
+  {
+   "addr": "1810b5100",
+   "name": "CMapPath_FillParticleSnapshot",
+   "module": "s2c:entities/lump",
+   "note": "CMapPath / CMapCable vf 0x588: 180f7a100 first, then 1810b8270 at particleSnapshotSpacing (+0x185c); streams position 0xc, color 0xb, radius 3; radius written only for type class 4 (18237a0a0), never for generic_float"
+  },
+  {
+   "addr": "180f7a100",
+   "name": "CMapNode_ChildrenAnswer",
+   "module": "s2c:entities/lump",
+   "note": "true when a child's vf 0x130 is non-zero (a mesh's returns this, a path node's 0); the world's and CMapEntity's vf 0x588, which fills nothing"
+  },
+  {
+   "addr": "181112010",
+   "name": "CMapPathNode_LinearTint",
+   "module": "s2c:entities/lump",
+   "note": "vf 0x618 then 18126a5a0"
+  },
+  {
+   "addr": "18110f230",
+   "name": "CMapPathNode::vf195",
+   "module": "s2c:entities/lump",
+   "note": "color_tint through 180f31d40, default 0xffffffff"
+  },
+  {
+   "addr": "180f31d40",
+   "name": "CMapEntity_ColorKey",
+   "module": "s2c:entities/lump",
+   "note": "the key (V_stricmp_fast) parsed V_sscanf %d %d %d into low bytes, alpha 0xff; the default when absent"
+  },
+  {
+   "addr": "18126a5a0",
+   "name": "Color32_SrgbToLinear",
+   "module": "s2c:entities/lump",
+   "note": "byte * 0x3b808081, clamp [0, 1], x / 12.92 up to 0.04045 else V_powf((x + 0.055) / 1.055, 2.4)"
+  },
+  {
+   "addr": "181394380",
+   "name": "HalfEdge_FindOpenEdgeLoops",
+   "module": "s2c:entities/lump",
+   "note": "over 180ff0100's edges: face-less sides with a faced twin; loops follow next from the first left (or the first back in the set after a step out), entries as the edge's lower handle, swap-remove"
+  },
+  {
+   "addr": "180ff0100",
+   "name": "HalfEdge_Edges",
+   "module": "s2c:entities/lump",
+   "note": "each edge once as its lower-handle half-edge, dense order"
+  },
+  {
+   "addr": "18138be80",
+   "name": "HalfEdge_IncomingOnFace",
+   "module": "s2c:entities/lump",
+   "note": "around a vertex from its out half-edge: the twin on the face, else the twin's next"
+  },
+  {
+   "addr": "1813a2d80",
+   "name": "PolygonMesh_EdgeSideOnFace",
+   "module": "s2c:entities/lump",
+   "note": "the edge's half-edge on a face; 1813a3180 gives its (tail, head)"
+  },
+  {
+   "addr": "18139a960",
+   "name": "HalfEdge_EdgeFace",
+   "module": "s2c:entities/lump",
+   "note": "the edge's face, or its twin's when it has none"
+  },
+  {
+   "addr": "1812f5060",
+   "name": "CParticleSnapshot_Serialize",
+   "module": "s2c:entities/lump",
+   "note": "string_list when any, stream_data by 181322440 (num_values, streams) and 1813220e0 (name, type from 1830149f0, values)"
+  },
+  {
+   "addr": "1803401b0",
+   "name": "CompileSnap",
+   "module": "s2c:entities/lump",
+   "note": "DATA num_particles + attributes (181907da0 name -> id, 181908020 type, data_offset, data_size); skinning when skin0-3; 18033fe60 writes DATA binary_auto and SNAP via FastCompress"
   },
   {
    "addr": "180f8ee20",
@@ -4864,13 +5506,55 @@
    "addr": "1813c2090",
    "name": "SubdivPatch_TangentGrid",
    "module": "s2c:geometry/subdivision",
-   "note": "patch corner tangents lerped (rows normalised), then (n x t) x n normalised; viewport and sampling only"
+   "note": "mode 3 stream: gathered corner tangents lerped by (u, v) (rows normalised), then (n x t) x n normalised; the bake's tangent stream (ledger 38, SubdivisionTangents.Grid)"
   },
   {
    "addr": "1813c3cf0",
    "name": "SubdivPatch_NormalGrid",
    "module": "s2c:geometry/subdivision",
-   "note": "patch grid normals, averaged across patch seams; viewport and sampling only"
+   "note": "mode 2 / 3: 1813be620 normals, seams averaged with the neighbour patch (1813c0960), centre the loop's 1813bd320 corner 3 sum, (0, 0) from 1813c6140 (SubdivisionNormalGrid.Grid)"
+  },
+  {
+   "addr": "1813bd320",
+   "name": "SubdivPatch_CornerNormal",
+   "module": "s2c:geometry/subdivision",
+   "note": "patch corner k's normal from the displaced corner and its two grid neighbours (table 18243e8a0); frame normal when unsubdivided"
+  },
+  {
+   "addr": "1813bdf80",
+   "name": "SubdivPatch_GatherTangents",
+   "module": "s2c:geometry/subdivision",
+   "note": "the corner's tangent, it plus next / previous normalised, the loop's sum normalised"
+  },
+  {
+   "addr": "1813be620",
+   "name": "SubdivPatch_PositionNormals",
+   "module": "s2c:geometry/subdivision",
+   "note": "position grid to normals: one triangle at the corners, two unit normals summed elsewhere"
+  },
+  {
+   "addr": "1813c0960",
+   "name": "SubdivPatch_BorderNormals",
+   "module": "s2c:geometry/subdivision",
+   "note": "a patch border's normals (side 0 row / 1 column, index 0 / n) rebuilt from the control points and displacement; returns g"
+  },
+  {
+   "addr": "1813c6140",
+   "name": "SubdivPatch_VertexCorner",
+   "module": "s2c:geometry/subdivision",
+   "note": "the vertex fan's 1813bd320 corner-0 normals from the last crease, summed; 1813850e0 when a fan face is missing or unsubdivided; normalised either way"
+  },
+  {
+   "addr": "1813c8830",
+   "name": "SubdivPatch_CornerSmooth",
+   "module": "s2c:geometry/subdivision",
+   "note": "edge flags, then the smoothing cosine against the two patches' corner-0 normals"
+  },
+  {
+   "addr": "1813c83f0",
+   "name": "SubdivPatch_StreamModes",
+   "module": "s2c:geometry/subdivision",
+   "note": "copies a stream's descriptor (mode int, type/index short) into each of its components, then +8 weight / +0xc stride: a stream with no grid (stride 0) weight 1.0, one with a grid weight 0 and the grid's stride (ledger 38)"
   },
   {
    "addr": "181375e20",
@@ -4976,9 +5660,9 @@
   },
   {
    "addr": "181399f40",
-   "name": "HalfEdge_FaceIndex",
+   "name": "HalfEdge_FaceVertexIndex",
    "module": "s2c:geometry/subdivision",
-   "note": "face handle to dense index (level byte array +0x1b38)"
+   "note": "a half-edge's face-vertex slot (record +0x44): indexes the face-vertex streams (+0xb20 set, the level bytes +0x1b38)"
   },
   {
    "addr": "18139bd10",
@@ -5062,7 +5746,7 @@
    "addr": "1813b82f0",
    "name": "SubdivisionBake_PatchPaint",
    "module": "s2c:geometry/subdivision",
-   "note": "per-face patch grid of paint"
+   "note": "per-face patch grid of every +0xb20 face-vertex stream: each float the corners lerped (rows, then columns), then mulss weight, addss the evaluator's grid value (1813c83f0's record; a stream with no grid adds the +0.0f at 18243e890), so a -0 comes out +0 (ledger 38)"
   },
   {
    "addr": "1813ba570",
@@ -5104,7 +5788,7 @@
    "addr": "1813c1cc0",
    "name": "MeshTessellation_PaintValues",
    "module": "s2c:geometry/subdivision",
-   "note": "patch grids as asked: positions (1813c7b90), normals (1813c3cf0), tangents (1813c2090); from 18102f230 and 1810c0d60"
+   "note": "patch grids by stream mode (descriptor +0x25a): 0 stored/lerp, 1 positions (1813c7b90), 2 normals (1813c3cf0), 3 tangents (1813c2090); from the bake's patch builders 1813b7750 / 1813b82f0 and from 18102f230, 1810c0d60"
   },
   {
    "addr": "1813c26a0",
@@ -6829,6 +7513,42 @@
    "note": "Preprocessing Lights: brightness units, lightcookie, precompute keys"
   },
   {
+   "addr": "1822ae350",
+   "name": "CDataModel::vftable",
+   "module": "s2c:entities/lump",
+   "note": "data: the datamodel linked into resourcecompiler (VDataModelVersion001, QueryInterface 180cda040 at slot 2); vf 0x3b8 180cd7820, vf 0x3c0 180cd99e0 (ledger 46)"
+  },
+  {
+   "addr": "180cd7820",
+   "name": "CDataModel_FirstReferrer",
+   "module": "s2c:entities/lump",
+   "note": "vf 0x3b8 (handle): the element's inline referrer record (element +0x38; -1 means none), or a search of the undo table when the element is gone (ledger 46)"
+  },
+  {
+   "addr": "180cd99e0",
+   "name": "CDataModel_NextReferrer",
+   "module": "s2c:entities/lump",
+   "note": "vf 0x3c0 (record): record +8"
+  },
+  {
+   "addr": "180cdf6f0",
+   "name": "DmReferrers_Add",
+   "module": "s2c:entities/lump",
+   "note": "the new referrer into the inline slot, the old one moved to a new 0x10-byte record right behind it: newest first (ledger 46)"
+  },
+  {
+   "addr": "180cd9bd0",
+   "name": "CDataModel_AddReferrer",
+   "module": "s2c:entities/lump",
+   "note": "(handle, attribute): marks the element referenced (+8 bit 0) and adds the attribute's owner through 180cdf6f0; from the DmAttribute element setters (ledger 46)"
+  },
+  {
+   "addr": "180cdd8e0",
+   "name": "CDataModel_RegisterElementReferences",
+   "module": "s2c:entities/lump",
+   "note": "every element-typed attribute (type 1) of an element added to (180cdf6f0) or removed from (180ce2e50) its target's referrers; 0x21 element arrays likewise"
+  },
+  {
    "addr": "180f1c660",
    "name": "MapDoc_GatherLights",
    "module": "s2c:baked/light-keys",
@@ -7097,6 +7817,174 @@
    "name": "CBakeResourceHelper::vf2",
    "module": "s2c:entities/lump",
    "note": "Hammer preview scene keys, not the lump"
+  },
+  {
+   "addr": "180100e40",
+   "name": "SteamAudio_GenerateProbes",
+   "module": "s2c:baked/steamaudio",
+   "note": "the generation collection (180f54950, first flag clear: mask 0x3400), its vertex bounds as the box (min / max on <=, centre (min + max) 0.5, size max - min, null rotation), steamaudio's generation (vfn 0x30), then the filters 180fbea90 .. 180fbd800 in order"
+  },
+  {
+   "addr": "180101690",
+   "name": "SteamAudio_PrepareReverbBake",
+   "module": "s2c:baked/steamaudio",
+   "note": "worldspawn's reverb_* keys, the probes (180100e40), then the bake collection (180f54950 with flag 1: mask 0x1400) into steamaudio's CreateScene (vfn 0x70)"
+  },
+  {
+   "addr": "180f54950",
+   "name": "SteamAudio_CollectGeometry",
+   "module": "s2c:baked/steamaudio",
+   "note": "clears the outputs; static mask 0x1400 with the first flag, 0x3400 without, 1 with the second; dynamic mask 0xc3001; the walk 180f53f40 from the given node"
+  },
+  {
+   "addr": "180f53f40",
+   "name": "SteamAudio_CollectWalk",
+   "module": "s2c:baked/steamaudio",
+   "note": "skips a node in the exclude list, 180f53780 on it, then its children (+0x1f8 handles) in order"
+  },
+  {
+   "addr": "180f53780",
+   "name": "SteamAudio_CollectNode",
+   "module": "s2c:baked/steamaudio",
+   "note": "CMapSmartProp (+0x688 == 0) and CMapPhysicsPin out; owner solid 0 out; mode from the mesh (+0x3b70) or the owner's steamaudio_geometry_mode: 1 out, 2 static with mask 0, 3 dynamic; else an owner's mesh needs solidity 2, an owner's other node a class with has_static_mesh; per instance path (180f88460) 180f519d0 / 180f52220 pieces through 180f50ed0, and a CMapMeshBase's face geometry (180f54020) through 180f510d0"
+  },
+  {
+   "addr": "180f4bb00",
+   "name": "MapNode_HasCollisionGeometry",
+   "module": "s2c:baked/steamaudio",
+   "note": "a CMapMesh / CMapPath whose CollisionType (vf 0x680) is not 0, a CMapSmartProp, or a model child with physics"
+  },
+  {
+   "addr": "180f519d0",
+   "name": "SteamAudio_PhysicsPieces",
+   "module": "s2c:baked/steamaudio",
+   "note": "PhysMesh_Shapes (181057020, no flags, the deformer 181022480); the node world matrix as (translation, longest unscaled column, quaternion); each shape as triangles (hull 1819589f0 at 1, mesh 1819cea20 at (1, 1, 1)) into 0x48-byte groups keyed (surface index: +0x10 of the surface found by name, -1 for none; InteractsAs; group byte +0x2e), first seen first"
+  },
+  {
+   "addr": "180f52220",
+   "name": "SteamAudio_ModelPieces",
+   "module": "s2c:baked/steamaudio",
+   "note": "an entity model's pieces (not ported)"
+  },
+  {
+   "addr": "180f54020",
+   "name": "SteamAudio_FaceGeometryPieces",
+   "module": "s2c:baked/steamaudio",
+   "note": "a mesh's faces whose material sets tools.steamaudiogeometry (vf 0x48), triangulated (18139f930) with 3 points per triangle, grouped by the material's surface (not ported)"
+  },
+  {
+   "addr": "180f50ed0",
+   "name": "SteamAudio_AddPiece",
+   "module": "s2c:baked/steamaudio",
+   "note": "static: the piece's CTransform matrix (1801feb70) into 180f510d0 with the mask; dynamic: a 0x80-byte entry named <name>:<instance>"
+  },
+  {
+   "addr": "180f510d0",
+   "name": "SteamAudio_AppendGroups",
+   "module": "s2c:baked/steamaudio",
+   "note": "each group with points, 3+ indices and group byte not 1, kept when the mask is 0, the group byte 0 or InteractsAs & mask: points through the matrix (1812651a0), indices offset, one material per triangle (1 for a negative surface)"
+  },
+  {
+   "addr": "1801feb70",
+   "name": "CTransform_ToMatrix",
+   "module": "s2c:math",
+   "note": "QuaternionMatrix (181260150) with the position, the rotation columns times the scale when it is not 1"
+  },
+  {
+   "addr": "1819cea20",
+   "name": "RnMesh_Triangulate",
+   "module": "s2c:baked/steamaudio",
+   "note": "the mesh's vertices (+0x30 count, +0x38) times a scale vector and its triangles (+0x48, +0x50) offset by the vertices before"
+  },
+  {
+   "addr": "1810e6fb0",
+   "name": "CMapMeshBase_GetSteamAudioGeometryMode",
+   "module": "s2c:baked/steamaudio",
+   "note": "+0x3b70, the embedded property steamaudioGeometryMode (0 default, 1 exclude, 2 force static, 3 force dynamic; registered in 1810e3f50)"
+  },
+  {
+   "addr": "1813a3370",
+   "name": "HalfEdge_FacesWithMaterials",
+   "module": "s2c:baked/steamaudio",
+   "note": "the faces whose material (face stream +0x2fbc) is in the mask; mode 0 also drops material flags & 5, mode != 2 faces whose stream +0x2fda value & 7"
+  },
+  {
+   "addr": "18139f930",
+   "name": "HalfEdge_TriangulateFaces",
+   "module": "s2c:baked/steamaudio",
+   "note": "the faces triangulated, 3 points per triangle, the per-triangle face material, optional UV and attribute streams"
+  },
+  {
+   "addr": "180fbea90",
+   "name": "SteamAudio_FilterProbesByNavMesh",
+   "module": "s2c:baked/steamaudio",
+   "note": "probes remaining after filtering by nav mesh"
+  },
+  {
+   "addr": "180fbc630",
+   "name": "SteamAudio_AppendLadderProbes",
+   "module": "s2c:baked/steamaudio",
+   "note": "probes near ladders"
+  },
+  {
+   "addr": "180fbcb10",
+   "name": "SteamAudio_AppendMissingNavProbes",
+   "module": "s2c:baked/steamaudio",
+   "note": "probes near missing navmesh areas"
+  },
+  {
+   "addr": "180fbde60",
+   "name": "SteamAudio_FilterProbesByVolumes",
+   "module": "s2c:baked/steamaudio",
+   "note": "probes remaining after filtering by exclusion volumes"
+  },
+  {
+   "addr": "180fbba50",
+   "name": "SteamAudio_AppendZiplineProbes",
+   "module": "s2c:baked/steamaudio",
+   "note": "citadel_zipline_path_node entities as probes"
+  },
+  {
+   "addr": "180fbe450",
+   "name": "SteamAudio_FilterProbesInsideShapes",
+   "module": "s2c:baked/steamaudio",
+   "note": "probes remaining after filtering by inside shapes, against the physics world"
+  },
+  {
+   "addr": "180fbc2d0",
+   "name": "SteamAudio_AppendMapProbes",
+   "module": "s2c:baked/steamaudio",
+   "note": "probes from the map"
+  },
+  {
+   "addr": "180fbd800",
+   "name": "SteamAudio_AppendOpvarProbes",
+   "module": "s2c:baked/steamaudio",
+   "note": "sound_opvar_set_point entities and proxy probes"
+  },
+  {
+   "addr": "1800a1980",
+   "name": "ConVar_snd_steamaudio_enabe_append_probes_to_cover_navmesh",
+   "module": "s2c:baked/steamaudio",
+   "note": "registered on (bool 1); 180fbcb10 reads it at 1837228c0 + 0x58"
+  },
+  {
+   "addr": "1818e4a00",
+   "name": "CNavArea_RandomPoint",
+   "module": "s2c:baked/steamaudio",
+   "note": "the area's corners (1818dace0) into 1818e3290"
+  },
+  {
+   "addr": "1818dace0",
+   "name": "CNavArea_Corners",
+   "module": "s2c:baked/steamaudio",
+   "note": "4 corners for an area without a polygon (+8 = -1), else the polygon's"
+  },
+  {
+   "addr": "1818e3290",
+   "name": "Polygon_RandomPoint",
+   "module": "s2c:baked/steamaudio",
+   "note": "a triangle picked by area through tier0 RandomFloat, then a uniform point in it (sqrt of a RandomFloat): the global random stream"
   }
  ]
 }

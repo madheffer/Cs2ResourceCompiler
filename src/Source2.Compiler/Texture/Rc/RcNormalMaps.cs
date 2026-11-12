@@ -1,0 +1,276 @@
+using Source2.Compiler.KeyValues;
+namespace Source2.Compiler.RcTexture;
+
+/// <summary>
+/// resourcecompiler's normal-map processing (docs/MATERIALS.md, "Normal maps"): the
+/// <c>NormalizeNormals</c> and <c>Inverse</c> image processors and the
+/// <c>HemiOctIsoRoughness_RG_B</c> mip algorithm, float for float. Normalising uses the SSE
+/// reciprocal square root estimate, which differs between CPU vendors, so it is reproduced from
+/// one vendor's table (<see cref="Bc7Vendor"/>), as BC7 is.
+/// </summary>
+public static class RcNormalMaps
+{
+    private static readonly Lazy<(uint[] Table, int Bits)>[] Rsqrt =
+        [new(() => LoadTable("rsqrt_amd.txt")), new(() => LoadTable("rsqrt_intel.txt"))];
+
+    private static (uint[] Table, int Bits) LoadTable(string name)
+    {
+        using var stream = typeof(RcNormalMaps).Assembly.GetManifestResourceStream("Source2.Compiler.RcTexture." + name)
+            ?? throw new InvalidOperationException($"The {name} table is not in this build.");
+        using var reader = new StreamReader(stream);
+        var lines = reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var table = new uint[lines.Length];
+        foreach (var line in lines)
+        {
+            var parts = line.Split(' ');
+            table[int.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture) * (lines.Length / 2) + int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture)] = Convert.ToUInt32(parts[2].Trim(), 16);
+        }
+        return (table, System.Numerics.BitOperations.Log2((uint)(lines.Length / 2)));
+    }
+
+    /// <summary>
+    /// <c>rsqrtps</c> as the vendor's hardware computes it: the estimate depends on the exponent's
+    /// parity and the top bits of the mantissa (12 on AMD, 10 on Intel) and scales exactly with
+    /// the exponent (tools/re/texture/rsqrtdump.c). Positive normal inputs only.
+    /// </summary>
+    public static float ReciprocalSqrtEstimate(float x, Bc7Vendor vendor)
+    {
+        var (table, bits) = Rsqrt[(int)vendor].Value;
+        uint u = BitConverter.SingleToUInt32Bits(x);
+        int e = (int)(u >> 23) - 127;
+        if (u >> 23 == 0 || u >> 23 >= 255)
+            throw new ArgumentOutOfRangeException(nameof(x), "The estimate is modelled for positive normal floats.");
+        int parity = e & 1;
+        uint r = table[parity * (1 << bits) + (int)((u & 0x7FFFFF) >> (23 - bits))];
+        int shift = (e - parity) / 2;
+        return BitConverter.UInt32BitsToSingle((r & 0x807FFFFF) | ((uint)((int)(r >> 23) - shift) << 23));
+    }
+
+    /// <summary>
+    /// <c>ApplyImageProcessor_NormalizeNormals</c> (1801400c0 → 181273ec0): channels 0..2 as
+    /// <c>v * 2 - 1</c>, length squared <c>(z*z + y*y) + x*x</c>, the estimate refined once as
+    /// <c>(r * (3 - (r*r)*l2)) * 0.5</c>, the default (0, 0, 1) where <c>l2</c> is under 2^-23 or all
+    /// three inputs are 0, then <c>n * 0.5 + 0.5</c>. Alpha is kept.
+    /// </summary>
+    public static RcMipChain.Level NormalizeNormals(RcMipChain.Level level, Bc7Vendor vendor)
+    {
+        var o = (float[])level.Rgba.Clone();
+        for (int i = 0; i < o.Length; i += 4)
+        {
+            float vx = o[i], vy = o[i + 1], vz = o[i + 2];
+            float x = vx * 2f - 1f, y = vy * 2f - 1f, z = vz * 2f - 1f;
+            float l2 = (z * z + y * y) + x * x;
+            float nx, ny, nz;
+            if (l2 < 1.1920928955078125e-07f || (vx == 0f && vy == 0f && vz == 0f))
+                (nx, ny, nz) = (0f, 0f, 1f);
+            else
+            {
+                float r = ReciprocalSqrtEstimate(l2, vendor);
+                r = (r * (3f - (r * r) * l2)) * 0.5f;
+                (nx, ny, nz) = (r * x, r * y, r * z);
+            }
+            o[i] = nx * 0.5f + 0.5f;
+            o[i + 1] = ny * 0.5f + 0.5f;
+            o[i + 2] = nz * 0.5f + 0.5f;
+        }
+        return new RcMipChain.Level(level.Width, level.Height, o);
+    }
+
+    /// <summary><c>ApplyImageProcessor_Inverse</c> (180141590): every channel <c>1 - v</c>.</summary>
+    public static RcMipChain.Level Inverse(RcMipChain.Level level) =>
+        new(level.Width, level.Height, level.Rgba.Select(v => 1f - v).ToArray());
+
+    /// <summary>
+    /// <c>HemiOctIsoRoughness_RG_B</c>: <see cref="HemiOctAnisoRoughness"/> then the per-pixel
+    /// shuffle in <c>GenerateMips</c> (180142990): R = channel 3, G = channel 1,
+    /// B = <c>(ch2 + ch0) * 0.5</c>, A = 1. Every level down to 1x1.
+    /// </summary>
+    public static List<RcMipChain.Level> HemiOctIsoRoughness(RcMipChain.Level normal, RcMipChain.Level? roughness) =>
+        Shuffle(HemiOctAnisoRoughness(normal, roughness), (p0, p1, p2, p3) => (p3, p1, (p2 + p0) * 0.5f, 1f));
+
+    /// <summary>
+    /// <c>AnisoRoughness_RG</c>: <see cref="HemiOctAnisoRoughness"/> then GenerateMips' shuffle
+    /// (180142990): channel 1 takes channel 2, channels 2 and 3 become 1, so R and G hold the
+    /// two roughnesses.
+    /// </summary>
+    public static List<RcMipChain.Level> AnisoRoughness(RcMipChain.Level normal, RcMipChain.Level? roughness) =>
+        Shuffle(HemiOctAnisoRoughness(normal, roughness), (p0, _, p2, _) => (p0, p2, 1f, 1f));
+
+    /// <summary>
+    /// <c>HemiOctAnisoRoughness_RG_BA</c> (180148100): <see cref="HemiOctAnisoRoughness"/> then
+    /// per pixel R = channel 3, G = channel 1, B = channel 0, A = channel 2, so R and G hold the
+    /// hemi-octahedral normal and B and A the two roughnesses.
+    /// </summary>
+    public static List<RcMipChain.Level> HemiOctAnisoRoughnessRgBa(RcMipChain.Level normal, RcMipChain.Level? roughness) =>
+        Shuffle(HemiOctAnisoRoughness(normal, roughness), (p0, p1, p2, p3) => (p3, p1, p0, p2));
+
+    /// <summary>
+    /// <c>GenerateMips_HemiOctNormal</c> (18014c050): the input's 2x2 box chain (level 0 a copy,
+    /// 180c3c3c0; then 180c43450), every level then encoded per pixel from x = 2 ch0 - 1 and
+    /// y = 2 ch1 - 1: z = sqrt(clamp(1 - (x x + y y), 0, 1)), p = (x, y) / ((|x| + |y|) + z),
+    /// G = <c>(px - py) * 0.5 + 0.5</c>, A = <c>(px + py) * 0.5 + 0.5</c>, and R and B gameinfo's
+    /// <c>ResourceCompiler/TextureCompiler/MinRoughness</c> (unset in CS2's gameinfo, so 0).
+    /// Power-of-two only ("Cannot box filter non-power-of-two texture").
+    /// </summary>
+    public static List<RcMipChain.Level> HemiOctNormal(RcMipChain.Level input, float minRoughness = 0f)
+    {
+        int w = input.Width, h = input.Height;
+        if ((w & (w - 1)) != 0 || (h & (h - 1)) != 0)
+            throw new InvalidOperationException($"RC cannot box filter a non-power-of-two normal map ({w}x{h}).");
+        var levels = RcMipChain.Chain(input);
+        foreach (var level in levels)
+        {
+            var o = level.Rgba;
+            for (int i = 0; i < o.Length; i += 4)
+            {
+                float x = (o[i] + o[i]) - 1f, y = (o[i + 1] + o[i + 1]) - 1f;
+                float zz = 1f - (x * x + y * y);
+                float z = MathF.Sqrt(0f <= zz ? (zz <= 1f ? zz : 1f) : 0f);
+                float inv = 1f / ((MathF.Abs(x) + MathF.Abs(y)) + z);
+                float py = inv * y, px = inv * x;
+                (o[i], o[i + 1], o[i + 2], o[i + 3]) = (minRoughness, (px - py) * 0.5f + 0.5f, minRoughness, (px + py) * 0.5f + 0.5f);
+            }
+        }
+        return levels;
+    }
+
+    /// <summary>
+    /// <c>GenerateMips_AnisoNormal_Internal</c> (18014c660; <c>AnisoNormal</c> with
+    /// <paramref name="invertRoughness"/>, <c>AnisoNormalRoughness</c> without, "Mip AnisoNormals" 5):
+    /// two inputs, each resized to the larger with clamping (180c43790), power-of-two and 2D only.
+    /// Every level of the full chain is an eight-channel frame: level 0 takes the normal's channels
+    /// 0 / 1 into 6 / 7 and their squares into 4 / 5, the roughness input's channels 0 / 1 into 2 / 3
+    /// (as <c>1 - v</c> when inverting), and 0 in channels 0 and 1; each later level is the 2x2 box of
+    /// the one before in channels 2..7 (18127a9c0), then channels 0 and 1 the doubled deviations
+    /// <c>2 sqrt(max(0, ch4 - ch6^2))</c> and <c>2 sqrt(max(0, ch5 - ch7^2))</c> (1812775a0 with 2).
+    /// The texture's RGBA is channels 0..3. The rest of 18014c660 is a debug dump behind a log level.
+    /// </summary>
+    public static List<RcMipChain.Level> AnisoNormal(RcMipChain.Level normal, RcMipChain.Level roughness, bool invertRoughness)
+    {
+        int w = normal.Width, h = normal.Height;
+        if ((w & (w - 1)) != 0 || (h & (h - 1)) != 0)
+            throw new InvalidOperationException($"RC cannot filter a non-power-of-two normal map ({w}x{h}).");
+        int n = w * h;
+        var moments = new RcMipChain.Level(w, h, new float[n * 4]);  // 6, 7, 4, 5
+        var rough = new RcMipChain.Level(w, h, new float[n * 4]);    // 2, 3
+        for (int i = 0; i < n; i++)
+        {
+            float x = normal.Rgba[i * 4], y = normal.Rgba[i * 4 + 1];
+            (moments.Rgba[i * 4], moments.Rgba[i * 4 + 1], moments.Rgba[i * 4 + 2], moments.Rgba[i * 4 + 3]) = (x, y, x * x, y * y);
+            float r0 = roughness.Rgba[i * 4], r1 = roughness.Rgba[i * 4 + 1];
+            (rough.Rgba[i * 4], rough.Rgba[i * 4 + 1]) = invertRoughness ? (1f - r0, 1f - r1) : (r0, r1);
+        }
+        var levels = new List<RcMipChain.Level>();
+        bool first = true;
+        while (true)
+        {
+            int m = moments.Width * moments.Height;
+            var o = new float[m * 4];
+            for (int i = 0; i < m; i++)
+            {
+                if (!first)
+                {
+                    o[i * 4] = MathF.Sqrt(MathF.Max(0f, moments.Rgba[i * 4 + 2] - moments.Rgba[i * 4] * moments.Rgba[i * 4])) * 2f;
+                    o[i * 4 + 1] = MathF.Sqrt(MathF.Max(0f, moments.Rgba[i * 4 + 3] - moments.Rgba[i * 4 + 1] * moments.Rgba[i * 4 + 1])) * 2f;
+                }
+                o[i * 4 + 2] = rough.Rgba[i * 4];
+                o[i * 4 + 3] = rough.Rgba[i * 4 + 1];
+            }
+            levels.Add(new RcMipChain.Level(moments.Width, moments.Height, o));
+            if (moments.Width == 1 && moments.Height == 1)
+                return levels;
+            moments = RcMipChain.QuarterSize(moments);
+            rough = RcMipChain.QuarterSize(rough);
+            first = false;
+        }
+    }
+
+    private static List<RcMipChain.Level> Shuffle(List<RcMipChain.Level> levels, Func<float, float, float, float, (float, float, float, float)> f)
+    {
+        foreach (var level in levels)
+        {
+            var o = level.Rgba;
+            for (int i = 0; i < o.Length; i += 4)
+                (o[i], o[i + 1], o[i + 2], o[i + 3]) = f(o[i], o[i + 1], o[i + 2], o[i + 3]);
+        }
+        return levels;
+    }
+
+    /// <summary>
+    /// <c>GenerateMips_HemiOctAnisoRoughness</c> (180148350), the chain the hemi-octahedral
+    /// algorithms share and what <c>HemiOctAnisoRoughness</c> stores as it is. Every level, down to
+    /// 1x1, as RGBA floats from the lambda (180149d20): channel 0 the X roughness (the input's
+    /// plus the normals' spread), 1 <c>(x - y) * 0.5 + 0.5</c> and 3 <c>(x + y) * 0.5 + 0.5</c> of
+    /// the level's mean normal hemi-octahedrally encoded, 2 the Y roughness.
+    /// <paramref name="normal"/> is the normalised normal map (channels 0..1),
+    /// <paramref name="roughness"/> the inverted roughness input or null; both the same
+    /// power-of-two size.
+    /// </summary>
+    public static List<RcMipChain.Level> HemiOctAnisoRoughness(RcMipChain.Level normal, RcMipChain.Level? roughness)
+    {
+        int w = normal.Width, h = normal.Height;
+        if ((w & (w - 1)) != 0 || (h & (h - 1)) != 0)
+            throw new InvalidOperationException($"RC cannot filter a non-power-of-two normal map ({w}x{h}).");
+        if (roughness is not null && (roughness.Width != w || roughness.Height != h))
+            throw new InvalidOperationException("A roughness input of another size than the normal map is not measured.");
+        int n = w * h;
+        // Moments, channels as RC numbers them: 10/11 mean X/Y (0..1 space), 8/9 their squares,
+        // 6/7 the input roughness.
+        var mean = new RcMipChain.Level(w, h, new float[n * 4]);   // 10, 11, 8, 9
+        var rough = new RcMipChain.Level(w, h, new float[n * 4]);  // 6, 7
+        for (int i = 0; i < n; i++)
+        {
+            float x = normal.Rgba[i * 4], y = normal.Rgba[i * 4 + 1];
+            mean.Rgba[i * 4] = x;
+            mean.Rgba[i * 4 + 1] = y;
+            mean.Rgba[i * 4 + 2] = x * x;
+            mean.Rgba[i * 4 + 3] = y * y;
+            // A missing roughness input is a 1x1 of 1s; 1 - 1 = 0.
+            rough.Rgba[i * 4] = roughness is null ? 0f : 1f - roughness.Rgba[i * 4];
+            rough.Rgba[i * 4 + 1] = roughness is null ? 0f : 1f - roughness.Rgba[i * 4 + 1];
+        }
+
+        var levels = new List<RcMipChain.Level>();
+        bool first = true;
+        while (true)
+        {
+            var o = new float[mean.Width * mean.Height * 4];
+            for (int i = 0; i < mean.Width * mean.Height; i++)
+            {
+                float m10 = mean.Rgba[i * 4], m11 = mean.Rgba[i * 4 + 1];
+                // Channels 4/5: the spread of the normals, (2 * stddev)^1.5 as sqrt(v) * v (zero on mip 0).
+                float s4 = 0f, s5 = 0f;
+                if (!first)
+                {
+                    s4 = Spread(mean.Rgba[i * 4 + 2], m10);
+                    s5 = Spread(mean.Rgba[i * 4 + 3], m11);
+                }
+                // The lambda (180149d20): the mean normal from X and Y, z rebuilt, hemi-oct encoded.
+                float x = (m10 + m10) - 1f, y = (m11 + m11) - 1f;
+                float zz = 1f - (y * y + x * x);
+                float z = MathF.Sqrt(zz < 0f ? 0f : MathF.Min(1f, zz));
+                float inv = 1f / ((MathF.Abs(y) + MathF.Abs(x)) + z);
+                float px = x * inv, py = y * inv;
+                float ch3 = (px + py) * 0.5f + 0.5f, ch1 = (px - py) * 0.5f + 0.5f;
+                // Channel 0 = ch6 + ch4, 2 = ch7 + ch5 (gameinfo MinRoughness unset: no clamp).
+                o[i * 4] = rough.Rgba[i * 4] + s4;
+                o[i * 4 + 1] = ch1;
+                o[i * 4 + 2] = rough.Rgba[i * 4 + 1] + s5;
+                o[i * 4 + 3] = ch3;
+            }
+            levels.Add(new RcMipChain.Level(mean.Width, mean.Height, o));
+            if (mean.Width == 1 && mean.Height == 1)
+                return levels;
+            mean = RcMipChain.QuarterSize(mean);
+            rough = RcMipChain.QuarterSize(rough);
+            first = false;
+        }
+    }
+
+    // sqrt(max(0, m2 - m1*m1)) * 2 (1812775a0), then ^1.5 as sqrt(v) * v (18125d850 with 6).
+    private static float Spread(float m2, float m1)
+    {
+        float v = MathF.Sqrt(MathF.Max(0f, m2 - m1 * m1)) * 2f;
+        return MathF.Sqrt(v) * v;
+    }
+}

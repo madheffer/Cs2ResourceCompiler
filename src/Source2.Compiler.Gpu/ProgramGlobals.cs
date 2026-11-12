@@ -17,10 +17,14 @@ public static class ProgramGlobals
     /// <summary>
     /// Names resolved against a material, the render attributes and the program's defaults;
     /// <paramref name="shaderIdColor"/> is the shader's <see cref="ShaderIdColor"/> (variables whose
-    /// source is ShaderIDColor), when known.
+    /// source is ShaderIDColor), when known; <paramref name="reflectivity"/> reads a texture's header reflectivity
+    /// (TextureAverageColor).
     /// </summary>
-    public sealed class MaterialScope(Material material, ValveProgram program, IReadOnlyDictionary<string, Value> attributes, Value? shaderIdColor = null) : VfxExpression.IScope
+    public sealed class MaterialScope(Material material, ValveProgram program, IReadOnlyDictionary<string, Value> attributes, Value? shaderIdColor = null,
+                                      Func<string, float[]?>? reflectivity = null) : VfxExpression.IScope
     {
+        public float[]? TextureReflectivity(string path) => reflectivity?.Invoke(path);
+
         public Value? ShaderIdColor { get; } = shaderIdColor;
 
         private readonly Dictionary<string, VfxVariableDescription> _byName = program.Program.VariableDescriptions
@@ -34,7 +38,8 @@ public static class ProgramGlobals
                 return Value.Of(i);
             if (material.VectorParams.TryGetValue(name, out var v))
                 return Value.Of(v.X, v.Y, v.Z, v.W);
-            return _byName.TryGetValue(name, out var d) ? Default(d) : null;
+            var value = _byName.TryGetValue(name, out var d) ? Default(d) : (Value?)null;
+            return material.TextureParams.TryGetValue(name, out var t) ? (value ?? Value.Of(0f)) with { Texture = t } : value;
         }
 
         public Value? Attribute(string name) => attributes.TryGetValue(name, out var a) ? a : null;
@@ -141,10 +146,14 @@ public static class ProgramGlobals
             var n = Width(v.VfxType);
             if (n > 4)
             {
-                // Matrices: row after row as the expression built them.
+                // Matrices: row after row as the expression built them, a 4 x 4 transposed (the block holds its columns:
+                // ze_hold_em_p's g_mTextureColorAdjust1, every word the game's, ledger 196). 3 x 3 and 4 x 3 as built (not
+                // measured).
                 var m = new float[n];
                 for (var i = 0; i < n; i++)
                     m[i] = i < value.Width ? value.C[i] : 0f;
+                if (v.VfxType == VfxVariableType.Float4x4 && value.Width == 16)
+                    m = [.. Enumerable.Range(0, 16).Select(k => value.C[(k % 4) * 4 + k / 4])];
                 MemoryMarshal.AsBytes(m.AsSpan()).CopyTo(at);
                 continue;
             }

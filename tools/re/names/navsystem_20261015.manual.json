@@ -334,7 +334,7 @@
    "addr": "180072ef0",
    "name": "NavGen_JumpClear",
    "module": "s2c:baked/navgen",
-   "note": "the path (18004d540, 180077e40): a mid, above b mid at a height, b mid; each leg cast both ways through world vfn 0x580 (type 4 shape cast), blocked when the fraction is below 1"
+   "note": "the path (18004d540, 180077e40): a mid, above b mid at a height, b mid; each leg swept both ways through world vfn 0x580 (type 4: the kind cylinder hull, overlap byte 0), blocked when the fraction is below 1"
   },
   {
    "addr": "18006fcf0",
@@ -395,6 +395,12 @@
    "name": "NavGen_RunStages",
    "module": "s2c:baked/navgen",
    "note": "the world and each NAV_GEN_PROJ / movable mesh through the stages (1800260e0, 180026740), appended (18006bee0), JoinNonZup (180072b50, convar 180134a98 nav_gen_join_nonzup, on), compaction (180073ef0)"
+  },
+  {
+   "addr": "180020cc0",
+   "name": "NavGen_MovableTag",
+   "module": "s2c:baked/navgen",
+   "note": "MurmurHash2 of a movable entry's id path (entry +0x30), seed 0x3501a674; each of its polygons' +4 (1800250e0 movable loop: 1800260e0 with the stage count - 1 and no second list)"
   },
   {
    "addr": "18006bee0",

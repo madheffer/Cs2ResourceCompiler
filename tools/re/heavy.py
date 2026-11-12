@@ -16,8 +16,9 @@ Priority by agreement, not by code: while CS2 is closed, jobs that need it close
 vrad3, captures) go first; long jobs that do not (Ghidra imports and analysis, offline test sweeps)
 wait for CS2 to be open again or run on the dev box (dev@192.168.20.32).
 
-Refuses to start an RC job while cs2.exe runs (the rule for resourcecompiler on this PC); pass
---allow-cs2 for jobs that do not touch the game.
+Waits for cs2.exe to close before starting, unless --allow-cs2. Since 2026-11-02 (user: VAC is the reason
+for closing the game, not load) jobs that are no VAC risk pass it and run at below-normal priority: our own
+s2c builds, compiles and tests, and a standalone resourcecompiler. Frida captures and cubehost never do.
 """
 import argparse
 import json
@@ -104,7 +105,9 @@ def run(a, cmd):
         with open(os.path.join(DIR, "current.json"), "w") as h:
             json.dump(info, h)
         print(f"heavy: running {a.what}", flush=True)
-        code = subprocess.call(cmd)
+        # With the game open the job runs below normal (its children inherit the class), as the rule above says.
+        flags = subprocess.BELOW_NORMAL_PRIORITY_CLASS if a.allow_cs2 and running("cs2.exe") else 0
+        code = subprocess.call(cmd, creationflags=flags)
         return code
     finally:
         try:

@@ -111,6 +111,9 @@ public static partial class SettleWorld
         /// <summary>The material's texture parameters: name to texture path.</summary>
         public IReadOnlyDictionary<string, string> Textures { get; init; } = new Dictionary<string, string>();
 
+        /// <summary>The vmat_c's own vector attributes (m_vectorAttributes), which CMaterial2's vf 0x70 finds.</summary>
+        public IReadOnlyDictionary<string, System.Numerics.Vector4> VectorAttributes { get; init; } = new Dictionary<string, System.Numerics.Vector4>();
+
         /// <summary>
         /// The loaded material's attribute store (the vmat_c's attributes and every render mode's program
         /// attributes, <see cref="MaterialAttributes.OfModes"/>), built on first use; null for a material not loaded.
@@ -251,6 +254,30 @@ public static partial class SettleWorld
         return [.. context.Bodies.Select((b, i) => (b, i))
             .OrderBy(t => t.b.Node is { } n && (t.b.IdPath is not null || t.b.NodeId == (n.GetValue<int>("nodeID") ?? -1)) && index.TryGetValue(n, out var at) ? at : int.MaxValue)
             .ThenBy(t => t.i).Select(t => t.b)];
+    }
+
+    /// <summary>
+    /// PhysMesh_Shapes (181057020) for one map mesh of the document where it stands, as <see cref="Build"/>'s walk
+    /// builds it: the body FromMesh makes at the node's world matrix, or null when the mesh makes none (physics
+    /// type "none"). The returned function shares one context, so it registers the layers <see cref="Build"/> would.
+    /// </summary>
+    internal static Func<DmxBinary.Element, DmxBinary.Element?, BodyBuild?> MeshShapes(DmxBinary.Document document, IModels models, FgdSchema schema)
+    {
+        var versions = new Dictionary<DmxBinary.Element, int>(ReferenceEqualityComparer.Instance);
+        foreach (var d in AllDocuments(document))
+            foreach (var e in d.Elements)
+                versions.TryAdd(e, d.FormatVersion);
+        var parents = new Dictionary<DmxBinary.Element, DmxBinary.Element>(ReferenceEqualityComparer.Instance);
+        foreach (var e in AllDocuments(document).SelectMany(d => d.Elements))
+            foreach (var child in e.GetElements("children"))
+                parents.TryAdd(child, e);
+        var context = new Context(models, new CollisionRules(), schema, []) { Versions = versions, Version = document.FormatVersion, Parents = parents };
+        return (mesh, owner) =>
+        {
+            var before = context.Bodies.Count;
+            FromMesh(mesh, NodeWorld(MapMeshes.Local(mesh)), mesh.GetValue<int>("nodeID") ?? -1, owner, context);
+            return context.Bodies.Count > before ? context.Bodies[^1] : null;
+        };
     }
 
     /// <summary>The document and every prefab map loaded under it (<see cref="MapPrefabs"/>), at any depth.</summary>
@@ -425,23 +452,29 @@ public static partial class SettleWorld
     /// prefab or instance node itself.
     /// </summary>
     internal static float[]? Step(IReadOnlyList<DmxBinary.Element> through, IReadOnlyList<DmxBinary.Element> prefabs)
+        => Step([.. prefabs, .. through]);
+
+    /// <summary>
+    /// <see cref="Step(IReadOnlyList{DmxBinary.Element}, IReadOnlyList{DmxBinary.Element})"/> for a chain of instances
+    /// and prefabs in nesting order, outermost first (<see cref="MapEntityList.Item.Chain"/>): a prefab inside an
+    /// instance's target is moved by the instance's collapse before its own places its map (s2c_pfintarget,
+    /// GROUND_TRUTH 183).
+    /// </summary>
+    internal static float[]? Step(IReadOnlyList<DmxBinary.Element> chain)
     {
         float[]? delta = null;
-        foreach (var prefab in prefabs)
+        foreach (var node in chain)
         {
-            var at = prefab.GetValue<Vector3>("origin") ?? Vector3.Zero;
-            var turn = prefab.GetValue<Vector3>("angles") ?? Vector3.Zero;
+            var at = node.GetValue<Vector3>("origin") ?? Vector3.Zero;
+            var turn = node.GetValue<Vector3>("angles") ?? Vector3.Zero;
             if (delta != null)
                 (at, turn) = Moved(delta, at, turn);
-            delta = at == Vector3.Zero && turn == Vector3.Zero ? null : AngleMatrixDouble(turn, at);
-        }
-        foreach (var instance in through)
-        {
-            var at = instance.GetValue<Vector3>("origin") ?? Vector3.Zero;
-            var turn = instance.GetValue<Vector3>("angles") ?? Vector3.Zero;
-            if (delta != null)
-                (at, turn) = Moved(delta, at, turn);
-            var target = instance.Get<DmxBinary.Element>("target")!;
+            if (node.Type == "CMapPrefab")
+            {
+                delta = at == Vector3.Zero && turn == Vector3.Zero ? null : AngleMatrixDouble(turn, at);
+                continue;
+            }
+            var target = node.Get<DmxBinary.Element>("target")!;
             var from = target.GetValue<Vector3>("origin") ?? Vector3.Zero;
             var fromAngles = target.GetValue<Vector3>("angles") ?? Vector3.Zero;
             delta = at == from && turn == fromAngles ? null
@@ -506,8 +539,13 @@ public static partial class SettleWorld
     /// <summary><see cref="UnderDeformer"/>'s move alone: the step composed with the node's own transform.</summary>
     internal static (Vector3 Origin, Vector3 Angles) UnderDeformerStep(Vector3 origin, Vector3 angles, IReadOnlyList<DmxBinary.Element> through,
                                                                        IReadOnlyList<DmxBinary.Element> prefabs)
+        => UnderDeformerStep(origin, angles, [.. prefabs, .. through]);
+
+    /// <summary><see cref="UnderDeformerStep(Vector3, Vector3, IReadOnlyList{DmxBinary.Element}, IReadOnlyList{DmxBinary.Element})"/>
+    /// through a chain of instances and prefabs in nesting order, outermost first.</summary>
+    internal static (Vector3 Origin, Vector3 Angles) UnderDeformerStep(Vector3 origin, Vector3 angles, IReadOnlyList<DmxBinary.Element> chain)
     {
-        if (Step(through, prefabs) is not { } delta)
+        if (Step(chain) is not { } delta)
             return (origin, angles);
         var step = new CTransform(new Vector3(delta[3], delta[7], delta[11]), 1f, SmartPropEvaluator.MatrixQuaternion(delta));
         // 181076a70 moves about the struct's pivot, the identity: pivot o step o pivot^-1 o node, each
@@ -529,6 +567,11 @@ public static partial class SettleWorld
         => through.Count > 0 && prefabs.Count > 0 ? NestedPlacement(origin, angles, through, prefabs)
          : through.Count > 0 ? BakedPlacement(origin, angles, through)
          : prefabs.Count > 0 ? PrefabPlacement(origin, angles, prefabs) : (origin, angles);
+
+    /// <summary><see cref="Placed(Vector3, Vector3, IReadOnlyList{DmxBinary.Element}, IReadOnlyList{DmxBinary.Element})"/>
+    /// through a chain of instances and prefabs in nesting order (<see cref="Step(IReadOnlyList{DmxBinary.Element})"/>).</summary>
+    internal static (Vector3 Origin, Vector3 Angles) Placed(Vector3 origin, Vector3 angles, IReadOnlyList<DmxBinary.Element> chain)
+        => Step(chain) is { } delta ? Moved(delta, origin, angles) : (origin, angles);
 
     /// <summary>
     /// Whether a CMapDeformer stands at or above <paramref name="node"/> inside

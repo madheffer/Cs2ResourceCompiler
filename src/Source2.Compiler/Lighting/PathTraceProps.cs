@@ -101,24 +101,40 @@ internal static class PathTraceProps
         {
             if (loadModel(group.Key) is not { } model)
                 continue;
-            if (group.Any(p => p.LodLevel >= 0))
-                throw new NotSupportedException($"{group.Key}: a lodlevel (180284aa0's LOD groups, FUN_18174c9c0) is not ported");
-            var calls = Draws(model, 0, readMaterial).ToList();
-            foreach (var (mesh, material) in calls)
+            // 1802b4ab0: the model's records split by LOD in first-seen order, each group's meshes loaded for its LOD
+            // (1801d30d0). A record without lodlevel takes LOD 0; one with it takes lodlevel, or the model's highest
+            // LOD (18174c9c0) when that is not above lodlevel.
+            var highest = HighestLod(model);
+            foreach (var lodGroup in group.GroupBy(p => p.LodLevel < 0 ? 0 : p.LodLevel < highest ? p.LodLevel : highest))
             {
-                var index = -1;
-                foreach (var p in group)
+                var calls = Draws(model, lodGroup.Key, readMaterial).ToList();
+                foreach (var (mesh, material) in calls)
                 {
-                    if (index == -1)
+                    var index = -1;
+                    foreach (var p in lodGroup)
                     {
-                        index = meshes.Count;
-                        meshes.Add(mesh);
+                        if (index == -1)
+                        {
+                            index = meshes.Count;
+                            meshes.Add(mesh);
+                        }
+                        var remap = NodePropEntries.MaterialGroup(model, p.Skin);
+                        instances.Add(Instance(index, p, p.MaterialOverride ?? remap.GetValueOrDefault(material, material)));
                     }
-                    var remap = NodePropEntries.MaterialGroup(model, p.Skin);
-                    instances.Add(Instance(index, p, p.MaterialOverride ?? remap.GetValueOrDefault(material, material)));
                 }
             }
         }
+    }
+
+    // 18174c9c0: over the meshes' LOD mask bytes, -1 when every one is 0xff or the largest is 0, else the
+    // largest's highest set bit.
+    private static int HighestLod(Model model)
+    {
+        var masks = model.GetEmbeddedMeshesAndLoD().Select(m => (byte)m.LoDMask).ToList();
+        var largest = masks.Count == 0 ? (byte)0 : masks.Max();
+        if (masks.All(b => b == 0xff) || largest == 0)
+            return -1;
+        return 31 - System.Numerics.BitOperations.LeadingZeroCount((uint)largest);
     }
 
     private static KVObject Instance(int mesh, Prop p, string material)
@@ -159,7 +175,8 @@ internal static class PathTraceProps
             var (mesh, _, _, lodMask) = all[i];
             if (all.Count != 1)
             {
-                if (((ulong)lodMask & (1UL << lod)) == 0)
+                // 1801d30d0: LOD -1 (a model whose masks name no LOD) keeps a mesh with any mask bit.
+                if (lod < 0 ? (byte)lodMask == 0 : ((ulong)lodMask & (1UL << lod)) == 0)
                     continue;
                 var groupMask = groupMasks != null && i < groupMasks.Length ? groupMasks[i] : ulong.MaxValue;
                 if ((groupMask & defaultMask) == 0)
@@ -190,41 +207,18 @@ internal static class PathTraceProps
         var bas = call.GetInt32Property("m_nBaseVertex");
         var lo = Enumerable.Range(start, count).Min(Index) + bas;
         var vertexCount = Enumerable.Range(start, count).Max(Index) + bas - lo + 1;
-        IReadOnlyList<Source2ContainerAuthor.MaterialAuthoring.InputSignatureElement>? signature = null;
-        string? Attribute(string semantic, int index)
-        {
-            if (signature is null && readMaterial?.Invoke(material + "_c") is { } bytes)
-                signature = MaterialAuthor.ExtractInputSignature(bytes);
-            return signature?.FirstOrDefault(e => e.D3DSemanticName.Equals(semantic, StringComparison.OrdinalIgnoreCase) && e.D3DSemanticIndex == index)?.Semantic;
-        }
-        var geometry = MeshGeometry.Classify(vb, Attribute);
-        var (standard, hasColor) = NodePropEntries.Vertices(vb, lo, vertexCount, geometry.Color);
-        var extraSize = geometry.Extras.Sum(e => e.Components);
-        var stride = NodePropEntries.Stride + extraSize;
-        var vertices = new float[vertexCount * stride];
-        for (var v = 0; v < vertexCount; v++)
-        {
-            Array.Copy(standard, v * NodePropEntries.Stride, vertices, v * stride, NodePropEntries.Stride);
-            var at = v * stride + NodePropEntries.Stride;
-            foreach (var e in geometry.Extras)
-            {
-                MeshGeometry.Unpack(vb, e.Field, lo + v, vertices.AsSpan(at, e.Components));
-                at += e.Components;
-            }
-        }
+        var loaded = NodePropEntries.Load(vb, lo, vertexCount, readMaterial == null ? null : NodePropEntries.Attributes(material, readMaterial));
+        var geometry = loaded.Geometry;
         var streams = new List<PathTraceScene.Stream>();
-        foreach (var s in NodePropEntries.Streams(hasColor))
+        for (var i = 0; i < loaded.Streams.Count; i++)
         {
-            var noCompression = (s.Name == "texcoord" && geometry.FloatTexcoords) || (s.Name == "tangent" && geometry.FloatTangents);
-            streams.Add(new PathTraceScene.Stream(s.Name, "", streams.Count(x => x.Name == s.Name), s.First, s.Count, false, noCompression));
-        }
-        var offset = NodePropEntries.Stride;
-        foreach (var e in geometry.Extras)
-        {
-            streams.Add(new PathTraceScene.Stream(e.Name, "", 0, offset, e.Components, false, false));
-            offset += e.Components;
+            var s = loaded.Streams[i];
+            // The six standard streams take their place among those of their name; an extra is index 0.
+            var index = i < 6 ? streams.Count(x => x.Name == s.Name) : 0;
+            var noCompression = i < 6 && ((s.Name == "texcoord" && geometry.FloatTexcoords) || (s.Name == "tangent" && geometry.FloatTangents));
+            streams.Add(new PathTraceScene.Stream(s.Name, "", index, s.First, s.Count, false, noCompression));
         }
         var indices = Enumerable.Range(start, count).Select(i => Index(i) + bas - lo).ToArray();
-        return new PathTraceScene.Mesh(vertices, stride, indices, streams, material) { Tint = [0f, 0f, 0f, 0f], CollisionType = uint.MaxValue };
+        return new PathTraceScene.Mesh(loaded.Vertices, loaded.Stride, indices, streams, material) { Tint = [0f, 0f, 0f, 0f], CollisionType = uint.MaxValue };
     }
 }

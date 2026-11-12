@@ -32,12 +32,22 @@ try
         "map-diff" => Commands.MapDiff(args[1..]),
         "map-physics" => Commands.MapPhysics(args[1..]),
         "compile-map" => Commands.CompileMap(args[1..]),
+        "compile-addon" => CompileAddonCommand.Run(args[1..]),
+        "build-cubemaps" => Commands.BuildCubemaps(args[1..]),
         "map-validate" => Commands.MapValidate(args[1..]),
         "entitylump" => Commands.Entitylump(args[1..]),
         "reauthor" => Commands.Reauthor(args[1..]),
         "decompile-map" => Commands.DecompileMap(args[1..]),
         "decompile-scripts" => Commands.DecompileScripts(args[1..]),
         "selftest" => SelfTest.Run(args[1..]),
+        // main's resource parity tools (merged 2026-11-05).
+        "kv3-parity" => Kv3Parity.Run(args[1..]),
+        "nmclip-parity" => NmClipParity.Run(args[1..]),
+        "container-parity" => ContainerParity.Run(args[1..]),
+        "reencode-parity" => ReencodeParity.Run(args[1..]),
+        "kv3-types" => Kv3Types.Run(args[1..]),
+        "red2-survey" => Red2Survey.Run(args[1..]),
+        "kv3-read-parity" => Kv3ReadParity.Run(args[1..]),
         _ => Unknown(args[0]),
     };
 }
@@ -62,6 +72,10 @@ static void Usage()
 
       s2c compile   <in.vdata|.vsndevts|.vpcf|.vagrp> [-o <out_c>] [--ship-as <path>]
                     KV3 text source -> compiled container, authored from scratch.
+      s2c compile   <in.js> [-o <out.vjs_c>] [--ship-as <path>] [--search-path <mod>]
+                    cs_script source -> .vjs_c, as resourcecompiler writes it on a
+                    user's install (no Panorama preprocessor). Under content/<mod>/
+                    the path and mod come from the file's own location.
 
       s2c decompile <in.*_c> [-o <out.txt>] [--block DATA|RED2|CTRL|PHYS|MDAT]
                     Compiled resource -> KV3 text. Defaults to the DATA block;
@@ -103,9 +117,31 @@ static void Usage()
                     entity lumps (settled unless -nosettle); -phys world_physics.
                     They replace their files in the compiled map package already
                     at <outroot or game>/csgo_addons/<addon>/maps, as -fshallow
-                    does. The lighting bake, nav and Steam Audio are refused by
-                    name; --skip-unported runs the rest and leaves those as the
-                    package has them.
+                    does; a full build (no builder named) with -f or -fshallow2,
+                    or with no package there yet, starts from an empty one.
+                    -s2cbake <folder> bakes the lighting on the GPU with no vrad3.
+                    Steam Audio at worldspawn's Cleanup or Manual rebake option
+                    bakes nothing, as resourcecompiler does; at Auto the reverb
+                    and pathing bake (custom data is refused by name, as is the
+                    lighting bake with neither -s2cbake nor -vrad3output). --skip-unported runs the rest and
+                    leaves those as the package has them.
+
+      s2c compile-addon <addon> [--cs2 <dir>] [--only <content path>]... [--bc7 amd|intel] [-n]
+                    The addon's own .vmat and .vtex sources -> game/csgo_addons/<addon>,
+                    with their child textures, as resourcecompiler writes them when run
+                    on each asset. A map compile never compiles the materials it uses
+                    (GROUND_TRUTH 255): run this before compile-map. Files whose bytes
+                    are already right are left alone; -n compiles and writes nothing.
+
+      s2c build-cubemaps <game/csgo_addons/<addon>/maps/<map>.vpk>
+                    [--no-scripted-camera] [--intermediates <dir>] [--game <dir>]
+                    Hammer's build cubemaps step on a compiled map, with no game:
+                    every cube rendered on our own Vulkan device, then the array
+                    compiled into maps/<map>/cubemaps/env_cubemap_array.vtex_c in
+                    the package. --intermediates also writes the step's EXRs and
+                    .vtex, which the game keeps under _buildcubemaps only while it
+                    builds. --game names the install's game folder for a package
+                    copied outside it. A map the renderer does not port yet is refused.
 
       s2c decompile-map <maps/<map>.vpk> -o <out.vmap> [--cs2 <CS2 install dir>] [--content <addon content dir>]
                     A compiled map package back to a Hammer .vmap (vmap 40): the

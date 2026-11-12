@@ -1,0 +1,268 @@
+{
+ "functions": [
+  {
+   "addr": "180133da0",
+   "name": "CResourceCompilerTexture_CompileResourceInternal",
+   "module": "s2c:resources/texture",
+   "note": "per output channel group: inputs, GenerateMips (180142990) per frame, the first group sets the output size and level count (leaves its level loop at a group mip count of 1), a larger later group upsizes the output (18013ce60); averages each group's last mip (180c3bb80) and adds avg[src] to the destination's reflectivity while copying level 0 (181277690); DXT5 -> DXT1 when plane 3 of every kept mip is 1 (ledgers 230, 240)"
+  },
+  {
+   "addr": "180142990",
+   "name": "CTextureFrame_GenerateMips",
+   "module": "s2c:resources/texture",
+   "note": "dispatch by name: ArtistDefined(/OrAlphaWeighted) via the image's artist string (empty -> Box / AlphaWeighted), None 180144200, Box / Box<n> 1801443f0, BoxInverse 1801447c0, MultiplyBox / MultiplyNoMip 180144ce0, MipNormal (dep Mip Normals, then Box), HemiOctNormal 18014c050, HemiOctIsoRoughness_RG_B / AnisoRoughness_RG (180148350 then a shuffle), HemiOctAnisoRoughness (180148350 raw), AnisoNormal 18014c660, AlphaWeighted 18014e680, PreserveCoverage 18014fa90, GGXCubeMapBlur 180150130, RGBM 180151310, Nice 180151cf0 (ledger 231)"
+  },
+  {
+   "addr": "180144200",
+   "name": "CTextureFrame_GenerateMips_None",
+   "module": "s2c:resources/texture",
+   "note": "dep Mip None 1; level 0 copied (180c3c3c0) as the only level (ledger 231)"
+  },
+  {
+   "addr": "1801443f0",
+   "name": "CTextureFrame_GenerateMips_Box",
+   "module": "s2c:resources/texture",
+   "note": "dep Mip Box 1; levels min(mip count 180c49440, param_7), each QuarterSize (180c43450) of the one before; non-power-of-two only with AllowNP2Textures"
+  },
+  {
+   "addr": "1801447c0",
+   "name": "CTextureFrame_GenerateMips_BoxInverse",
+   "module": "s2c:resources/texture",
+   "note": "dep Mip Box Inverse 1; power of two only; level 0 = v * -1 + 1 per masked channel (+0x8a0), then QuarterSize per level (ledger 231)"
+  },
+  {
+   "addr": "18014fa90",
+   "name": "CTextureFrame_GenerateMips_PreserveCoverage",
+   "module": "s2c:resources/texture",
+   "note": "dep Mip PreserveCoverage 5; power of two only; target = coverage(input, 1); per level QuarterSize to a scratch, copy, unless target <= 0 or 1x1: bisection on [0, 8] to 0.01 (mid (hi + lo) * 0.5), scale planes 0..2, clamp [0, 1] (180142710), restore uniform pixels (18014f840) (ledger 231)"
+  },
+  {
+   "addr": "18014f380",
+   "name": "TextureFrame_AlphaTestCoverage",
+   "module": "s2c:resources/texture",
+   "note": "plane 0 scaled and clamped (maxss 0, minss 1) at each 2x2 cell's corners, 16 samples from the weight table (stack, from 0x182a9ecd0 .. 0x182a9ee10), counted at v >= 0.5; count / (float)(((h-1)(w-1)) << 4)"
+  },
+  {
+   "addr": "180142710",
+   "name": "TextureFrame_ClampPlane",
+   "module": "s2c:resources/texture",
+   "note": "maxps(v, lo) then minps(v, hi) over one plane"
+  },
+  {
+   "addr": "18014f840",
+   "name": "PreserveCoverage_KeepUniform",
+   "module": "s2c:resources/texture",
+   "note": "in place, row by row: a pixel whose clamped 3x3 neighbourhood of plane 0 is all >= 0.5 or all < 0.5 takes planes 0..2 of the unscaled level back"
+  },
+  {
+   "addr": "180c49440",
+   "name": "ImageFormat_MipCount",
+   "module": "s2c:resources/texture",
+   "note": "levels to 1x1, each side halved and floored at 1"
+  },
+  {
+   "addr": "180149d20",
+   "name": "HemiOctAnisoRoughness_Lambda",
+   "module": "s2c:resources/texture",
+   "note": "x = 2 m10 - 1, y = 2 m11 - 1, z = sqrt(clamp(1 - (y y + x x))), inv = 1 / ((|y| + |x|) + z); plane 3 (x' + y') / 2 + 1/2, plane 1 (x' - y') / 2 + 1/2, plane 0 ch6 + ch4, plane 2 ch7 + ch5 (MinRoughness clamps unset) (ledger 231)"
+  },
+  {
+   "addr": "18013f300",
+   "name": "CTextureFrame_ApplyImageProcessor",
+   "module": "s2c:resources/texture",
+   "note": "by name (V_stricmp_fast): Mod2XCenter 18013fee0, NormalizeNormals 180140120, FillToPowerOfTwo 180140550, FillToMultipleOfFour 180140ae0, ScaleToPowerOfTwo (inline), HeightToNormal 180141080, Inverse 180141590, ConvertToYCoCg 180141720, DilateColorInTransparentPixels 180141be0, EncodeRGBM 180142040, UniformRandom<w>x<h>x<d> 180140320 (ledger 232)"
+  },
+  {
+   "addr": "18013fee0",
+   "name": "CTextureFrame_ImageProcessor_Mod2X",
+   "module": "s2c:resources/texture",
+   "note": "dep Image Mod2X 1; per masked channel the row-order sum, then each pixel (0.5 - sum / (w h)) + v (ledger 232)"
+  },
+  {
+   "addr": "18016dd80",
+   "name": "Red2_FinalizeAndSort",
+   "module": "s2c:resources/containers",
+   "note": "MSVC std::sort of each RED2 list (18017a780, 18017a9c0, 18017abe0, 18017ae90, 18017b0a0, 18017a5a0) and of the three searchable tables' members (181ebae60), then Red2_WriteBlock 181c24a70; every comparator V_stricmp_fast (ledger 235)"
+  },
+  {
+   "addr": "181ebae60",
+   "name": "KV3_SortTableMembers",
+   "module": "s2c:resources/containers",
+   "note": "a table (type 9) only: 181ea5d30 sorts its member index by std::sort 181ea6ae0 with V_stricmp_fast on the names (ledger 235)"
+  },
+  {
+   "addr": "18015e2d0",
+   "name": "CResourceCompilerVectorGraphic_Compile",
+   "module": "s2c:resources/containers",
+   "note": "dep Vector Graphic Version 2; the source file's bytes into a CUtlBuffer, then the Panorama writer 1800f6960 (ledger 236)"
+  },
+  {
+   "addr": "180c3ea20",
+   "name": "HelperLoadFbmByFileExtension",
+   "module": "s2c:resources/texture",
+   "note": "by extension: exr, psd, tga (180c70980 then RGBA8888 into the bitmap), tif, png, jpg, webp"
+  },
+  {
+   "addr": "180c71290",
+   "name": "TGA_Decode",
+   "module": "s2c:resources/texture",
+   "note": "types 1/3 (palette or grey), 2 (24 bits 180c70c20, 32 bits 180c70da0), 9 (palette refused), 10, 11; rows bottom-up unless descriptor & 0x20; no other descriptor bit read (ledger 238)"
+  },
+  {
+   "addr": "180c70da0",
+   "name": "TGA_Row32",
+   "module": "s2c:resources/texture",
+   "note": "BGRA to RGBA per pixel, the fourth byte as alpha as it is (ledger 238)"
+  },
+  {
+   "addr": "18010c660",
+   "name": "Material_RepresentativeTextureSize",
+   "module": "s2c:resources/containers",
+   "note": "over the attributes: at the one named RepresentativeTexture, its bound texture's size as RepresentativeTextureWidth / Height int attributes (ledger 239)"
+  },
+  {
+   "addr": "18010f480",
+   "name": "CResourceCompilerMaterial::CompileResourceInternal",
+   "module": "s2c:resources/containers",
+   "note": "compilematerial.cpp: shader removed from the KV3 root; each member: int -> int param (18010e280), double -> float param (18010e430), ''/'['-string -> vector param (18010e550), else by name attributes/DecalAttributes/SystemAttributes (ints, + float lanes outside SystemAttributes, doubles, vectors, strings), ToolAttributes, dynamicparams; all else skipped (legacy_import); lists sorted by 1801156e0; searchable: nonzero feature combos (181fac660 decode, ctx vf18), shader, then int / float / string attributes; PhysicsSurfaceProperties -> surface_prop subasset ref (ctx vf3) (ledger 264)"
+  },
+  {
+   "addr": "18010e280",
+   "name": "Material_TryIntParam",
+   "module": "s2c:resources/containers",
+   "note": "KV3 type 3 only: a param stored as (float)(int)value (ledger 264)"
+  },
+  {
+   "addr": "18010e430",
+   "name": "Material_TryFloatParam",
+   "module": "s2c:resources/containers",
+   "note": "KV3 type 5 only: four lanes the float value (ledger 264)"
+  },
+  {
+   "addr": "18010e550",
+   "name": "Material_TryVectorParam",
+   "module": "s2c:resources/containers",
+   "note": "type 6 string empty or starting '[' (V_sscanf '[%f %f %f %f]' into zeros) or type 8 array (ledger 264)"
+  },
+  {
+   "addr": "18010f200",
+   "name": "Material_ValidateBlocks",
+   "module": "s2c:resources/containers",
+   "note": "schema check (181f15c80) of the root, dynamicparams and attributes (ledger 264)"
+  },
+  {
+   "addr": "1801156e0",
+   "name": "std_sort_MaterialParams",
+   "module": "s2c:resources/containers",
+   "note": "MSVC std::sort of a material param / attribute list; insertion step 180115f60 compares names with V_stricmp_fast (ledger 264)"
+  },
+  {
+   "addr": "18010edf0",
+   "name": "LoadVfxAndFeatureCombo",
+   "module": "s2c:resources/containers",
+   "note": "opens the shader (181f90140), builds the feature combo record (181fa2f30) (ledger 264)"
+  },
+  {
+   "addr": "181fa2f30",
+   "name": "Vfx_BuildFeatureComboRecord",
+   "module": "s2c:resources/containers",
+   "note": "per program: fixed combos from the feature combo (181fa9b30) and Tool modes (181faa3b0), walks the free static combos (181fa99b0 / 181faa690 / 181faa4b0) checking rules; the walk is not ported (ledger 264)"
+  },
+  {
+   "addr": "181faa3b0",
+   "name": "Vfx_PinToolModeCombos",
+   "module": "s2c:resources/containers",
+   "note": "each mode whose name contains 'Tool' (strstr 18200efc8, string 18274ef4c): its static combo settings are pinned, never walked (ledger 264)"
+  },
+  {
+   "addr": "181fac660",
+   "name": "Vfx_DecodeFeatureCombo",
+   "module": "s2c:resources/containers",
+   "note": "a feature combo id to its per-combo values (ledger 264)"
+  },
+  {
+   "addr": "18010aa00",
+   "name": "CResourceCompilerMaterial::ProcessTexture",
+   "module": "s2c:resources/containers",
+   "note": "child name: the first input, a materials/default/ pick replaced by the next non-default one, a '[' constant by the next image; '%s_%x.%s'; a constant left names it <material>_<variable> (ledger 264)"
+  },
+  {
+   "addr": "18012e470",
+   "name": "CResourceCompilerSurfaceProperties_Compile",
+   "module": "s2c:resources/containers",
+   "note": "vf11: SurfacePropertiesList; 'default' must exist; per entry a new table: base chain merged (18012eb80), the entry merged on top (18012e360, nothing skipped), m_nameHash = token of surfacePropertyName (uint32, 181eb98c0 subtype 0x17) + surface_prop definition (ctx vf2), duplicate names refused, m_baseNameHash; the table replaces the entry; audiosounds values -> soundevent references (ctx vf3) (ledger 260)"
+  },
+  {
+   "addr": "18012eb80",
+   "name": "SurfaceProperties_MergeBase",
+   "module": "s2c:resources/containers",
+   "note": "first list entry named base (V_stricmp_fast), visited set (this+8) refuses a loop, recurses into its own base, then copies its members but 'hidden' (hash 0x244342da) (ledger 260)"
+  },
+  {
+   "addr": "18012e360",
+   "name": "SurfaceProperties_MergeTable",
+   "module": "s2c:resources/containers",
+   "note": "member by member: a table merged (FindOrAdd 181eac8c0, to-table 181eac2d0), anything else set (181eb93b0 find-or-add + copy 181eaaec0); param 3 skips 'hidden' (ledger 260)"
+  },
+  {
+   "addr": "18015aa40",
+   "name": "CResourceCompilerVCompMat_Compile",
+   "module": "s2c:resources/containers",
+   "note": "vf11: refuses no m_Points, then 180159960 and 18015a270 (ledger 261)"
+  },
+  {
+   "addr": "180159960",
+   "name": "VCompMat_StripAndCheck",
+   "module": "s2c:resources/containers",
+   "note": "root m_KVthumbnail removed (181eb7070); per point the 7 preview members (181eb70f0); per procedure: includes and specific container materials must exist in CONTENT, disabled (181eae3f0 default true) input containers and property mutators removed, back to front (ledger 261)"
+  },
+  {
+   "addr": "18015a270",
+   "name": "VCompMat_CompileTextureInputs",
+   "module": "s2c:resources/containers",
+   "note": "per enabled container's loose variable with m_strTextureContentAssetPath: the vtex template with $TEXTURE_REPLACEMENT_TOKEN, child texture '%s_%s_%x.vtex', m_strTextureRuntimeResourcePath; not ported (ledger 261)"
+  },
+  {
+   "addr": "1800f9db0",
+   "name": "CResourceCompilerKV3_CompileResource",
+   "module": "s2c:resources/containers",
+   "note": "LoadKV3, the type's vf11, then 1800f8950, 1800f8b70, 1800f8d90, save DATA, FLCI when vf12 (ledger 262)"
+  },
+  {
+   "addr": "1800f8950",
+   "name": "KV3Compile_FixupResourceNames",
+   "module": "s2c:resources/containers",
+   "note": "every resource / resource_name string through 181c1e960 (FixupResourceName_NoExtension), flag kept; a refused name is 'Bad resource reference' (ledger 262)"
+  },
+  {
+   "addr": "1800f8b70",
+   "name": "KV3Compile_RegisterReferences",
+   "module": "s2c:resources/containers",
+   "note": "flag 4 soundevent -> AddSubassetReference(soundevent, 1); flag 1 resource -> ctx vf0 (strong set +0xd8); flag 2 resource_name -> ctx vf1 (weak set +0xf8) (ledger 262)"
+  },
+  {
+   "addr": "1800f8d90",
+   "name": "KV3Compile_PanoramaImageReferences",
+   "module": "s2c:resources/containers",
+   "note": "flag 3 panorama strings naming images become references; not ported (ledger 262)"
+  },
+  {
+   "addr": "180166b40",
+   "name": "CResourceCompilerContext_AddStrongReference",
+   "module": "s2c:resources/containers",
+   "note": "vf0: hash set keyed by the resource id (ledger 262)"
+  },
+  {
+   "addr": "180166c10",
+   "name": "CResourceCompilerContext_AddWeakReference",
+   "module": "s2c:resources/containers",
+   "note": "vf1: hash set keyed by the resource id; the edit info finalize (18016c650) copies it to m_WeakReferenceList and sorts it with std_sort_ResourceRefs 18017a5a0 (ledger 262)"
+  },
+  {
+   "addr": "180175570",
+   "name": "CResourceCompilerContext_AddSubassetDefinition",
+   "module": "s2c:resources/containers",
+   "note": "vf2: type and name keyed by A-Z folded token; a name listed once, first spelling (ledger 260)"
+  }
+ ]
+}

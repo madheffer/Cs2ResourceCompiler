@@ -1,0 +1,159 @@
+using System.Text;
+using Source2.Compiler.KeyValues;
+
+namespace Source2.Compiler.Materials;
+
+/// <summary>One input image of a generated texture.</summary>
+/// <param name="FileName">Content path of the image.</param>
+/// <param name="Srgb">Its colour space: sRGB, else linear.</param>
+/// <param name="FileExt">The shader's file ending for the input (<c>color</c>, <c>rough</c>).</param>
+/// <param name="MinBitsPerChannel">The shader's minimum precision.</param>
+/// <param name="ImageProcessor">The input processing command (<c>NormalizeNormals</c>), or empty.</param>
+public sealed record GeneratedTextureInput(string FileName, bool Srgb, string FileExt, int MinBitsPerChannel, string ImageProcessor);
+
+/// <summary>One output channel group of a generated texture.</summary>
+/// <param name="SrcChannels">Source channels, as letters (<c>rgb</c>).</param>
+/// <param name="DstChannels">Destination channels, as letters (<c>a</c>).</param>
+/// <param name="MipAlgorithm">The mip processing command (<c>ArtistDefined</c>).</param>
+/// <param name="Srgb">Output colour space: sRGB, else linear.</param>
+/// <param name="Inputs">Indices into <see cref="GeneratedTexture.Inputs"/>.</param>
+public sealed record GeneratedTextureChannel(string SrcChannels, string DstChannels, string MipAlgorithm, bool Srgb, int[] Inputs);
+
+/// <summary>
+/// The <c>.vtex</c> resourcecompiler generates for a material texture (docs/MATERIALS.md): its
+/// inputs, format and channels, the logical-CRC text RC hashes, and the child path that hash
+/// names.
+/// </summary>
+/// <param name="Inputs">Input images, one per channel input, repeats kept.</param>
+/// <param name="OutputFormat">Image format name (<c>DXT1</c>, <c>BC7</c>).</param>
+/// <param name="Channels">Output channel groups.</param>
+public sealed record GeneratedTexture(IReadOnlyList<GeneratedTextureInput> Inputs, string OutputFormat, IReadOnlyList<GeneratedTextureChannel> Channels)
+{
+    /// <summary>The output variable's <c>m_nMaxRes</c>, the generated .vtex's
+    /// <c>m_nOutputMaxDimension</c>; 0 for none.</summary>
+    public int OutputMaxDimension { get; init; }
+
+    /// <summary>The seed of the logical CRC's MurmurHash2 (181e91070).</summary>
+    public const uint LogicalCrcSeed = 0x24871466;
+
+    /// <summary>
+    /// The text RC prints for its logical CRC (181e8fcf0): every string lowercased, a string
+    /// written only when not empty and an integer only when not its default. The
+    /// <c>m_textureOutputChannelArray[%d]:</c> line counts inputs, as RC's does.
+    /// </summary>
+    public string LogicalText()
+    {
+        var b = new StringBuilder();
+        b.Append("VTEX_LOGICAL_CRC_VERSION = 1\n");
+        b.Append($"m_inputTextureArray[{Inputs.Count}]:\n");
+        for (int i = 0; i < Inputs.Count; i++)
+        {
+            var input = Inputs[i];
+            b.Append($"m_inputTextureArray[{i}] =\n{{\n");
+            Int(b, "m_texture_index", i, -1);
+            Str(b, "m_fileName", input.FileName);
+            Str(b, "m_colorSpace", input.Srgb ? "srgb" : "linear");
+            Str(b, "m_fileExt", input.FileExt);
+            Int(b, "m_nMinBitsPerChannel", input.MinBitsPerChannel, -1);
+            Str(b, "m_typeString", "2D");
+            // One image processor per input, empty when the shader names none.
+            b.Append("m_imageProcessorArray[1]:\nm_imageProcessorArray[0] =\n{\n");
+            Str(b, "m_algorithm", input.ImageProcessor);
+            b.Append("}\n}\n");
+        }
+        Str(b, "m_outputTypeString", "2D");
+        Str(b, "m_outputFormat", OutputFormat);
+        // Printed here when the shader sets one (RC's spew for cx_weapon's glitter normal, 11-03).
+        Int(b, "m_nOutputMaxDimension", OutputMaxDimension, 0);
+        b.Append($"m_textureOutputChannelArray[{Inputs.Count}]:\n");
+        for (int c = 0; c < Channels.Count; c++)
+        {
+            var ch = Channels[c];
+            b.Append($"m_textureOutputChannelArray[{c}] =\n{{\n");
+            Str(b, "m_srcChannels", ch.SrcChannels);
+            Str(b, "m_dstChannels", ch.DstChannels);
+            b.Append("m_mipAlgorithm =\n{\n");
+            Str(b, "m_algorithm", ch.MipAlgorithm);
+            b.Append("}\n");
+            Str(b, "m_outputColorSpace", ch.Srgb ? "srgb" : "linear");
+            b.Append($"m_inputTextureArray[{ch.Inputs.Length}]:\n");
+            for (int i = 0; i < ch.Inputs.Length; i++)
+                b.Append($"m_inputTextureArray[{i}] = {ch.Inputs[i]}\n");
+            b.Append("}\n");
+        }
+        return b.ToString();
+    }
+
+    /// <summary>MurmurHash2 of <see cref="LogicalText"/>: the child's name and its
+    /// <c>___OverrideInputData___</c> fingerprint.</summary>
+    public uint LogicalCrc => MurmurHash2.Hash32(Encoding.UTF8.GetBytes(LogicalText()), LogicalCrcSeed);
+
+    /// <summary>The child resource path: the input it is named after (<see cref="NamedInput"/>)
+    /// with its <c>.</c> as <c>_</c>, the CRC in lowercase hex, then <c>.vtex</c>
+    /// (<c>'%s_%x.%s'</c>).</summary>
+    public string ChildPath
+    {
+        get
+        {
+            var first = NamedInput();
+            int dot = first.LastIndexOf('.');
+            var stem = dot > first.LastIndexOf('/') ? first[..dot] + "_" + first[(dot + 1)..] : first;
+            return $"{stem}_{LogicalCrc:x}.vtex";
+        }
+    }
+
+    /// <summary>
+    /// The input a child is named after (ProcessTexture, rc 0923 18010aa00, its loop over the
+    /// inputs before the <c>'%s_%x.%s'</c> format): the first
+    /// input, then for each later one in order, while the pick is a shader default (its path
+    /// holds <c>materials/default/</c> or <c>materials\default\</c>, V_stristr_fast) any input
+    /// that is not one replaces it; a <c>[</c> constant gives way to a later input that is
+    /// neither; any other pick ends the walk. A constant left at the end names the child after
+    /// the material and the output variable, which is not ported (constant inputs are not).
+    /// </summary>
+    internal string NamedInput()
+    {
+        static bool IsDefault(string f) =>
+            f.Contains("materials/default/", StringComparison.OrdinalIgnoreCase)
+            || f.Contains("materials\\default\\", StringComparison.OrdinalIgnoreCase);
+        var pick = Inputs[0].FileName;
+        for (int i = 1; i < Inputs.Count; i++)
+        {
+            var next = Inputs[i].FileName;
+            if (IsDefault(pick))
+            {
+                if (!IsDefault(next))
+                    pick = next;
+            }
+            else if (pick.StartsWith('['))
+            {
+                if (!next.StartsWith('[') && !IsDefault(next))
+                    pick = next;
+            }
+            else
+                break;
+        }
+        if (pick.StartsWith('['))
+            throw new InvalidOperationException($"A child texture made of constant inputs only ({pick}) is named after its material; not ported.");
+        return pick;
+    }
+
+    private static void Str(StringBuilder b, string name, string value)
+    {
+        if (value.Length > 0)
+            b.Append(name).Append(" = \"").Append(AsciiLower(value)).Append("\"\n");
+    }
+
+    // CUtlString::ToLowerFast: A-Z only.
+    private static string AsciiLower(string s) => string.Create(s.Length, s, (dst, src) =>
+    {
+        for (int i = 0; i < src.Length; i++)
+            dst[i] = src[i] is >= 'A' and <= 'Z' ? (char)(src[i] + 32) : src[i];
+    });
+
+    private static void Int(StringBuilder b, string name, int value, int defaultValue)
+    {
+        if (value != defaultValue)
+            b.Append(name).Append(" = ").Append(value).Append('\n');
+    }
+}

@@ -136,6 +136,28 @@ game can answer is raised with the user first, and runs with -insecure.
     node copy that flips a repeated placement's keys (ExportToLump writes
     the table as stored, 181004020). A prefab inside an instanced group
     crashes Valve's compiler (s2c_prefabprobe10).
+    Read 2026-11-02 (rc 0923 decompile; not yet enough to replace the fit): MapDoc_GatherLights
+    (180f1c660) gathers the world's lights, then each document of MapDoc_ListLoadedDocs(+0x6b8, loaded)
+    in that vector's order, appending. MapWorld_GatherLights (180f1c8b0) finds "light_*" (180fc6f40) and
+    for each light appends one entry per world transform from 180f88460(light, mode 2): so a prefab
+    document's entries run light by light, each light's placements inside. 180f88460 walks the node's
+    parents (vf 0x600) while vf 0x400 holds; at a node referenced through a "target" attribute (counts
+    from 180f8ba70 kinds 3 and 0) it collects the referrers by g_pDataModel vf 0x3b8 / 0x3c0 (the first
+    and next element referencing the node's handle, 1800d3270), recurses into each in that order, then
+    composes its own transform (vf 0x110, 180ffd750) onto the entries they added; with no kind-0
+    reference it starts from its own (180f82b60). Left to read: the order of the datamodel's
+    referencing list (which placement comes first: the measured "first placement last to first" should
+    fall out of it) and who appends to +0x6b8.
+    Read 2026-11-03 (rc 0923; the datamodel is linked into resourcecompiler, CDataModel vftable 1822ae350):
+    vf 0x3b8 (180cd7820) returns the element's inline referrer record (element +0x38, handle; -1 none) and
+    vf 0x3c0 (180cd99e0) the record's next (+8). The add (180cdf6f0) puts the new referrer in the inline slot
+    and moves the old one into a new record right behind it, so the list runs newest first. A referrer is
+    added when an element-typed attribute is set (180cd9bd0, from the DmAttribute setters 180ce5810,
+    180d01160, 180d03430, 180d19000) or when references are rebuilt (180cdd4e0 / 180cdd8e0 over an
+    element's attributes). So 180f88460 visits a node's referrers in reverse order of when their
+    attributes were set. Still open, so EntityLumpAuthor.Lighting keeps its fit: when each placement's
+    referencing attribute is set during the load (and whether the light preprocess runs before the bake's
+    copies add referrers of their own), and the +0x6b8 appender.
 
 47. **Order of baked props within a model.** NodePropEntries orders a
     model's baked props last to first in the walk (measured on atixref's
@@ -413,6 +435,41 @@ game can answer is raised with the user first, and runs with -insecure.
     0 to 1,305 of each mesh's corners. 24 of 538 atixref entries differ by
     tangents alone. Next: a capture of the half-edge mesh's tangent
     stream after BakeSubdivisionForFaces and after ConvertMeshForBuilder.
+    Read and captured 2026-11-03 (rc 0923 decompile; Frida on rc 1103 compiling atixref, CS2 closed:
+    tools/vis/capture_subdivbake_1103.py and tools/vis/capture_subdivgrids.py):
+    - The bake writes the tangents: on all 21 baked atixref meshes BakeAllSubdivision's output tangent stream reaches
+      TransformToWorld unchanged, and on curved meshes most of its values are in no input corner.
+    - The patch evaluator 1813c1cc0 (from the patch builders 1813b7750 / 1813b82f0, so the bake does reach it; the
+      "viewport only" note above was wrong) gives each face-vertex stream by its mode (1813c83f0, the attribute
+      descriptor's first int): 0 the corners lerped, 1 the position grid (1813c7b90), 2 the normal grid (1813c3cf0),
+      3 the tangent grid (1813c2090). The tangent stream is mode 3: 35,796 of the 38,166 baked tangents are tangent
+      grid outputs (the rest unbaked corners and w = 0 corners).
+    - 1813c2090 ported (SubdivisionTangents.Grid) with its corner gather 1813bdf80 (Gather): A = |lerp(t0, t2, v)|,
+      B = |lerp(t1, t3, v)|, T = lerp(A, B, u), out |(n x T) x n| with the corner's w; t0 the corner's tangent, t1 / t2
+      it plus the next / previous corner's normalised, t3 the loop's sum normalised (18013e340). On Valve's own inputs
+      (the gather, normal grid and (u, v) of every call) it gives Valve's output bit for bit: 1,183 calls, 12,279
+      points (SubdivisionTangentsCaptureTests, SUBDIVGRIDS=).
+    - 1813c3cf0 ported (SubdivisionNormalGrid, 2026-11-04): the position grid's normals (1813be620), the two seams
+      averaged with the neighbour patch's border normals (1813c0960: +1 at index 0, -1 at n, negated for a column)
+      when the edge is soft or their dot passes cos + 1e-5, an unsubdivided neighbour by the lerp of the two corner
+      normals (1813850e0, step 0.5 / n), the centre the face loop's 1813bd320 corner-3 normals summed, (0, 0) the
+      vertex fan's 1813bd320 corner-0 normals from the last crease (1813c8830) or, when a fan face is missing or
+      unsubdivided, 1813850e0, normalised again either way (1813c6140 jumps to its own normalise). On every captured
+      call from the .vmap alone: 1,183 patches, 12,279 points bit for bit (NormalGridIsValves).
+    - The bake's tangent stream (SubdivisionBake.TangentGrids): the evaluator's mode 3 output replaces the corners'
+      lerp, (u, v) = (column / n, row / n) as the position grid hands it (captured). From the .vmap alone, gather,
+      normal grid and tangent grid of all 1,183 atixref patches equal Valve's bit for bit (TangentStreamIsValves).
+      At HammerMesh_TransformToWorld (capture_subdivbake_1103.py, SubdividedTangentsProbe): 103,161 of 103,887
+      corners exact, was 84,443; every curved mesh exact.
+    - SETTLED 2026-11-04: the 726 flat-mesh corners whose -0 Valve has as +0. Captured (capture_subdivtangents.py,
+      rc 1103, CS2 closed): the streams leave SubdivisionBake_Bake (1813baa40) as TransformToWorld gets them, so the
+      +0 is made inside the bake. Read (rc 0923): the write-back 1813c94f0 and the evaluator 1813c1cc0 only copy;
+      the patch builder 1813b82f0 lerps every float of every stream from the corners (rows, then columns), then
+      writes `mulss lerp, weight` / `addss grid[ptr + row * stride]` (disassembly 1813b8c40-1813b8d38), the weight
+      and stride from 1813c83f0's record: a stream with no grid weight 1.0, stride 0, the pointer the +0.0f at
+      18243e890; a stored or evaluator grid weight 0 and its stride. So a grid value is lerp * 0 + grid (a -0 grid
+      value is +0 unless the lerp is negative), a plain lerp is lerp + 0. Ported (FaceArrays.DataGrid /
+      FinishLerps, SubdivisionBake.TangentGrids): 103,887 of 103,887 corners exact at TransformToWorld.
 
 39. **The vertex unpack and transform of baked props** (settled
     2026-10-01): WRB_LoadPropMeshes' floats come from meshsystem's unpack
@@ -449,6 +506,33 @@ game can answer is raised with the user first, and runs with -insecure.
     (so a light probe, 2026-10-04), which is none of core's error.vmat,
     editor/error_indicator.vmat or models/dev/materialforerrormodel.vmat;
     ours gives it the empty attribute set.
+    MEASURED 2026-11-04 (CS2 closed, tools/re/capture_missingmaterial.py on cardtest -world -fshallow,
+    package restored cmp-ok): 1801d4dc0 (WRB_MeshEntryFlags' material load) returns, for
+    materials/doomtextures/teleport02.vmat, a handle (+8 the requested name) whose material is named
+    materials/error.vmat (string at +0x10); doom_npcs/imp_atlas.vmat resolves to it too. Only
+    core/pak01 has materials/error.vmat_c, so the fallback is core's error.vmat after all: the
+    earlier "not error.vmat" compared flags we computed. Next (CS2 open): error.vmat's attribute flags
+    and representative texture through the shader attribute probe against 0x160100000 / 256x256.
+    2026-11-05 night (offline): core's error.vmat_c is error.vfx with g_vErrorColorTint only (no textures, no
+    attributes), and error.vfx declares no SupportsLightmapping, SupportsAggregateInstancing or NeedsLightProbe in
+    any program (ShaderAttributeProbe; MaterialAttributes.Of and OfModes both answer none of them, Of answers
+    AllowBackfaceCulling by our ledger 40 default). So Valve's 0x160100000 and 256x256 come from what answers
+    beyond the material's blocks: CMaterial2::GetBoolAttribute's parent set (+0x60, ledger 40). Taking error.vmat
+    through our flags gives 0x100000000, not Valve's, and our current empty set (0) is what the merger's base list
+    sees in Valve's compile too, so nothing changed. Next: what fills CMaterial2 +0x60 (materialsystem2's load),
+    or Frida: query the returned error material's vf 0x48 / 0x50 for the entry keys and its representative texture.
+    Read (materialsystem2 1015): GetBoolAttribute walks the block at material +0x180 (12 keys, then the chain at
+    block +0x68), then the block at block +0x60 (material +0x1e0) the same way. The constructor 18003abf0 (called
+    only through vtables: 1801793ac, 18012da10) stores a refcounted parent object at material +0x60 (its fifth
+    argument). Not read: who installs block +0x60.
+    MEASURED 2026-11-06 (CS2 closed; capture_missingmaterial.py, the material's vf 0x48 called for the four keys at
+    1801d4dc0's return and again after every WRB_MeshEntryFlags): teleport02's error material answers not found for
+    AllowBackfaceCulling, SupportsLightmapping, SupportsAggregateInstancing and NeedsLightProbe throughout, its block
+    at +0x180 empty and no parent (+0x1e0 null); reflectivity_30 answers found and true for all four. WRB_MeshEntryFlags
+    takes found && value (every call site), so this build gives the entry none of those bits: our empty set is right,
+    and the 10-04 0x160100000 does not hold on 1.41.9.6. (Not found writes [rsp+0x18] != 0, the caller's r8 home
+    slot, into the out bool: GetBoolAttribute 18000bb4a.) s2c_prefabprobe5's teleport02 model difference has
+    another cause.
 43. **Prop aggregate grouping and order** (WRBNode_BuildPropAggregates,
     180272ce0, read): models in CDefStringLess order, one entry per prop
     and mesh, buckets by entry +0x20 (one agg_prop model per material),
@@ -2328,8 +2412,9 @@ game can answer is raised with the user first, and runs with -insecure.
     through NavGenPolys.AddJumps gives Valve's polygons and connection
     blocks on probe01, cardtest, probe_classes, s2c_prefabprobe5 and 6
     (NavGenJumpTests; 8 and 16 connections added, 14 of 62 casts blocked
-    on prefabprobe5). Maps/NavGen NavGenJumps.cs, NavTriangleWorld.cs.)
-    - Capsules (the physics interface's vfn 0x1e8, 180071d70): from
+    on prefabprobe5). Maps/NavGen NavGenJumps.cs, NavJumpSweepWorld.cs.)
+    - Cylinders, not capsules (corrected 2026-10-28, ledger 174: the physics
+      interface's vfn 0x1e8, 180071d70, is RnHullCreateCylinder): from
       (0, 0, MaxClimb) to (0, 0, height / 2 + MaxClimb), the hull's radius;
       height, short height and crawl height for polygon kinds 0, 1, 2.
     - Candidates (18006fcf0): each edge of a polygon with a connection
@@ -2350,10 +2435,8 @@ game can answer is raised with the user first, and runs with -insecure.
       source overlap's midpoint, above the target's at the source's height,
       the target's midpoint; each leg both ways through world vfn 0x580
       (a type-4 shape cast, 180201b00), blocked when the fraction is below
-      1. Not ported: our NavTriangleWorld tests the swept axis against the
-      nav world's triangles within the radius, Valve's verdict on every
-      cast seen; vphysics2's hull (180251800) and mesh (180244dc0) casts
-      and their margins are open.
+      1. Ported 2026-10-28 (ledger 174); the earlier NavTriangleWorld was a
+      stand-in and blocked 532 jumps too many on s2c_prefabprobe3.
     - Order (18006b160): pairs sorted by squared midpoint distance (MSVC
       std::sort, 180073a20); each unmarked pair adds its connection
       (18004dd20): this side as found (kind 0) unless the polygon already
@@ -3164,8 +3247,8 @@ game can answer is raised with the user first, and runs with -insecure.
       four, the 13 lighting rows, the texture compiles' rows (minmipsize, maxmipsize, fast, final,
       hueShiftFixup, lightmapMaxResolution 0, then the texture arguments: probe volume, fog, far field
       indirection, far field atlas, lightmap), the meshlet rows, force_up_to_date_materials, the physics
-      two. MapRootFile.ReadOrder; all 25 lit and 15 unlit references byte for byte. Still open: the +0x605
-      flag; where flattenPropsWithBakedLighting is read (it ties with nothing).
+      two. MapRootFile.ReadOrder; all 25 lit and 15 unlit references byte for byte. The +0x605
+      flag settled 2026-11-03 (below). flattenPropsWithBakedLighting is read in EntityLump_StaticModelRecord (180245770, when the compile does not bake); its place in the read order is not captured, and it ties with no other name, so it cannot move a row.
     - Settled (2026-10-22, capture_argdeps.py --over --trace on Valve's Only Entities compiles of probe01 and
       cardtest): an Only Entities build compiles every entity model again and writes default_ents and the
       map root. A physics-only model reads keep_vertices and mapbuilder_entity_classname, which its own
@@ -3188,6 +3271,14 @@ game can answer is raised with the user first, and runs with -insecure.
       Rechecked on CS2 1.41.9.2 (2026-10-25, the same switches over the addon's lit 10-23 packages): unchanged,
       8 compiled, no world; the 10-23 references that built the world had -world -fshallow added by
       compile_fresh.py.
+      Rechecked 2026-11-06 (CS2 1.41.9.6, tree 72b49c8, ParityReport from the .vmap into an empty package):
+      -world (fresh_refs) probe01 13/13, cardtest 14/14, ze_hold_em_p 45/45; -world -phys -vis -nav
+      (nolight_1023) probe01 18/18, cardtest 20/20 (both but the .nav), ze_hold_em_p 49/49 with its empty .nav;
+      Fast (preset_fast) probe01 16/16, cardtest 17/17 but the .nav; Only Entities (preset_entities, over
+      vrad3_refs' 10-29 lit package as PARITY_BASE) every file it writes, the .nav and world.vwrld_c stamp
+      being the base's. Every .nav miss is the heap pointer fields alone (ParityReport.NavWhy, ledger 109's
+      comparison). %TEMP%/parity_base (11-05) is not the package Valve's Only Entities run went over: its
+      lightmaps differ.
       (Which entity models make the map read force_up_to_date_materials: settled below.)
     - Also from the run: probe01's world_visibility.vvis_c differs only in 4 bytes at 551 (the fingerprint,
       a CRC over a path blob, and the dev box compiled under /tmp); Valve's own probe01 .nav is 9,556, 9,580
@@ -4049,7 +4140,7 @@ game can answer is raised with the user first, and runs with -insecure.
       CubemapFaceConstants.VisibleVolumes ports the order; probe01's "volume 1 before volume 0" is the smaller box.
     - Not read: the scene's generic object cull that decides which volumes reach 1801c1f70 (VisibleVolumes uses the
       world box against the face frustum, which every face of both maps confirms; roadmap 2), the map's int.
-    - Open: s2c_l5probe's cube 1 (needs a capture, CS2 and Steam closed) for its whole array; the viewmodel's own
+    - Open: s2c_l5probe's cube 1 for its whole array (captured 2026-10-30: cubehost_run/s2c_l5probe_cube1b); the viewmodel's own
       draws (models, skinning, per-view and light blocks); a map whose volumes have other priorities or equal boxes.
 
 150. **The cubemap face's fixed-function state from the programs** (2026-10-26: Valve's .vcs render state through
@@ -4478,6 +4569,17 @@ game can answer is raised with the user first, and runs with -insecure.
        adds those only when vis runs, so a compile that bakes with vis off may read three arguments more than
        ours lists. Read Build's branch before changing it; no Valve compile of that switch set is in the
        corpus.
+       Settled 2026-11-03 (rc 0923 decompile, checked on a fresh Valve compile): CWorldRendererBuilder_Build
+       (1802472a0) takes vf 0x100 (+0x605) before anything else and builds the ray trace environment when it
+       or vis (vf 0xe8, 2) holds, outside an Only Entities build (+0x2d8 from vf 0xf8): norte, then unless set
+       WRB_CollectRteMeshes (1802839d0) reads dumptris and, once the .rte is written, debugvisgeo. CompileMap's
+       decision (1800fd550, at the "bakelighting" read) is (not partial or bakelighting) and not
+       nobakedlighting, left to right: bakelighting is read only in a partial build, nobakedlighting only when
+       the first half holds. Ported in MapRootFile (Compile.Partial). probe01 with -world -bakelighting
+       -fshallow (%TEMP%/bake_novis/probe01.vpk, resourcecompiler 1103) reads norte, dumptris, debugvisgeo
+       and bakelighting beside the lighting rows; our .vmap_c equals it byte for byte
+       (UnlitMapRootsEqualValves with MAPROOT_SET="bake_novis|-world -bakelighting -fshallow"), and every
+       other reference is unchanged.
      - Read, not ported: the extra vertex streams of a mesh (NodeMeshEntries.WithPaintStreams, measured on
        LowPrecisionUv1). 1810dca50 (from CMapMesh_NameSlotsAfterOverride 1810dcca0) walks each material's input
        list (181ef9b30: the material's vf 0x98, records of 0xc4 bytes, the name at +0x40) and adds
@@ -4614,6 +4716,896 @@ game can answer is raised with the user first, and runs with -insecure.
        drag off by 1 before step 0.
      - Exact: RagdollLockstepTests on the capture (62 dynamic bodies, every contact, final poses, 2700 steps, Valve's
        order) and SettleLumpTests (our order): the whole lump equals Valve's, 0 differences.
+170. **Steam Audio's reverb bake: where its randomness comes from, and the bake replayed** (2026-10-28, open: the
+     scene and probes from the .vmap; disassembly of phonon 0923 180a580e0, 1801f5e48..180249a08 and steamaudio 1023
+     180087e90, 180084d90, 1800646d3; Frida captures of resourcecompiler on s2c_saprobe; [STEAM_AUDIO.md](STEAM_AUDIO.md)).
+     - Measured: three Valve compiles of s2c_saprobe give three .sareverb files; the .sapaths is the same each time.
+     - Settled from the code: the reverb rays' seeds are rdtsc (Embree RandomSampler_init from clock() in phonon's
+       ISPC jobs, 16 sites; the low 32 bits feed the murmur mix). The time(NULL)-seeded RandomNumberGenerator
+       (180a580e0) is not reached by the bake (a hook on it saw no call).
+     - Exact: with every rdtsc pinned and -sareverb_threads 1, two Valve compiles are byte-identical; with 8 threads
+       they are not (per-thread energy-field sums), so Valve's multithreaded reverb is not reproducible by anyone.
+     - Settled from the code: the bake block (180087e90's 0x80 bytes), the context variables and the Embree device
+       settings (one reserved byte, 1800646d3); the scene settings (type 1, the Embree device at +0x30) and the
+       static mesh settings (180084d90).
+     - Exact: replay_phonon.py runs Valve's call sequence through phonon.dll in our own process with the captured
+       mesh, probes and block, seeds patched to 0: its probe batch equals the m_pProbeBatch of Valve's seed-0
+       one-thread .sareverb byte for byte.
+     - Exact (port, 10-28): ProbeBatch / FlatBufferBuilder re-write all 14 Valve probe batches (reverb and pathing)
+       byte for byte; SteamAudioFiles writes both whole KV3 files from the batch. The reverb settings are read as
+       18006bc60 does (code defaults, gameinfo ResourceCompiler/SteamAudio/ReverbDefaults, worldspawn via the KV3
+       getters 1801deba0 / 1801de860 / 1801de9f0); the KV3 conversions between value types are refused, not ported.
+     - Settled from the code: Embree 4.4.0's Scene::createTriangleAccel gives phonon's scenes (quality HIGH,
+       DYNAMIC, not robust) BVH8Triangle4 with Möller intersectors. Exact: the Möller tests (FMA dot / cross,
+       rcpps + FMA Newton) reproduce 75,874 captured rtcIntersect8 lanes (t, u, v, Ng, primID) and 55,854
+       rtcOccluded8 lanes by brute force (SteamAudioRayProbe); no tied t occurred, the only case the BVH decides.
+     - Settled from the code (10-28): the sample tables (180a58220, kPi 3.141592f, CRT cosf / sinf FMA paths
+       182683c40 / 182685260) and the AVX2 reverb kernel 180201a50 with its ISPC math, ported; equal to phonon's
+       tables and to Valve's energy fields on 72 of 73 probes. Open: probe 65's single exact tie (triangles 166
+       and 169 share the hit edge at equal t), which Embree's BVH traversal order decides; the reverb estimator.
+     - Exact (10-28, pipeline): reverb times (180a84df0 + CRT expf / log10f FMA paths) on 7 files; the automatic
+       probes (180100e40 box, 18006b2d0 matrix, 180a86090 generator) = Valve's 73; the material table (180128710,
+       180084a40, 180084d90 bands 0/7/9) = Valve's 164. Open: the acoustic geometry collector (180f53780 and its
+       mesh builders), the probe filters (inside shapes 180fbe450 and the rest), the pathing bake.
+
+171. **Steam Audio's acoustic geometry from the .vmap** (2026-10-28: decompile of resourcecompiler 0923 180101690,
+     180100e40, 180f54950, 180f53f40, 180f53780, 180f4bb00, 180f519d0, 180f510d0, 180f50ed0, 180f54020, 1813a3370,
+     18139f930, 181057020, 1819cea20, 1801feb70, 1810e6fb0, 1810e3f50 and the SIMD 18125d1f0 behind 1812651a0;
+     steamaudio 1023 180067dc0, 180084d90; the s2c_saprobe capture's four scenes; SteamAudioSceneTests).
+     - Settled from the code: the scene is the map meshes' physics shapes, not their faces. 180f519d0 calls
+       PhysMesh_Shapes (the settle's own, ported) and turns each shape back into triangles (hull fan 1819589f0 at
+       scale 1, RnMesh vertices x (1, 1, 1) and its triangles 1819cea20), grouped by (surface index, InteractsAs,
+       collision group) in first-seen order, under the node's (translation, longest column, quaternion) rebuilt as a
+       matrix (1801feb70) and applied with 1812651a0. 180f510d0 appends the groups: group 1 never, otherwise kept when
+       the mask is 0, the group is 0 or InteractsAs meets the mask; a negative surface becomes material 1.
+     - Settled from the code: the two collections differ only in the mask. The bake's (180101690, first flag set)
+       is 0x1400 (blocksound, window), the probe generation's (180100e40, flag clear) 0x3400 (passbullets too); a
+       mesh in Force Static mode (2) takes mask 0. 180f53780's rules: owner solid 0 out; mode from the mesh's
+       embedded steamaudioGeometryMode (+0x3b70) else the owner's steamaudio_geometry_mode; 1 out; 3 goes to the
+       dynamic list, which neither collection keeps; a mesh under an entity needs solidity 2. The walk is depth first
+       in stored order (180f53f40). steamaudio's build (180084d90) takes the lists as they are: metres and axes
+       (180063600), each triangle reversed; nothing is welded anywhere (Valve's 206 vertices are the shapes' own).
+     - Exact: SteamAudioSceneTests: s2c_saprobe's scene from the .vmap equals all four captured scenes (206
+       vertices, 280 triangles, material indices) bit for bit; the probe box from our generation scene gives the
+       captured iplProbeArrayGenerateProbes matrix bit for bit, and the floor probes on our scene Valve's 73.
+     - Not ported, refused: instances and prefabs (the instance paths), hidden nodes (whether the compile drops them
+       before this walk is not read), a mesh's own steamaudioGeometryMode (its .vmap storage is not read), entity
+       models and smart props (180f52220), paths and cables, faces whose material sets tools.steamaudiogeometry
+       (180f54020), a default-group shape with no InteractsAs (the physics interface's layers, 180f519d0's vfn
+       0xd8 / 0x58). s2c_saprobe does not tell the two masks apart (it has no passbullets-only shape).
+
+172. **Steam Audio's pathing bake (.sapaths)** (2026-10-28: decompile and disassembly of phonon 0923 180acb910,
+     180ab5650, 180a978e0, 180a93db0, 180a93fe0, 180a93c70, 180a939f0, 180a71c40, 180afbc20, 180a954f0, 180a986a0,
+     180a9a8b0 / 180a9ae80, 180a96a30, the CRT atan2f 182683840 and its table 182b64e60; the s2c_saprobe capture's
+     iplPathBakerBake block; tools/steamaudio/oracle_atan2.py; SteamAudioSceneTests, SteamAudioAtan2Tests).
+     - Settled from the code: the bake is 4.8.1's PathBaker with two 4.9 changes. Dijkstra's range test is the
+       straight distance |p[start] - p[v]| <= pathRange, not the path cost; a new parameter flag (+0x40, 0 in Valve's
+       call) skips the path search when 1. The API fixes asymmetricVisRange, down (0, -1, 0), visRangeRealTime =
+       visRange and no pruning. Visibility with one sample or radius 0 is one rtcOccluded1 from p[i] to p[j] over
+       (0, |p[j] - p[i]|]. The heap is MSVC's push_heap / pop_heap on (index, cost) with cost >. The sort predicate
+       (invalid, then direct, then node lists) is a total order on content, so the unique-path order is fixed. No FMA:
+       lengths are sqrt(((x x + 0) + y y) + z z); the turning angle is atan2f(|perpendicular|, |parallel|).
+     - Exact: CrtMath.Atan2 against phonon's atan2f on 200,000 oracle pairs (4,867 edge pairs refused, none differ).
+     - Exact: SteamAudioSceneTests.SaprobePathsFromTheMap: from the .vmap alone (our scene, our 73 probes, the
+       captured settings) the whole s2c_saprobe.sapaths equals Valve's, 14,007 bytes (73 visibility lists, 51 paths of
+       which 3 turn, 2628 refs).
+     - Not ported, refused: sampled visibility (numSamples > 1 with a radius), coincident probes (kZero's
+       direction), the flag at +0x40, pruning, atan2f's NaN / infinity / mixed-sign zero and underflow paths.
+     - Exact (end to end): SteamAudioSceneTests.SaprobeReverbFromTheMap (SAREVERB_FULL=1): from the .vmap alone, our
+       scene, probes, reverb kernel (one thread, seed 0), reverb times, the reflections layer (type 0, variation 0,
+       needs_update cleared per probe as 4.8.1's BakedReflectionsData::set does; Valve's file has all 73 at 0) and the
+       KV3 file: 72 of 73 probes bit-exact, probe 65 the known tie; with Valve's probe 65 put in, the whole
+       s2c_saprobe.sareverb (355,507 bytes) equals Valve's seed-0 file.
+
+173. **Steam Audio's probe filters: inside shapes ported, the nav coverage appender read** (2026-10-28: decompile and
+     disassembly of resourcecompiler 0923 180100e40, 180fbe450, 180fbcb10, 1800a1980, 1818e4a00 / 1818dace0 /
+     1818e3290, the step table at 182771988 and CompileMap 1800fd550; vphysics2 0924 1800655d0, 1801fcf60, 1801dda70,
+     1801ec3c0, 1802facf0, 18024ca60, 18024fbc0, 180254790, 1802eca10, 18012e550, 18024af70, 180248c80, 1800010b0;
+     a Valve capture of s2c_sainside; SteamAudioSceneTests.ProbesFromTheMap).
+     - Settled from the code: the filters run in the order 180100e40 calls them, on Source-inch probes. The physics
+       world they query is the compile context's (vfn 0x18), built in CompileMap's "Build physics world"
+       (180fb6de0, MapCompile_NavPhysicsWorld): the world navsystem reads, the settle build through PhysDoc flags 0x16.
+     - Settled from the code, ported (SteamAudio/ProbeFilters.cs): inside shapes is world vfn 0x5d8, a sphere query of
+       radius 0 per probe with InteractsWith 0x400, static bodies, group 3, flags 0x49 (bit 0x80, left from the stack,
+       is never read by 1802facf0); a probe goes when any shape passes the filter and its exact test. The tests:
+       sphere and capsule against (r + R)^2, a hull by GJK distance to the point (both at the 3x4 identity, which a
+       static initialiser makes from 1.0) at most r, a mesh holding the point when closed, else a BVH triangle within
+       r. The body frame's origin sums (k x q) + (c + w k), unlike 1801d64a0's ((k x q) + c) + w k.
+     - Exact: s2c_sainside (tools/coverage/steamaudio_inside_specimen.py: s2c_saprobe with a floating mesh box, a
+       hull box and a closed-mesh box over three probe columns): our scene equals Valve's (226 vertices, 308
+       triangles), our generation gives 75 probes, the filter drops the one inside the hull and the one inside the
+       closed mesh, and the 73 left equal the probes Valve baked bit for bit (Valve's log: 73 remaining). The open
+       mesh box keeps its probe in both.
+     - Read, not ported: the nav coverage appender (180fbcb10) runs on every compile with a nav mesh (its convar,
+       snd_steamaudio_enabe_append_probes_to_cover_navmesh, registers on). Per nav area it traces from the centre and
+       corners and, for areas over (spacing x 39.37)^2, up to 10 points from tier0's global RandomFloat (1818e3290),
+       keeps candidates no existing probe within the spacing can see, and clusters them (180fbb450). Porting it needs
+       the global random stream's state at that point of the compile. On s2c_saprobe and s2c_sainside it appends
+       nothing (73 = 73).
+
+174. **Nav ladders in the mesh build, and AddJumps' sweep** (2026-10-28: decompile and disassembly of resourcecompiler
+     0923 1818d63c0, 1818dc620, 1818e7300, 1818e69b0, 1818ea300, 1818eb970, 1818e4490, 18129b060, 1818e71b0,
+     1818d2b40, 1818d2c10, 1818d1fa0; navsystem 20261015 18006b160, 180072ef0; vphysics2 0924 180065410, 180202b00,
+     180201b00, 1802023d0, 1801dea00, 1801ecb30, 1801e23b0, 1801ebc00, 1801ee7b0, 1801e85a0, 1800092f0, 180128ff0,
+     1801ad370, 180089a30, 18012e550 / 600 / 650, 18024a4a0, 1801c6ae0, 1801c7c70, 18003f500.)
+     - Ladders (NavMeshLadders, NavWriter; docs/NAV.md "Ladders in the mesh build"): direction, the normal from a
+       0.1 sphere cast (static only, group 4, nearest strictly), the bottom and top stepped by 10, length, the seven
+       area links into the areas' two lists, the top raised to the top areas' closest point, and the save.
+     - AddJumps' cast is a sweep of the kind's cylinder: RnHullCreateCylinder, 16 angles of pi/8 in float through
+       tier0's V_cosf and V_sinf, the bottom ring point then the top, 32 points into RnHullCreate. World vfn 0x580
+       sweeps its vertices (scale 1, radius 1/16, no turn) by conservative advancement (RnTimeOfImpact to 1, 32
+       iterations) against each static shape that passes the query (layers 0x3021, group 4) and whose broadphase
+       leaf meets the swept box: hulls, spheres and capsules whole, meshes per triangle (RnMesh_QueryBox, radius
+       1/16). The call's overlap byte is 0, so any time below 1 blocks. A static body's two frames (1800092f0 and
+       1801ecb30's inline copy) sum the origin as P - ((k x q) + (c + w k)), unlike 1801d64a0.
+     - Exact: 18129b060 on 200000 random triangles (NavMeshLaddersOracleTests); RnHullCreateCylinder on 400
+       cylinders, and V_cosf / V_sinf against CrtMath at the 16 angles (NavJumpSweepOracleTests); AddJumps from
+       Valve's 026 input on probe01, cardtest, probe_classes and s2c_prefabprobe3, 5, 6 (prefabprobe3: 30606
+       connections, 16849 casts, 1453 blocked); from the .vmap, stage 029 and the .nav up to the custom data on
+       the 11 captured maps (NavGenPipelineTests), prefabprobe3 with its ladder (id 1, width 32, top (1712, -3219,
+       202.00002), bottom 64, length 134, direction 2, areas 4011 4009 4011 3694 3713 3713 3942).
+     - Argued, not measured: the mesh query box's sums can't change a verdict, since its 1/16 growth exceeds the
+       touching distance (1/32 + 1/128). The +0x8ac pass (1801c6ae0) only records the query.
+     - Not ported (refuses): 180202b00's types 1 and 3, compound shapes, a cylinder pointing down (180089a30's
+       opposite case), the closed-mesh normal of the ladder cast (18016f710), a func_ladder in an instance or prefab.
+175. **Nav links (CMapNavLink): the collector, the islands and the entity lump** (2026-10-28: decompile and
+     disassembly of resourcecompiler 0923 180f203b0, 180fc7220, 180f2ddc0, 180fefbc0, 181063b90, 181064a10,
+     181064ab0, 181065c90, 181065ee0, 181068680, 18106b4f0, 180fa8bf0; navsystem 20261015 1800217b0 and a load scan
+     of every function reading +0xc0 / +0xc8; hammer 1023 180b33ae0; tier0 V_CompareNameWithWildcards by ctypes,
+     tools/re/tier0_wildcard_oracle.py; Frida captures of s2c_navlink, tools/re/capture_navgen.py.)
+     - The collector takes each CMapEntity of the root (then each sub-map's) whose classname
+       V_CompareNameWithWildcards("ai_nav_link_area", name, 0) matches, case-blind (the oracle: AI_NAV_LINK_AREA
+       matches with flag 0, not 1; a longer or shorter name never), and that IsA CMapNavLink. Corrected by ledger
+       177: the wrapper 180fc6f40 passes mode 2 (the classname test 180f2ddc0 only; the targetname test is
+       180fefbc0, mode 1) and the caller's 3 as flags (bit 1: the visibility state +0x370 must be on). Per instance
+       path: start = the translation of step matrix x the node's, end = start + locatoroffset (s2c_navlink link0 at
+       yaw 90 ends at (300, 1000, 272), Valve's record).
+     - The .vmap attribute is `locatoroffset`, the tool attribute's lower-case name: a probe with `locatorOffset`
+       (the change-tracking name in 18106b4f0) gave Valve's default (128, 0, 0) on all three links
+       (%TEMP%/navgen_capture/s2c_navlink_camelkey). Factory defaults: width 128, locatorangles (0, 180, 0), type 0.
+     - In navsystem only IslandRemoval reads the links (+0xc0 with +0xc8 loaded together nowhere else; the other
+       hits are the 0x1b8-byte polygon array); the "no walkable seeds" skip counts seeds and markups, not links.
+     - The lump: CMapNavLink is a CMapEntity (181064a10) and takes its compile_source_id in the walk; its vf
+       (181065c90) adds width (a number), locatoroffset and locatorangles ("%f %f %f"), nav_link_movement and
+       the reverse (empty strings not written, 180fa8bf0). s2c_navlink: entities 70 to 72 Valve's.
+     - Exact: the three records (NavLinkTests.LinksAreValvesRecords), 029 from Valve's 028 (pad A kept, pad B
+       removed), the link entities and every compile_source_id, and s2c_navlink's whole .nav from the .vmap
+       (NavCompileTests: bytes 0..5216 and all 3292 custom data lines).
+     - Not measured (refuses): links in instances, prefabs or groups, hidden or editorOnly links. The other
+       attributes: ledger 176.
+
+176. **Nav links: every CMapNavLink attribute from the .vmap** (2026-10-28: decompile of resourcecompiler 0923
+     181068680 (the attribute table), 1810663e0, 181067770, 181067b60, 18106b6d0, 18106b850, 18106b350,
+     18106b6b0, 18106b6c0, 18106b830, 18106b840 and the table at 18300fa90; the capture of s2c_navlink2,
+     tools/coverage/nav_link_specimen.py --keys, %TEMP%/navgen_capture/s2c_navlink2_in, and its package.)
+     - navlink_type is a string: its setter from a string (181067b60) compares V_stricmp_fast against each
+       MapNavLinkType_t name of 18300fa90 (GENERIC 0, CLIMB_UP 1, JUMP_DOWN 2, VAULT_OVER 3, GROUND 4) and
+       takes 0 for any other; the display names (Generic, Climb Up, ..., 1810663e0) are editor choices only.
+       Measured: "mapnavlinktype_t::jump_down" loads as 2 (no reverse key), "Ground" as 0 (reverse key written).
+     - width (float), locatorangles (qangle), nav_link_movement and nav_link_movement_reverse (strings) are
+       stored as given (no clamp in their setters); nav_link_preview and nav_link_preview_reverse go to +0x1890
+       and +0x1898, which neither the collector nor the export reads (s2c_navlink2 sets both, lump unchanged).
+     - The export's branches, all measured: GROUND writes "__ground__" for both keys whatever the strings;
+       CLIMB_UP, JUMP_DOWN and VAULT_OVER write only nav_link_movement (none when empty); GENERIC writes both,
+       each only when not empty; width 0 is written as 0.
+     - Exact on s2c_navlink2 (six links): the records, 029, the six link entities and every compile_source_id,
+       and the whole .nav from the .vmap (40 areas, bytes 0..5216 and all 3292 custom data lines).
+     - A key in another DMX type than the above refuses (MapEntities.NavLinkFields).
+
+177. **The world's entity list after the bake, and nav links in instances** (2026-10-28: decompile of
+     resourcecompiler 0923 180fc6f40, 180fc7220, 180f2ddc0, 180fefbc0, 180fca3d0, 180fca010, 180fcb150, 180f60740,
+     180f5ff40, 180f6d410, 180f684c0, 181017820, 180f7a350, 180f8f920, 181064ab0, 181065610, 181065720, 181064300
+     and the locator vtable 182362db0; Frida on the 1023 build, tools/re/capture_entitylist.py: every add to and
+     remove from the list (180fcb1d0, 180fcc310) with the bake as markers, and the list at the collector
+     (180f21570); captures of s2c_navlink3 and s2c_navlink4, tools/coverage/nav_link_nest_probe.py.)
+     - The search (180fc7220) walks the CMapWorld's entity list (+0x1828 count, +0x1830 array) in stored order.
+       The collector's call (180fc6f40) is mode 2, the classname, with flags 3: a node whose visibility state
+       (+0x370, off for force_hidden, editorOnly or a visibility manager hide, inherited) is off is skipped
+       (s2c_navlink3's hidden and editorOnly links are in the list and not in the records).
+     - The list: at load the world (180fca3d0), then each CMapEntityIONode in tree preorder as it joins
+       (180fca010): every CMapGameDataNode, CMapInstance and CMapPrefab (the IsA chains); not groups, meshes or
+       the navlink locators. A prefab's map fills its own world's list. In the bake each collapse appends its
+       copy's listed nodes in preorder; when no other instance names the target (180f684c0) the target's subtree
+       is removed in postorder, then the instance; a prefab appends its map's nodes in preorder, then leaves.
+       Removal is FastRemove (180fcb150): the last entry moves into the slot. Read off s2c_navlink3's 203 edits;
+       MapEntityList simulates it, and the records' order on s2c_navlink4 (11 links, copies interleaved by the
+       swaps) is Valve's.
+     - A CMapNavLink's two CMapNavLinkLocators (181064ab0, at load, from the node factory) take ids: the load's
+       ids run two past each link and a copy of a link takes three slots (MapInstances.ClonedLocators,
+       SmartProps.NodesCreatedOnLoad).
+     - A copy: the link moves by TransformBy (181001820), its locators by CMapTransform's (vf 0xc8 181076410, the
+       step as a CTransform, SettleWorld.UnderDeformerStep); the locators' handler (181065720) gives the link
+       locator 0's origin and angles and sets locatoroffset and locatorangles to locator 1 minus locator 0
+       (Valve's yaw 90.0000076 for a copy turned 90, which the matrix path gives as 90). SetScales (181065610)
+       keeps a link at scale 1: an instance's scale moves neither its position nor its offset.
+     - Exact on s2c_navlink4: the 11 records (two instances of one target, a nested copy through a turned
+       instance, a plain group), 029, the whole lump (every copy's id, origin, angles, locatoroffset,
+       locatorangles) and the whole .nav from the .vmap.
+     - Refused: a hidden instance or prefab, a prefab whose map has instances or prefabs, a prefab inside a
+       target, a target deleted with another, a hidden link inside an instance or prefab, a link under a group
+       that moves. Links in prefabs: ledger 178.
+
+178. **Nav links in a prefab** (2026-10-28: the prefab collapse as ledger 133 reads it, 180f96d40, 181019d00,
+     180fc1bf0, 180f834d0, with the locators' TransformBy 181076410 and handler 181065720 of ledger 177; the
+     s2c_navlink3 capture.)
+     - A prefab's map nodes are reparented, not cloned, and moved by the group setter's step (180f834d0) from the
+       origin to the prefab's placement, each node by its own TransformBy: the link's locators by CMapTransform's
+       (the step as a CTransform), so the link ends at locator 0, as in an instance (NavLinkFields.Copied with
+       the prefab chain; MapEntities places a prefab map's link the same way for the lump).
+     - At yaw 90 the CTransform path and the matrix path part by ulps: Valve's start (-259.99994, 1000.00006) is
+       locator 0's, the matrix gives (-260, 1000). Ledger 177's quaternion observation was this, not a separate
+       clone transform (181102620, which writes lightmapscalebias, is not the collapse ledger 133 reads).
+     - Exact on s2c_navlink3 (14 records, three of them a prefab's at yaw 90): the records, 029, the whole lump
+       and the whole .nav from the .vmap.
+
+179. **The walkable seeds through the entity list, and prefabs whose map has instances** (2026-10-28: decompile of
+     resourcecompiler 0923 180f21760, 180f60740, 180f60af0, 180f57ff0, 180f86e70, 180feb950 and the CMapInstance
+     vtable 182349b48 slots 0x850 to 0x870; Frida on the 1023 build, tools/re/capture_entitylist.py, which now records
+     each entry's origin +0xa0; captures of s2c_prefabprobe5 and s2c_prefabprobe3.)
+     - The seed collector is the link collector's search (180fc6f40 for "point_nav_walkable", mode 2, flags 3) with
+       no IsA test; per instance path the translation of step matrix x the node's vf 0xa0 matrix. So the seeds come
+       in the entity list's order after the bake, not the lump's walk (the "unsettled" note of NavGenMapInput.Seeds).
+     - A bake round (180f60740): terrain features (180f60af0, CMapTerrainFeature only), tile meshes (180f5f490), then
+       the CMapInstance-typed nodes (CMapPrefab included) collected once by 180f86e70 with flags 0xd: children before
+       the node, sub-worlds skipped, a node with instance referrers (180f8ba70) skipped with its subtree. The filter's
+       vf 0x868 and 0x870 are 1800de990 (return 0), so it drops only non-instances and never reorders. A prefab's map
+       moves in during the round and its instances wait for the next round's collection.
+     - A prefab map's instances and targets collapse as the root's do, each named within its own tree (two prefabs
+       of one map stay apart), and a prefab map's hidden ids are its own document's.
+     - Exact: s2c_prefabprobe5's whole list (145 entries, one instance in its prefab's map: each entry's class and
+       origin, MapEntityListTests; prop_physics skipped, the settle moves them). The seed records
+       (navinput_seeds.bin) bit for bit and in order on all 16 nav captures (NavSeedTests).
+     - The first reading of s2c_prefabprobe3 (Valve's list up to entry 2463 and not after) is settled by ledger 180.
+     - Still refused: a point_nav_walkable under a deformer, and ledger 177's other refusals (prefabs: ledger 180).
+
+180. **A prefab map's instance that joins the world ahead of its target names a clone** (2026-10-29: decompile of
+     resourcecompiler 0923 1810158a0, 181019590, 1810197f0, 181018fa0, 180f8f0d0, 180f8ba70, 180f88920,
+     181017820 (its end), 180fc5010, 180f75010, 180fca010, 180fcb150; tools/re/capture_entitylist_trace.py on the
+     1023 build: every list edit with its world, node, slot and counts, the root list around every collapse, the
+     target referrer counts and the target setter's calls with a backtrace; s2c_prefabprobe3, 4, 5, 7, 9 and
+     s2c_deformpath3, 4.)
+     - The prefab collapse reparents the map's nodes (180f75010): each leaves the sub-world's list and joins the
+       root's in preorder (180fc5010: OnNodeAdded, then vf 0x228, then the children). A CMapInstance joining
+       (vf69 1810158a0) resolves its target from the element handle (+0x558) in 181019590: a target in another
+       world (here the prefab map's, not yet moved) with two or more referrers is cloned (180f86a90) into the
+       instance's world (180f5f230) and the instance names the clone; a target already in its world is named as it
+       is. Measured: s2c_prefabprobe3's instance 4928, ahead of its target 4888 in the map's preorder, gets clone
+       5496 (and its entity 5497, listed right after the instance); the 79 behind it name 4888.
+     - The referrer count (180f8ba70) is cached on the target (+0x388 / +0x38c) and reset only by an instance's
+       SetTarget / ClearTarget (180f8f0d0). CMapInstance_Collapse deletes the target when 180f88920 finds exactly
+       one referrer: a clone leaves with its instance's collapse (Valve's slot 2464 on s2c_prefabprobe3).
+     - In a bake round a prefab map's prefabs collapse in the next round as the root's do (s2c_prefabprobe7, 9).
+     - Exact: the whole list after the bake on s2c_prefabprobe3 (2976 entries), 4 (5102, atixref as a prefab), 5,
+       7 (nested prefabs), 9 and s2c_deformpath3, 4 (MapEntityListTests; nodes a deformer bends are checked by type),
+       and s2c_prefabprobe4's six seed records (NavSeedTests).
+     - Refused: a prefab map's instance ahead of a target with fewer than two other referrers (181019590 moves the
+       target there, and whether the two are one document is not read), a cloned target holding instances or
+       prefabs, and a copied prefab whose map has instances (Valve's compiler crashes on s2c_prefabprobe10).
+
+181. **Hidden instances in the bake, and which hiddenFlags hide** (2026-10-29: decompile of resourcecompiler 0923
+     180f5ff40, 180f6d410, 180f684c0, 180f6ffc0, 1810eeba0, 1810f2750, 1810ecf10; capture_entitylist_trace.py
+     --bake-only on ze_ffvii_mako_reactor_v6_p and c2m3_coaster_d_d.)
+     - A node is hidden by the visibility manager when hiddenFlags & 0xb & ~manager+0x508 is not zero
+       (VisibilityMgr_IsNodeVisible passes 0xb to 1810eeba0; +0x508 is only set to 0, in CVisibilityMgr::vf10). Flag 4
+       alone does not hide: c2m3_coaster_d_d's four prefabs with flag 4 collapse in Valve's bake. MapEntities.HiddenNodes
+       tested any non-zero flag; it now tests & 0xb. On disk flag 4 is on those four prefabs, one prefab of
+       dkr_m1_motel_d_c2m2 and mako's prop_physics_override 1305 (mako's 70 lumps unchanged: 0 differences).
+     - CollapseInstance deletes an instance whose visibility state is off (180f6d410 with flags 3): it leaves the
+       list (FastRemove), then UnregisterSubtree deletes its target when no other instance names it, the target's
+       listed nodes in postorder. Measured on mako's four hidden instances: the first three leave alone (their target
+       still named), the last takes its target's two nodes with it, and Valve's slots (2096, 2097, 2100 hold 33734,
+       33733, 33735) are those of instance-first, then the target's nodes.
+     - Exact: ze_ffvii_mako_reactor_v6_p's whole list after the bake (5753 entries) and c2m3_coaster_d_d's (1884)
+       (MapEntityListTests).
+     - Refused: a hidden CMapPrefab (none on disk once flag 4 is read right; ledger 183).
+182. **CS2 1.41.9.3's VData strip rule** (2026-10-29: disassembly of csgo modtools 20261023 and 20261029 at
+     18002e1ef; resourcecompiler 1.41.9.3's own compile of the RcReference probes through tools/rc-oracle.ps1.)
+     - CModTools_VDataStripRules (18002e190, unmoved) builds the same one-rule list, now
+       {"scripts/weapons.vdata", 1, "weapon_lar"} (was weapon_m14). Its fingerprint through 18015bc50's hash is
+       55841844 (was 2278732723), the "VData ModTools Stripping Version" RC 1.41.9.3 records in rc_probe.vdata_c
+       and rc_probe_ints.vdata_c: those differ from their 1.41.9.2 compiles in those 4 bytes only.
+     - Source2ContainerAuthor.VDataModToolsFingerprint uses the new rule; RcReference re-baked from the 10-29
+       compile (the .vsndevts_c and .vpcf_c references were from 09-07, their RED2 now RC's current one).
+     - Every .vdata_c and map root with a .vdata child (baked_bomb_damage) compiled by Valve before 10-29 holds the
+       old value: refresh such references before comparing.
+183. **Hidden prefabs, prefabs inside instance targets, and a target moved ahead** (2026-10-29: decompile of
+     resourcecompiler 0923 180f5ff40, 180f96d40, 181018a30, 181019590 and the CMapPrefab vftable 18234a700;
+     capture_entitylist_trace.py --bake-only on the 1.41.9.3 build (its addresses now mapped through rva_map: the build
+     moved them all by 0x40) on s2c_hidepf, s2c_pfintarget and s2c_aheadprobe, written by
+     tools/entities/entitylist_refusal_probes.py.)
+     - A hidden prefab (force_hidden or editorOnly; with or without instances in its map) is deleted as a hidden
+       instance is (MapDoc_CollapseInstance, +0x370 off: 180f6d410 with flags 3): it leaves the list alone and its
+       map's nodes never join. Measured: s2c_hidepf's three hidden prefabs each take the count down by one.
+     - CMapPrefab's vf 0x860 is CMapPrefab_Collapse, vf 0x868 1800de990 (false): a prefab whose collapse makes no
+       group (no loaded map world, 181018a30's +0x550) is deleted. A prefab never in the world tree (a target group
+       kept outside it) has no map loaded and so leaves alone; Hammer keeps targets in the world, so the probe has its
+       groups there.
+     - A prefab inside an instance target collapses in the round after the instance, from the copy: its map joins
+       like any prefab's (s2c_pfintarget, 238 entries). Its placement is the instance's step, then the prefab's
+       placed by it: SettleWorld.Step over the chain in nesting order (MapEntityList.Item.Chain), which the two
+       separate lists (every prefab before every instance) could not give (off by 256 x sqrt 2 at yaw 90).
+     - A prefab map's instance that joins the world ahead of its target, with fewer than two other referrers
+       (MapNode_ReferrerCount after the instance dropped its own link), moves the target itself into the instance's
+       world (the world's vf 0x1c8): the target's listed nodes join right after the instance, under the same pointer,
+       and are not added again where the walk meets them. Measured: s2c_aheadprobe with 0 and 1 other referrers;
+       ledger 180's 79 others clone.
+     - Exact: whole lists of s2c_hidepf (168), s2c_pfintarget (238) and s2c_aheadprobe (165), and every earlier
+       MapEntityListTests map unchanged; NavSeed and NavLink tests unchanged.
+     - Refused: a target holding instances or prefabs that such an instance clones or moves, a copied prefab whose map
+       has instances (Valve crashes), a target deleted with another. Not checked: the moved target's place among the
+       world's children (only its list entries and removal depend on it), and the entity lump of a prefab inside a
+       target (EntityLumpSet takes its own copy chains).
+
+184. **An unbaked world's lightmap block, and light_environment's fades with no key** (2026-10-29: RenderDoc dump of
+     atixref's cube 0 face 0 (%TEMP%/cubehost_run/atixref/replay_face0, 1.41.9.2) read with
+     CubemapFaceReplayTests.BlocksOfTheCapture; decompile of worldrenderer 1023 180015740.) MEASURED, writers not read.
+     - atixref's world has m_bHasLightmaps false and no lightmaps. worldrenderer's loader (180015740) returns before it
+       builds BakedLightingConstantBuffer_t (a 0x34-byte buffer through the render system's vfn 0x218; the only such
+       creation in worldrenderer), yet the game bound one: uv scale (1, 1), size 256 x 256, live bindless slots at
+       +16. Its writer is not found (no 0x34 creation in scenesystem, engine2, materialsystem2 or client; no "default
+       lightmap" string). CubemapFaceBlocks takes 256 for an unbaked world (UnbakedLightmapSize).
+     - Words past +0x34 are junk in both maps (0x3e3e3e3e on probe01), and probe01's faces are exact with ours at 0:
+       the programs do not read them.
+     - csgo.fgd removes cascadecrossfade and cascadedistancefade from light_environment (remove_key), so a Hammer-made
+       CS2 map carries neither; probe01 has them only because its .vmap was written by hand. With both absent the
+       game's light block holds 1 / crossfade = 10 and the same distance-fade words as probe01's 0.05: 0.1 and 0.05,
+       which equal lights_base.fgd's defaults. Where the game takes them from (the schema default) is not read.
+
+185. **An unbaked light probe volume's record: the measured parts** (2026-10-29: cubehost on atixref with
+     tools/cubehost/lpv_records.js, records of all 44 probe volume objects; client 1.41.9.3 1802819e0 disassembled;
+     atixref face 0's RenderDoc dump.) The code is read (CUBEMAPS.md A.1); three inputs are measured, not read:
+     - The engine's default probe texture (rendersystem vfn 0x198, type 6) is 2 x 2 x 2 R8G8B8A8_SRGB (viewed UNORM)
+       of zeros: the capture's 3D Image 1330, 32 bytes all 0, which every unbaked record and default slot indexes.
+     - The entity data's +0x70 .. +0x78, copied to record +0x50, is (1, 1, 1) on all 42 of atixref's volumes.
+     - Record +0x5c, 1 only when +0x69 is set and +0x6a is not (the SDF path), is 0 on all 42.
+     None of the three is mapped to a key or a schema field; a map whose values differ would need that first.
+
+186. **tier0's global random stream, and the nav coverage appender's randomness** (2026-10-30: disassembly of tier0
+     20261023 18015d160, 18015d220, 18015e1b0, 18015e780, 1800057e0, 18017bd20, 18017c72e; resourcecompiler 0923
+     180fbcb10 decompiled, 20261029 180fbdd10 / 1818e5f60 (ported with port_addr.py); Frida captures of 20261029,
+     tools/steamaudio/capture_randomstream.py, on s2c_saprobe twice and s2c_sanavcover three times.)
+     - Settled from the code: the generator (GenerateRandomNumber_Locked, 18015e1b0) is Numerical Recipes' ran1:
+       Park-Miller (16807, 2147483647, Schrage 127773 / 2836) with a 32-entry Bays-Durham shuffle, warmed with 8
+       extra steps when idum <= 0 or iy is 0. RandomFloat (18015d220) is (float)draw x a constant, min'd with a
+       second constant, times (hi - lo) plus lo. The global stream is at tier0 +0x3cc328 (idum, iy, iv[32]).
+     - Settled from the code: every seed tier0 gives the global stream is time-based. Its static initialiser
+       (1800057e0) mixes QueryPerformanceCounter, a QPC-derived double and another value; 18017bd20 and 18017c72e
+       seed elapsed milliseconds. RandomSeed (18015d160) writes idum = -|seed|, iy = 0 inline, not through SetSeed.
+     - Measured: the stream differs from its first draw between two compiles of s2c_saprobe, and the number of
+       draws before the appender differs too (3267 / 3268: other users of the global stream). So Valve's appender
+       is not reproducible run to run; it falls under the variance rule (HANDOFF, "What passing means").
+     - Measured: the appender's draws are contiguous on its own thread, three per CNavArea_RandomPoint (52 calls on
+       s2c_saprobe, 31 on s2c_sanavcover). Reseeding the global stream at its entry (RandomSeed(1)) made two
+       compiles' draws equal (93 of 93); RandomSeed(2) changed them.
+     - Measured: s2c_saprobe's 73 automatic probes all sit within 2 units of one plane (59-61) and its 42 areas at
+       floor level, so every candidate is seen (appends 0). s2c_sanavcover (tools/coverage/steamaudio_navcover_
+       specimen.py: a closed room over the floor plus a nav seed in it; IslandRemoval drops an unseeded island)
+       appends 2, at (98.5, -439.5, 211.06) and (936.17, -312.0, 211.06), and the SAME 2 under seeds 1 and 2: its
+       random points never decide the result there. The appender's non-random half (centre, corners, the
+       sight test, clustering) can be checked on it; a specimen where a random point survives is still needed.
+     - Settled from the code (2026-11-05, decompile of rc 0923 180fbcb10, 180fbb450, 181271420; installed 20261103
+       addresses 180fbdd10, 180fbc650, 1818e76d0, unchanged from 20261029, tier0 20261103 unchanged too): per area,
+       in area order, the candidates are the centre, then each corner, then floor(area / (spacing x 39.37)^2), at
+       most 10, random points (CNavArea_RandomPoint, 0923 1818e4a00); each is lifted 40 and traced up by
+       height x 39.37 - 40 (vfn 0x4f8; a hit fraction below 1 moves it by fraction / 1.5). A candidate stays when
+       181271420 says its distance to the generation box is at most height x 39.37 (59.06 in at 1.5 m; points
+       outside the box pass) and no existing probe in the 3D sphere of spacing x 39.37 (236.2 in at 6 m) around it
+       (CVertexKDTree::FindVertsInSphere) has a clear trace to it. The clustering (180fbb450) is greedy in
+       candidate order: the first unclaimed candidate is kept as is and claims every candidate within the spacing
+       sphere. So a random point survives only if it is unseen and more than 236 in from every earlier kept
+       candidate.
+     - Measured (2026-11-05, capture_randomstream.py --pin 1 with the navpoint / candidates log; specimens from
+       steamaudio_navcover_specimen.py, box centre (512, 216, 144) size (1536, 2384, 288) in all): s2c_sanavcover:
+       31 random points, all on floor areas (z 4) that probes see; its roof areas (z 152) are thin strips along
+       the roof edges with no random draws, and 2 of their centres survive. A bigger roofed room
+       (-120..1160 x -920..-120): roof areas again edge strips only, 19 candidates, 7 clusters, no random one. A
+       roofless walled corridor (300..420 x -880..1300, between two probe grid columns, s2c_sanavcover3): no probe
+       inside, 38 corridor candidates survive, 8 clusters, but the nav splits it into 72 x 266 areas (19,180 in^2),
+       too small for a draw. A solid block 100 tall over -100..1150 x -880..1300: probes are generated on its top
+       too (z 148.4 / 156.1), 0 candidates. The same block 250 tall: no nav on top at all and probes at z 282.41,
+       0 candidates. Probe generation does not always pick the lowest floor (the roofed rooms got none on the roof;
+       the blocks did): not read yet. Next idea: a hollow room as in s2c_sanavcover (no probes on its roof) whose
+       roof gets whole nav areas, which needs knowing why its roof interior gets no nav.
+
+187. **atixref's build run to run, with the clock pinned** (2026-10-30: cubehost on the installed 10-29 DLLs, CS2 and
+     Steam closed, settle 20; tools/cubehost/time_inputs.js (from feat/cube-nodump a2ecbce, ported with port_addr.py)
+     and tools/cubehost/time_pin.js; 42 EXRs compared byte for byte and per pixel.)
+     - Measured: every view of a build renders at ONE game time, and it differs per run: 26.72 (10-28), 33.89 and
+       86.75 (two runs today, 27,948 views each); env_wind's start time (10, 2.44) and the last SetWind differ with
+       it. They follow the load and settle's wall-clock time.
+     - Measured: two unpinned settled builds: 0 of 42 cubes identical, 651,642 pixels differ. `host_framerate
+       0.015625` sent before the build: 0 of 42, 1,567,108. time_pin.js (every per-view block's real and game time
+       words and the client's GameTime and three wind attributes forced to the 10-28 build's values; 25,001 views
+       and 1,125 attribute writes pinned): 0 of 42, 642,147. So the game time and the wind are NOT what makes
+       Valve's atixref build vary: something else does (candidates not yet measured: the eight fast_strobe light
+       styles and particles, evaluated per frame on the CPU; physics settle; texture residency).
+     - Measured, the per-pixel diff of the worst cube (245678521) under the pin: every differing pixel is on the
+       red walls, as a stipple whose phase moves; the rest of the cube is equal. With the light block's dither pair
+       pinned too (scenesystem's two tier0 RandomFloat calls return constants): 1 of 42 identical, 1,495,482
+       pixels, and the walls are DARK in one run and bright in the other. So the variance is the red fast_strobe
+       light styles' phase at the build: a light style is evaluated on the CPU from the client's clock, which the
+       per-view words do not carry. Next: find where the client evaluates a light style's intensity and pin that
+       clock (or the style's value) at the build. The dither-pinned host did not exit after the build (both runs
+       hit the 900 s timeout; the EXRs were written within 2 minutes).
+     - Measured, the strobe found: the wall's red level (cube 245678521, a 40 x 40 patch) is 0.45, 0.44, 0.25,
+       0.40, 0.42 and 0.07 across six unpinned or partly pinned runs, a strobe at six phases. Not moved by: the
+       client light component's style evaluation (client 1801e4880, the per-frame path at 1801e4a68 never runs in
+       cubehost: it is gated on the byte 180223ed0 returns and on r_light_flickering_enabled), the client's game
+       time getter 18075e820 frozen for EVERY caller (0.21 / 0.44), r_light_flickering_enabled 0 (worse, 3.87M
+       pixels). Moved: scenesystem FinishRenderingViews (1800fc550) called with a fixed time instead of FLT_MAX
+       makes the wall 0.33994964 in both runs. So the fast_strobe styles run on scenesystem's real time
+       (g_flRealTime = Plat_FloatTime per view), which ledger 177's face 0 never showed because no strobe lights
+       it. time_pin.js pins it.
+     - Still varying with everything above pinned: 2 of 42 identical, 519,884 pixels (settle 20); 1 of 42,
+       608,659 (settle 60). The rest is lit patches present in one run only (values to 24) and fine edges on
+       distant buildings: candidates glows / particles drawing their own random numbers, and texture residency.
+       Not yet measured.
+     - Measured: tier0's global RandomFloat / RandomInt given a fixed sequence per call site for client.dll and
+       server.dll callers (about 4,700 and 5,300 calls a run; time_pin.js RANDOMS): 3 of 42 identical, 210,040
+       pixels (from about 520k). What is left: lit patches with ragged edges present in one run only, and one-pixel
+       edges of fixtures and frames, which look like objects placed slightly differently (server simulation).
+     - Trap: a Frida callback on RandomInt / RandomFloat must not call Process.findModuleByAddress. Engine threads
+       call them during start-up while holding the loader lock, and three runs in a row stalled before the map
+       loaded (right after "Initialized Embree"). Module ranges are cached by a timer instead.
+     - Also: networksystem draws about 16,700 random numbers a run (connection challenges); fixing those left the
+       map unloaded, so only game modules are pinned.
+     - Measured: `+phys_timescale 0` on the command line with every pin above: 0 of 42, 417,055 pixels, worse than
+       without it (210,040); not the lever.
+     - Measured: `+lb_dynamic_shadow_resolution 0 +lb_time_sliced_shadow_map_rendering_enable 0` with every pin:
+       1,433,824 pixels; not the lever either. Best so far stays time_pin.js with RANDOMS: 3 of 42, 210,040.
+       Next: RenderDoc captures of two pinned runs and a diff of the light and shadow blocks of one face that
+       differs, which says what differs instead of guessing a convar.
+     - Done (cubehost_run/atixref_rdc37_1 and _2: cube 245678556, RenderDoc index 37, every pin on; faces 0 and 2
+       differ, 1 and 3 are equal): rdc_replay dumps of both. The two runs issue the SAME 11,058 draws, the same
+       multiset (index count, offset, base vertex, instances) in every pass, and only 1,136 sit at the same
+       position: the order is what differs. An earlier reading of one action's words as a flipping per-draw flag
+       was two different materials at the same index: decompiled (spvmatch --glsl, VRF's ShaderSpirvReflection;
+       csgo_complex vulkan_60 ps static 5121 dynamic 2) and paired with the SPIR-V's member offsets, the word at
+       +0x10c is g_flMetalness and the others g_tColor / g_tNormal / g_tAmbientOcclusion, bindless indices.
+     - So with the clocks, wind, strobe phase, dither and game-module randoms pinned, what is left of atixref's
+       variance is the draw order within a layer, which is the known material heap order (156): ties on every
+       other key fall to the CMaterial2's address, which follows creation order, and the map's own materials are
+       created as their loads complete. Coplanar surfaces of two materials then show whichever drew last.
+       CubemapFaceDrawList.MaterialOrder is the port's rule; pinning Valve's build to it (a hook that breaks the
+       layer sort's address tie by the same key) is the next step for a reproducible atixref reference.
+     - Measured (2026-10-31): `-threads 1 +fs_async_threads 1` stops the map loading at all (two runs). time_pin.js
+       SORT redoes every layer sort on leave without addresses (objects by their world transform at +0x30,
+       materials by the name at the CMaterial2's +0x10; the two other pointer keys left out; ties to the index
+       count, then the input position): 6,411 sorts a run, none with an unread name, both runs 68 s: 3 of 42
+       identical, 135,760 pixels (from 210,040). Not zero: what is left is not yet localised (the input order of
+       the sorts, the dropped +0x28 / +0x48 keys, and other passes are the candidates).
+     - The start-up stalls: replacing tier0's RandomFloat / RandomInt as scenesystem loaded stalled about half the
+       time_pin.js runs at the asset system's start; installing them once client.dll is up, both runs loaded.
+       run_probe does not clear its output folder, so a stalled run keeps an earlier run's EXRs: clear it first.
+     - atixref's cubehost runs crash on shutdown (20 access-violation dumps today, all at worldrenderer 20261029
+       +0x205c6, 1800205c6): a fast-remove in a list at a manager's +0x258 with the not-found index -1, while the
+       map unloads (after "LoopDeactivateAllSystems"), after all 42 EXRs are written. Not Frida: a run with an agent
+       that hooks nothing and a run with no agent crashed the same way; one run shut down cleanly. The captures
+       are good; the run's result just reads None. What is being removed is not traced. run_probe.py now unloads
+       the agent before `quit` anyway. The run after a crash sometimes stalled in start-up.
+     - Also: the 10-29 engine2's frame-state forwarder (10-22 180242680) ports to 1802426c0 but its prologue
+       changed, so time_inputs.js logs no engine_frame on this build.
+
+192. **A cube of a map with no light_environment and no env_sky, and the csgo_ shaders' bindless lightmaps**
+     (2026-11-01: decompile of scenesystem 20261015 1801af7b0 and 1801a9b70, disassembly of 1801a8150; decompile of
+     client 20261015 1811fef80 and 181217e20; RenderDoc capture of ze_hold_em_p's cube 0 in cubehost on CS2 1.41.9.4,
+     %TEMP%/cubehost_run/holdem_rdc0 with replay_face0 .. 5, readbacks and spirv; the shaders' DXBC reflection.)
+     Code read, then checked against the capture; ze_hold_em_p has 37 light_barn, 8 env_combined_light_probe_volume,
+     no light_environment, no env_sky, no env_cubemap_fog.
+     - The light block (1801af7b0) takes the fast path sun from the binner's +0xebd0 and the shadow object from
+       +0xebd8. With +0xebd0 null the sun words are the defaults it sets first: direction (0, 0, -1, 0.04), colour
+       and bake mask 0, the two light indices 0, +31176 -1. With +0xebd8 null its whole branch is skipped: ambient SH,
+       cascade count and every cascade word stay the memset's 0 (the receiver bias +31256 / +31260 is written either
+       way, from convars). Measured, not read: a map with no light_environment has neither object (the capture).
+     - +304 .. +351 are the binner's batches as 1801af7b0 copies them from +0xf370 .. +0xf398: per item type (first bin
+       mask word, first tile mask word, mask words, 0) with bins +0xf380, tiles +0xf38c (= +0xf378 x +0xf37c, stored
+       at 1801a87f4) and the types' mask words +0xf390 / +0xf394 / +0xf398 ((count + 31) / 32, 1801a9b70). +352 ..
+       +372 are the grid (+0xf374, +0xf378, +0xf37c, +0xf370) and bins / far, bins - 1. Checked: probe01's constants
+       are this formula with no light; ze_hold_em_p's face 0 (one light word) 16384, 1, 8192, 32768, 8192, 32768.
+     - +31936 .. +31960 are, in order, bindless indices of the shadow atlas (+0xef80), DAT_180925ba8's texture (or the
+       type 2 default), +0xefa0's and +0xef88's (or defaults), then the binner's light entry count (+0xe3a8; 22 on
+       face 0), its environment map bits (1801c5cf0) and the volume count. The block is copied 0x7de0 bytes, so its
+       last 32 bytes are stack junk (ze's +32224 .. differ from probe01's: not read).
+     - PerViewConstantBufferCsgo_t word 2 (+8) is 181217e20's result: it fills the cube fog only when the view has the
+       attribute 0x765c7d3c, else writes (+inf, -inf, 1, 0) at its +0x210 and returns 0. ze_hold_em_p has no
+       env_cubemap_fog: 0. +644 is 0x3f169696 in both captures (the port's literal 0.5882353f rounded to 0x3f169697;
+       no face reads it).
+     - With no env_sky the colour pass draws no sky (no draw after the world in any face of the capture; C_EnvSky makes
+       the sky object, client 180282390).
+     - The csgo_ world shaders (csgo_lightmappedgeneric, csgo_environment, csgo_simple_2way_blend) read every texture
+       through set 4's bindless arrays, the lightmaps included; generic (probe01's dev materials) binds them by name.
+       BakedLightingConstantBuffer_t's members (reflection): +16 g_tLightmapIrradianceIndex, +20
+       g_tLightmapDirectionalIndex, +24 g_tLightmapShadowsIndex, +28 g_tLightmapDebugChartIndex, +32
+       g_bBakedShadowsGamma20, +36 .. +48 the SH2 sets. The capture's draw 429 indexes BC6H, BC1, BC5 and BC1 images
+       there (UNORM / UFLOAT views; the BC1 views force alpha to one, ours is BC1 RGBA). With those words 0 a sunless
+       map renders black; with our indices written, face 4 is within 0.0072 of the readback.
+     - Left on ze_hold_em_p (CUBEMAPS.md F): the 22 barn light entries in the binner and their records, the entity
+       models drawn as their own scene objects (CAnimatableSceneObjectDesc, CBaseSceneObjectDesc), the AO proxies.
+
+193. **The barn lights a cube face bins, on ze_hold_em_p** (2026-11-01: decompile of scenesystem 20261015
+     1801a9410, 1801cc930, 1801a9e70, 18019fe30, 1801aa3f0, 1801b2850, 1801a1030, 1801a2720, 1801b14b0, 1800ce950,
+     1804a2480, 18049e080, 1800d5410, disassembly of 1804a2480, 18049d6d0, 18003d380; cubehost on 1.41.9.4 with
+     barn_record_io.js (218 entry / record pairs, %TEMP%/cubehost_run/holdem_barn_io), light_radius.js (the boxes
+     1800ce950 stores, holdem_radius); the RenderDoc dumps of ledger 192.) Code read unless marked measured.
+     - Per face the binner lists 22, 4, 3, 3, 1 and 2 lights (light block +31952) of the map's 37 stationary
+       light_barns; g_BarnLights keeps stale slots past the count (later faces overwrite only theirs).
+     - Records: 1801b14b0 takes row clamp(+0x1ea, -1, 4) of 1805fe770 for +0xf0 (the light's direct_light_shadows
+       channel; -1 zero, 0 .. 3 unit rows, 4 past the table) and sets flag 8 when +0x1ea is not -1. With that,
+       BarnLightRecords gives all 218 pairs byte for byte (slots 0 and 1, illumination boxes, no shadow map).
+     - Descriptions from the keys equal the entries' +0x18 on all 37 lights but +0xee (6 on lights 34 and 35, a byte
+       no record reads; its writer is not this function).
+     - Bounds (BarnLightBounds): 1800ce950's box of the light's frustum, the clip by the illumination box (when
+       +0x251, clear on every light when the box was made here) and 1800d5410's outward snap: all 37 boxes 1800ce950
+       stores are ours bit for bit.
+     - The entry's screen size +0x1bc: 18004c390 (AggregateCulling.ScreenSize, cot 1) over the snapped box's centre
+       and half diagonal from the view's camera equals all 218 captured values bit for bit. MEASURED, not read: the
+       cull record whose +0x1c holds that radius is not 18003d380's (a hook there never met a light), and its
+       writer is not found (the stored bounds block leaves +0x1c 0).
+     - The fades (18019fe30, convar 180923bf8 off): +0x1b8 = 1 - clamp((fade_size_start - d) k, 0, 1), k = 1 /
+       max(0.0001, start - end); +0x1e0 = +0x1e4 the same from shadowfade_size_*: all 218 bit for bit. The gather
+       drops a light whose +0x1b8 is not above 0.
+     - Sort (1801cc930, MSVC std::sort) with 1801a9e70: +0x1bc descending, squared distance to the camera ascending,
+       colour luminance descending, the view direction against the light's x axis, then 1804a2230. Trim to
+       min(convar 180923b68, 315), then 1801a3980 (shadows) and 1801a7fd0.
+     - The binner item (1801aa3f0, 1801b2850): the light frustum's 8 corners and 6 planes through 1801abf30 (the
+       probe volumes' screen bounds) and, with the illumination box, the box's footprint too; the item's edges are
+       both runs (counts at words 2 and 3), the inside flags ANDed, bounds and depth intersected. A rejected
+       footprint drops the light.
+     - Which lights reach a face: the snapped box against the face frustum (the box test AggregateCulling.Outside
+       ports; MEASURED for lights: the function that culls light objects is not identified), the distance fade
+       above 0, then 1801aa3f0's two footprints through 1801abf30 (BarnLightBounds.FrustumPlanes in the light's
+       frame, then the illumination box from precomputedobb*), sorted by 1801a9e70: all six faces of ze_hold_em_p's
+       cube 0 give the capture's lists, lights and order (BarnLightFacesProbe).
+     - Not ported yet: +0x174 .. +0x183, a shadow atlas tile rect (x / 4352, y / 5248 in 64-pixel units; written
+       outside the gather, not found), +0x1d0 (1801a1030's size request, smoothed over the binner clock: runtime
+       state) and +0x1dc (1801a2720 from it). They reach no pixel in the cube view: with the light block's +31936
+       indexing the (cleared, never drawn) shadow atlas, the captured terms swapped into our records give the same
+       six faces as ours, which the record clears (CUBENODUMP_BARN_SHADOWS). Ported only for that reason, not as
+       Valve's values: g_BarnLights' +0xd0 .. +0xdf, +0x104 and +0x19c are not the game's bytes.
+     - In the render (CubemapFaceBlocks, ledger 192's renderer): the binner's CullParams_t equals the capture on all
+       six faces, the edges too; the light items differ in their depth range (face 4: ours -68.12, the game's
+       -76.0001, the light frustum's far plane) and in the bounds of lights not containing the eye (BinnerItemsProbe,
+       CUBEITEMS). Open: 1801abf30 / 1801aac90 on a light frustum (the probe volumes' box path is exact).
+       Settled 2026-11-01 later: 1801b2850 uses the box footprint only when its +0x1c (the silhouette point count
+       1801aac90 writes: 0 when the eye is inside or a 4-point silhouette covers the screen) is not 0. Every item
+       and edge of all six faces is now the game's.
+
+194. **Texture residency in ze_hold_em_p's cube build** (2026-11-01: the RenderDoc capture of ledger 192, its
+     resources.json; draw-by-draw comparison of our colour target with the capture's after-images.) MEASURED, the
+     rule NOT read.
+     - On face 5 the first colour draw (csgo_lightmappedgeneric) is the game's bit for bit and the floor draw
+       (csgo_simple_2way_blend, concrete_slabs_wet_1) carries every differing pixel, with programs, constant blocks,
+       $Globals, vertex layout and vertex data all the game's. Its material maps are 2048 x 2048 (10 mips) in the
+       .vtex and 512 x 512 (8 mips) on the GPU; every material map above 512 in this capture is resident at 512
+       (1024 and 2048 alike, so not a fixed mip bias). probe01's, atixref's and s2c_l5probe's captures (10-21 ..
+       10-28, before 1.41.9.4) keep 2048 maps whole.
+     - Uploading at most 512 (S2C_CUBE_MAXTEXTURE=512, diagnosis only): faces 4 and 5 have no pixel over 1/256
+       (largest 0.0039, 0.0020), faces 2 / 3 301 / 85, faces 0 / 1 100,981 / 85,873 (largest 0.015, 0.027).
+     - Candidates to read: rendersystemvulkan's r_texture_budget_dynamic, r_texture_budget_threshold,
+       r_texture_stream_mip_bias, client's videocfg_texture_detail (cs2_video_tools.txt 2, cs2_video.txt 0 on this
+       PC). Settle with a cubehost run of probe01 on 1.41.9.4 (are its 2048 maps capped now?) and the code.
+     - The lightmaps stay whole (4096, 1 mip) in both.
+     - Ruled out by experiment on this capture (no pixel changes): the light block's dither, lightmappedgeneric's
+       $Globals +4, simple_2way_blend's g_vShaderIDColor, BC1 alpha (now uploaded as BC1 RGB, the captures' views).
+     - SETTLED by ledger 195: it is the preload cap, and no capture had a map above 512 to show otherwise.
+
+195. **The cube build's texture residency, and the BRDF lookup** (2026-11-02, CS2 1.41.9.4, cubehost runs
+     holdem_cvars, holdem_tele, holdem_td2, probe01_1102b in %TEMP%/cubehost_run; tools/cubehost/rdc_textures.py,
+     rdc_texture_data.py, exr_diff.py). MEASURED and matched to read code.
+     - Residency is rendersystem's preload cap (GpuTextures.PreloadLevel: the first mip whose longer side is at most
+       RenderSystem/MaxPreloadTextureResolution 512; rendersystemvulkan 1800f7ccc / 180104cd0, read for
+       physicsbuilder). Nothing streams in before the cube renders. The checks:
+       - probe01's and s2c_l5probe's materials have no map over 512 (every .vtex their .vmap names, read from the
+         paks), so their captures could not show a cap. atixref has 189 such maps and was never matched.
+       - Valve's EXRs of ze cube 0 with and without RenderDoc differ only in 76 pixels of face 1, so the 512 maps
+         are not a capture effect. holdem_order1 / _2 (10-27) equal the no-RenderDoc run.
+       - Moving the player onto cube 0 (sv_cheats, noclip, setpos) and waiting 15 s: the EXRs are byte for byte
+         unchanged, so the view does not stream textures up before the build. videocfg_texture_detail is 2 in
+         cubehost already; setting it again changes nothing. r_texture_pool_size is 10218 (MB), far above the map's
+         need, r_texture_stream_max_resolution 8192, r_texture_stream_mip_bias 0.
+       - A one-mip texture stays whole (the 4096 lightmaps), as the rule's last-mip bound gives.
+     - PerViewConstantBufferCsgo_t's bindless words, named from the csgo shaders' reflection (VRF's
+       vcs68_csgo_simple_2way_blend_vulkan_60_rtx GLSL): +64 g_tBlueNoiseTextureIndex, +68 g_tBRDFLookupTextureIndex,
+       +72 g_tCubemapFogTextureIndex, +76 / +80 the dynamic AO and its depth, +84 g_tSSAOIndex, +88
+       g_tParticleShadowBufferIndex, +92 .. +100 the moments, +104 g_tLowShaderQualityFallbackCubemap.
+       csgo_environment, csgo_lightmappedgeneric and csgo_simple_2way_blend (ze's three) read +68 .. +88 and not
+       +64. +84 is read only under g_bFogTypeEnabled.w and +88 under g_bOtherFxEnabled.y, both 0 in the cube view.
+       +68 is read with no guard: the specular term is mix(lut.x, lut.y, F0) times the lighting.
+     - +68's image in the capture is a 64 x 64 x 3 RGBA16F array whose pixels are textures/dev/brdf_lut.vtex_c's
+       byte for byte (csgo's and core's are equal; client.dll names textures/dev/brdf_lut.vtex). Bound,
+       ze cube 0 against Valve's EXR goes from 6,084 / 5,241 / 1 / 0 / 0 / 0 pixels over 1/256 to 1 / 0 / 0 / 0 / 0 /
+       0; face 5 equals the readback. All 8 cubes: at most 10 pixels over 1/256 per face (largest 0.009), faces 2 to
+       5 at a few 1-ulp halves.
+     - Not read: which client code writes +68 (the measured index matches the texture, the writer is
+       CreatePerViewConstantBufferCsgo, 1811fef80 in 10-15).
+     - Side finding: run_probe.py --renderdoc 0 makes no capture on probe01 (env_cubemap, 2 cubes) while it did on
+       ze_hold_em_p (probe volumes); --renderdoc 1 captures on probe01.
+
+196. **The colour matrix expressions** (2026-11-02, materialsystem2 1015 decompile and the installed 1029 build's
+     disassembly, same addresses; ze_hold_em_p's capture of ledger 192). READ and checked bit for bit.
+     - csgo_environment's g_mTextureColorAdjust1 is `MatrixMultiply(MatrixColorTint2(g_vTextureColorTint1, 1),
+       MatrixColorCorrect2(float3(contrast, saturation, brightness), TextureAverageColor(g_tColor1)))` (spvmatch
+       --expr). Our evaluator returned the identity for every matrix function; the game's value is the identity
+       plus float noise (diagonal 0x3f800002, off-diagonal 1e-9 .. 2e-7), which put ze's csgo_environment pixels 1
+       ulp low.
+     - The functions, from the names table at 1800fa100 .. (name, argument count, function): MatrixMultiply
+       18009bf90 (a times b, 180081100: each element a dpps of a row and a column, ((p0 + p1) + (p2 + p3))),
+       MatrixColorTint2 18009c3c0 -> 1800818d0, MatrixColorCorrect2 18009c090 -> 180081260, TextureAverageColor
+       18009bb70 (the render device's vfunc 0x2d8 on the texture, alpha 1: NOT read further). Helpers: 180081020
+       (a 4 x 4 from 16 values, row after row), 180080f40 (normalize, (y y + z z) + x x), 1800828c0 (the rotation
+       taking a onto b; the disassembly computes ay (ay k) and az (ay k), Ghidra prints (ay ay) k and (az ay) k),
+       180082c50 (a 3 x 4 on a point), 180083390 (RGB to HSV), V_powf(saturation, 2). Ported as
+       Gpu/ColorMatrices.cs; Tint2 normalizes the luminance axis (0.2125, 0.7154, 0.0721) from the compiler's folded
+       sum of squares 0x3f0fe92e, Correct2 at run time.
+     - $Globals holds a 4 x 4 transposed: the prototype's row-major result equals the captured block with rows and
+       columns swapped, on all six off-diagonal words (ProgramGlobals.Fill now transposes Float4x4).
+     - TextureAverageColor read since (ledger 197); at contrast 1 it cancels exactly in T(avg) diag(c) T(-avg).
+     - Checked only at the material defaults (tint (1, 1, 1), contrast, saturation and brightness 1): a tinted or
+       desaturated material (the HSV path, V_powf with s > 0) has no capture yet. RGB to HSV is from the decompile,
+       not the disassembly.
+     - Result: ze_hold_em_p's csgo_environment $Globals are the capture's word for word; cube 0 faces 2 to 5 equal
+       the readbacks, and against Valve's no-RenderDoc EXRs faces 2 to 5 of all 8 cubes and the whole of cube 7 are
+       byte for byte. Faces 0 and 1 of cubes 0 to 6 keep 16 to 34 differing pixels: skinned agent models
+       (CAnimatableSceneObjectDesc, USES_CS_SKINNING) near terrorist_team_intro / counterterrorist_team_intro /
+       team_select, and in the RenderDoc run their AO proxies (aoproxy_splat, 2 instances at (-12841, -338, -12)
+       and (-12851, -436, 0)). Not ported (needs the client's team intro scene and its animation pose).
+
+197. **TextureAverageColor is the .vtex header's reflectivity** (2026-11-02, CS2 open: disassembly only, the
+     installed 1029 builds of materialsystem2, rendersystemdx11 and rendersystemvulkan). READ.
+     - materialsystem2 18009bb70: an argument whose type byte is 1 (a texture) goes to the global at 180154cf0,
+       which the connect table (1800f85d0) binds to RenderDevice003; it calls vf 0x2d8 and writes x, y, z with w 1.
+       Any other argument: 16 zero bytes.
+     - rendersystemdx11: RenderDevice003 is the object at 180495980 (QueryInterface 18005400e through 180433580); its
+       vtable 1803f40e8 (and the base's 1803f1348) has 180030740 at +0x2d8, which copies 12 bytes from the texture's
+       16-byte record (180074aa0: block +0x180 + (h >> 8) * 8, entry ((h & 0xff) + 0x1260) * 16).
+     - The only writer of that record with a value is 180067bf0 (180068161 .. 180068189), from its creation
+       descriptor's +0x3c; the descriptor's +0x3c is filled in 18006a7e5 from the .vtex header's 16 bytes at +4, in
+       the same function that takes +0x1a (format), +0x1b (mips), +2 (flags) and +0x14 / +0x16 (size), so the header
+       is the .vtex DATA block (VRF's Texture.Reflectivity). rendersystemvulkan does the same at 1800f7745.
+     - An unresolved handle gives (1, 0, 1, 1) after an error (180074bda; not modelled: our textures come from files).
+     - Ported: Gpu/VfxExpression (a texture parameter now carries its path; the cube renderer and GpuMaterialSampler
+       read the header) and the bake's VfxEval in Lighting/Bake/RtxMaterials (by the argument's name). The bake's
+       evaluator now uses Lighting/ColorMatrices too: the coloured MatrixColorTint2 it took as white and the
+       rotation's products in Ghidra's order (ay ay k, az ay k; equal words at the default luminance axis, where
+       az = 0, so default materials bake as before).
+     - Scope (ColorMatrixTests.NonDefaultColorAdjust): 1,120 materials of the stock pak01 have a contrast,
+       saturation or brightness other than 1 or a tint other than white; ze_hold_em_p's own package none.
+     - Not measured: the shader default texture of a texture the material does not set is not read (both
+       evaluators give zero then).
+     - Captured 2026-11-04 (CS2 closed: Valve's s2c_coloradjust compile, tools/vrad3/capture_host.py on its job):
+       vrad3's block holds MatrixColorTint2(white, 1) x MatrixColorCorrect2(1, 1, 1) word for word for both
+       materials (italy_cobblestone_01's contrast 1.497 and cobblestone_ground_large_1's tint ignored). The
+       csgo_environment rtx program declares g_mTextureColorAdjust1 twice: #45 from the artist's colour values,
+       #46 of constants (`MatrixColorTint2(float3(1,1,1),1)`, `MatrixColorCorrect2(float3(1,1,1), ...)`), and the
+       static combo's write binds #46. RtxMaterials now writes each field from its own VariableIndex (a name lookup
+       took #45). s2c_coloradjust with -s2cbake: every lighting file Valve's (23 of 25, the .nav and .vwrld left).
+     - Read and captured 2026-11-04: the default hit group block of a translucent material (scenesystem 180098cd0,
+       flag 2) takes texture attribute 0xfa77b522 (LightSim_Opacity_A) through vf 0x80 as its opacity texture at
+       +20, the opacity at +12 staying 1; without one, float attribute LightSim_Opacity (0xe2945d83, vf 0x58), 0
+       when absent, clamped to 0..1. A constant LightSim_Opacity_A (csgo_water_fancy's 1) is no texture.
+       capture_host.py on Valve's atixref job: every material block is ours but the bindless indices
+       (hr_glass_001, inferno_fountain, italy_windows_glass_01a included).
+     - 2026-11-04 later: an rtx combo with no C# transpile now bakes on the GPU (GpuOnlyHitShader: Valve's SPIR-V,
+       the block from the combo's write sequence; the CPU bake still stands the default hit group in); a feature
+       state the rtx file lacks is reduced as MaterialAttributes reduces the pc programs'; a SetByArtist default is
+       the type's own components (a Float's [1, 0, 0, 0] gave float3(contrast, saturation, brightness) the wrong
+       scalars); VfxEval gained log (18009a240, V_logf) and normalize (18009b6e0 -> 180080f40). Against vrad3's
+       capture every atixref block is ours but bindless indices, words past a blend block's last field, and
+       g_flDetailBlendFactor on two csgo_vertexlitgeneric combo 16 materials (Valve the default 1, ours the
+       material's; not read). atixref's GPU bake runs: lightmap_chart_color byte for byte, the other three
+       EXRs differ all over the atlas (direct_light_shadows 31,171 texels), cause open. probe01, cardtest,
+       probe_classes, s2c_coloradjust and ze_hold_em_p still give vrad3's four EXRs byte for byte.
+
+198. **Steam Audio's rebake options in a compile** (2026-11-02, CS2 open: the Ghidra project's resourcecompiler.dll
+     decompile, 18013b060 and 18013af00 there, and the installed 1029 build's disassembly). READ.
+     - CleanupBakedDataIfNeeded (1029 180100aa0; inlined in the four other builders holding its lambda) takes the
+       probe type (0 reverb, 1 pathing, 2 custom data) and reads worldspawn's rebake option through steamaudio.dll's
+       settings readers (vf 0x138 reverb = 18006bc60, 0x140 pathing = 18006c1b0, 0x148 custom data).
+     - Manual (1) logs "Rebake option set to MANUAL, which is deprecated. Proceeding as if set to CLEANUP." and is
+       Cleanup from then on. Cleanup logs "Bake set to cleanup, baked data file (%s) will be deleted.", hands the
+       context (vf 0x1a0) a predicate (180107ca0: an output path, slashes made '\', strstr for the file's name)
+       and returns true, so nothing is baked. Auto (2) returns false and the builder bakes.
+     - The file name (18013af00): steamaudio vf 0x100 (reverb) or 0x108 (pathing) of the map, or vf 0x110 with
+       .custom.occlusion / .custom.dimensions / .custom.materials for custom data types 1 to 3.
+     - Measured: ze_hold_em_p's .vmap sets reverb and pathing to 1 and leaves custom data at the FGD's 0; Valve's
+       full build of it ships no Steam Audio file. s2c_rounds is 0 for all three.
+     - Ported: MapCompile (SteamAudioRebakeOption, SteamAudioCleanup); Cleanup and Manual drop maps/<map>.sareverb
+       or .sapaths from the package; an Auto bake is refused by name (the bake is ported, its wiring is not), and
+       Cleanup over custom data files in a kept package is refused (their names' stem is not read).
+     - Also now: a full build (no builder named) starts from an empty package with -f / -fshallow2 or with no
+       package yet, as RC does; a partial build that would start empty is still refused.
+
+199. **compile-map's Steam Audio Auto bake** (2026-11-02, CS2 open; no new reading, the pieces of ledgers 170-173
+     and 198 put together). SteamAudio/SteamAudioBuild: the settings (code, gameinfo's ReverbDefaults /
+     PathingDefaults, then worldspawn as the compile fills it), the two scenes, automatic probes over the generation
+     scene's box, the inside-shapes filter, the bake and the KV3 file; compile-map runs it after the nav, in the
+     default builder order.
+     - Checked: s2c_saprobe's whole .sapaths through the builder equals Valve's (SaprobePathsFromTheBuilder), and the
+       reverb settings it reads are the pinned bake's (SaprobeReverbSettingsFromTheMap). The reverb through it
+       (SaprobeReverbFromTheBuilder, SAREVERB_FULL=1, run 2026-11-02 with CS2 open at below-normal priority):
+       73 probes, 1 with a ray tie, the file Valve's length with 117 bytes different; SaprobeReverbFromTheMap's
+       run beside it has probe 65 as the only differing and tied probe, and the file Valve's once that probe is
+       swapped for Valve's.
+     - Refused by name, as not measured: generation types other than Automatic Everywhere, the navmesh filter, a nav
+       with areas (the coverage appender, ledger 186), any steamaudio_* entity, func_ladder and snd_opvar_set_point,
+       clustering and compression, sampled pathing visibility, and a pathing probe the inside-shapes filter would
+       drop (s2c_sainside measured that filter for the reverb only). Custom data at Auto is not ported.
+     - Also read in 18013af00 (ledger 198): the .custom.occlusion file some stock maps ship is Steam Audio's custom
+       data (type 1), made by -sacustomdata.
+
+200. **cs_script sources to .vjs_c** (2026-11-02, CS2 open; measured: the installed 1.41.9.4 resourcecompiler run
+     on its own, `-nop4 -f -game csgo -i <script.js>`, one file per run, over cs_script_demo's seven scripts; several
+     -i in one run compile nothing). MEASURED.
+     - The file: container version 4, blocks RED2 then DATA, zero padding to 16 between them and none after DATA.
+       DATA is the .js source byte for byte (all seven).
+     - RED2: input dependencies, sorted by path, the source (CRC32 of its bytes) and an optional, absent
+       same-named .vjs, both under the addon's search path ("csgo_addons/cs_script_demo"); the one
+       ___OverrideInputData___ argument at 0; special dependencies "JavaScript Compiler Version" (CompileJavaScript,
+       4) and "Panorama Preprocessor Presence/Version" (CompileJavaScript, 0); IsChildResource 0.
+     - The preprocessor: every archived resourcecompiler build (0923 to 1029) names panorama/preprocessor_config.txt.
+       No install here has it (not loose in game/ or content/core, not in core's or csgo's pak01). The .vjs_c that
+       Steam shipped with the 10-23 update (written with core's pak01 at 09:56) record it as an input from core
+       (CRC 3533796717) with the preprocessor fingerprint 6, and their DATA has comments and Console.Log calls
+       blanked to spaces of the same length: that is Valve's build machine, not a user's compile. RC on this install
+       rewrote all seven without the input and with fingerprint 0, 48 bytes smaller each.
+     - Ported: ScriptAuthor (s2c compile <in.js>); ScriptAuthorTests checks all seven byte for byte. Not ported: the
+       preprocessor's pass (its config is not on any install).
+     - .ts sources (2026-11-03, 1.41.9.5 tools, CS2 open; measured): RC on this install compiles no .ts. A probe with
+       types, enums, a class and imports (copy in %TEMP%/s2c_tsprobe.ts), at maps/scripts/ and at panorama/scripts/,
+       and the same file named .vts, each give "Failed to find compiler" and write nothing. RC holds a
+       CompileTypeScript compiler ("TypeScript Compiler Version") that loads
+       sdktools/bin/win64/typescriptcompiler/typescript.js, which no install here has (no sdktools/ next to game/;
+       only sdk_tools/plugins). The preprocessor (rc 1103 18011cbc0) maps resource type vjs to "js" and vts to "ts",
+       so .vts is a Panorama type. cs_script_demo's tsconfig.json is noEmit + checkJs: TypeScript is used there to
+       type-check the .js. So on a user's install a .ts script is transpiled by its author and the .js is compiled;
+       ScriptAuthor refuses .ts as RC does. Not read: why the compiler is not found (whether its registration needs
+       typescript.js).
+
+201. **s2c_coloradjust against Valve: streams a material adds, and what follows** (2026-11-02, CS2 open; measured:
+     Valve's full compile of the specimen on driver 32.0.16.1088, %TEMP%/fresh_compile/s2c_coloradjust.vpk, against
+     `full_compile_test.py s2c_rc_probe s2c_coloradjust --cs2-open --no-cubemaps`). OPEN.
+     - 18 of 25 files equal. The two world node models of the swapped stock materials differ (DATA, RED2, RERL,
+       MVTX, MIDX equal; CTRL and MDAT not): Valve's vertex layout has COLOR 0 (R8G8B8A8_UNORM,
+       m_szShaderSemantic VertexPaintTintColor) at offset 32 before the last field, stride 40, every vertex
+       FFFFFFFF (VertexStreamValuesProbe, VTXSTREAM=); ours has no such stream (stride 36). The specimen's meshes
+       store no VertexPaintTintColor, so the compile adds it for a material that reads it, as
+       NodeMeshEntries.WithPaintStreams adds texcoord 1 and VertexPaintBlendParams for LowPrecisionUv1 (measured on
+       atixref, its code not read either).
+     - Also different: m_flUvDensity on five draws in the last digits (63.999992 / 64.0 against ours 63.999996 /
+       63.999989), the .nav (9,579 against 9,607 bytes, first difference at 5416), irradiance, directional
+       irradiance and the probe volume atlas; whether these follow from the stream, from the materials' surface
+       properties or from the bake's colour matrices (ledger 197) is not known.
+     - Next (CS2 open): read the code that adds the missing streams (the merge preparation around
+       WRBMeshList_PrepareForMerge, 1802b52d0 in 0923, and its 1029 counterpart), with its fill values and
+       placement; port it in place of WithPaintStreams' fitted rule; then rerun the specimen and take the nav, the
+       UV density and the bake in that order.
+     - 2026-11-03 (CS2 open; resourcecompiler 0923 through ReVa and capstone; materialsystem2 1015): the streams are
+       read and ported (NodeMeshEntries.WithPaintStreams). They are not added at the merge: CMapMesh_NameSlotsAfterOverride
+       (1810dcca0), with its second argument set, over the inputs of all the mesh's materials, (1) adds texcoord 1
+       (standard attribute row 5 of 183014fa0, through 181087410) when MaterialEditor_LowPrecisionUvInputs
+       (1810d5f40) finds an input that the mesh semantic table (181366d90) makes texcoord 1 and whose semantic
+       starts with lowprecisionuv or uv, else removes it (1810d9930); (2) calls HammerMesh_UpdateExtraAttributeStreams
+       (1810dca50) with 1, which removes (RemoveExtraAttributeStream 1810d9e70) each of VertexPaintTintColor,
+       VertexPaintBlendParams and VertexPaintBlendParams1 that no input names (V_stricmp), then appends
+       (AddExtraAttributeStream 1810c27d0) each that one names and the mesh lacks, in that order. The rows (table
+       18237b480, 0x38 bytes) are per-vertex (+0x14 1) float4 (+0x18 3) with defaults (1, 1, 1, 1), 0 and 0. The only
+       direct caller is 1810dcca0 (the other references are unwind data). Not read: which of 1810dcca0's ten callers
+       the compile goes through.
+     - Checked: over 199 corpus .vmaps (153,133 entries, NodeEntriesFromVmap.EntryStreamLists) the port changes 19
+       entries against the fitted rule: s2c_coloradjust's 13, and 6 of s2c_rs_s2c_dec_ze_hold_em_p (a decompiler
+       round trip whose meshes store no paint streams; concrete_slabs_wet_1 reads VertexPaintBlendParams without
+       LowPrecisionUv1, which the fitted rule missed; not checked against Valve: resourcecompiler 1103 crashes on
+       that .vmap, exit 0xC0000005 from compile_fresh.py -world -fshallow --cs2-open, which is a lead for the map
+       decompiler). The removals change no corpus entry: per mesh, no mesh stores a
+       paint stream or a second texcoord that none of its materials reads (atixref, ze_hold_em_p, c2m2's
+       environment prefab checked per mesh).
+     - s2c_coloradjust after the port (full_compile_test.py --cs2-open --no-cubemaps): both node models' layouts are
+       Valve's (stride 40, COLOR 0 VertexPaintTintColor R8G8B8A8_UNORM at 32, every vertex FFFFFFFF), and
+       cobblestone_ground_large_1's main vertex buffer is Valve's byte for byte. That left two causes:
+       - SETTLED 2026-11-03 (read from the disassembly of resourcecompiler 20261103; the codec headers 0xa0 | version
+         at 1812bc291 and 0xe0 | version at 1812bc77b each have one caller): cobblestone_ground_large_1's second
+         vertex buffer (NORMAL 0 R32_UINT, 314 x 4 = 1256 bytes) is stored raw because CResourceCompilerMesh's vertex
+         buffer writer (1802ed210) keeps the codec's output (m_bMeshoptCompressed, +0xc) only when it is smaller than
+         count x stride, and ours is exactly 1256. The index writer (1802ed800) has the same strict test, so
+         WorldNodeModels' index rule stands, and its element size is 4 once any index passes 0xffff (ours was
+         "more than 0xffff vertices"; they differ only at exactly 65536). Both encode only with gameinfo
+         ResourceCompiler/MeshCompiler/EncodeVertexBuffer / EncodeIndexBuffer; a non-triangle-list index buffer goes
+         through encodeIndexSequence (+0xd), and a byte argument Zstds the encoding on top (+0xf), neither reached
+         by a world node (not traced to its callers). After the port s2c_coloradjust is 19 of 25:
+         cobblestone_ground_large_1's node model is Valve's byte for byte.
+       - SETTLED by ledger 210 (the reading below had the direction wrong: we shifted, Valve kept).
+         italy_cobblestone_01's texcoord 0 is shifted by Valve (11.5 -> 4.5) and not by us: the material is
+         csgo_environment with g_flTexCoordRotation1 90 and no g_nUVSet1. ConvertMeshForBuilder (1810dfff0 ..
+         1810e006c) keeps texcoords when the loaded material's bool attribute HasTexcoordTransform (0x2661694a,
+         vf 0x48) is 1. Its expression in csgo_environment is (g_nUVSet1>0 && (scale1.x!=1 || scale1.y!=1 ||
+         rotation1!=0)) ? 1 : 0 and g_nUVSet1's declared default is 1 (features, vs, ps; register Int4), so
+         KeepsTexcoords' reading (missing parameter = declared default) gives "keep", and Valve's output says the
+         attribute was 0 here. materialsystem2 1800137d0 adds a declared default (1800135f0) for an artist variable
+         the material lacks only under conditions on the description's +0xec, +0xf4 and +0xf8, and when the
+         attribute expression is evaluated against that is not read. Settle it by reading that order, or capture the
+         attribute in resourcecompiler (CS2 closed: Frida), before changing KeepsTexcoords.
+         Read 2026-11-03 (materialsystem2 20261015, decompile and disassembly), still OPEN:
+         - 1800137d0's conditions: source (+0xec) 0 or 7, not found in the material (180012ab0), type (+0xf4) not
+           13..16 or 22..23, register type (+0xf8) 1..3. g_nUVSet1 is source 0, type 5 (Int), register 2 (Int4), so
+           its default 1 is added. It fills a short per variable (0xffff when missing and not defaulted) indexing
+           the 0x40-byte value records.
+         - HasTexcoordTransform's bytes (all 72 static combos of the vs and ps) read the three parameters with
+           opcode 0x1D (by murmur, A8627835 for g_nUVSet1). 1800ad440 rewrites every program attribute
+           expression (records +0x208, 0x58 bytes, length +0x34, bytes +0x38) through 18009e3d0: each 0x1D whose
+           hash names one of the program's variables (murmur2 seed 0x31415926 over +0x138 / +0x130) becomes 0x20
+           with the variable's index; with its flag 0 the first unknown hash stops the rewrite.
+         - The attribute merge (18000e690) evaluates them through VfxEval (18009c9c0) with a context whose +0x18
+           (the hash table 0x1D needs) is always 0, and whose +0x40 / +0x48 / +0x58 are the short table, the value
+           records and 0x40. A 0x1D left unrewritten fails the evaluation (18009e19c), and the merge stores the
+           untouched output, 0; a 0x20 reads the record's four floats (or its own expression, record +0x1c bit 16).
+         - So on this reading a rewritten expression sees g_nUVSet1 = 1 and gives 1 (keep), and Valve's output
+           says 0. Not read: whether resourcecompiler loads the material's programs at all (no programs, no merge,
+           and the vmat_c stores no HasTexcoordTransform: MaterialInfoProbe.ScanAttribute finds it in none of the
+           1,535 csgo_environment materials), and which program's variable list 1800ad440 is handed.
+         - Our rule's "keep" branch has never been checked against Valve: MaterialInfoProbe.KeptTexcoords finds
+           158 stock materials it keeps (5 csgo_environment, 153 csgo_environment_blend), and of the 199 corpus
+           .vmaps only s2c_coloradjust uses one. CS2_CLOSED_QUEUE A.7 captures the answer.
+         - Captured 2026-11-03 (tools/re/capture_texcoordtransform.py, Frida on resourcecompiler 1103 compiling
+           s2c_coloradjust -world -fshallow, the hooks after 1810e1227 and 1810e1250): 23 HasTexcoordTransform
+           reads over six materials. Two store it: one answers 0 on 13 entries (cobblestone_ground_large_1's 13),
+           one answers 1 on 2 (italy_cobblestone_01's 2); the tools materials do not store it. So in
+           resourcecompiler italy_cobblestone_01's HasTexcoordTransform is 1, the materialsystem2 reading above
+           holds (defaults seen), ConvertMeshForBuilder does not shift its texcoords, and KeepsTexcoords agrees.
+           The material pointers were matched to names by their entry counts (the names were not found in
+           memory). Settled by ledger 210: the shift was ours, not Valve's.
+
+210. **The world node path keeps a kept material's texcoords** (2026-11-03, CS2 closed but nothing attached; no new
+     reading: rc 20261103 1810e11f0 .. 1810e126c disassembled again, and the 11-03 capture of ledger 201 re-read).
+     - The (-7, -2) of ledger 201 ran the other way: per vertex (VertexStreamProbe, VTXALL=1, positions all 172
+       equal) Valve's italy_cobblestone_01 texcoords are the .vmap's own (island boxes such as u -19.5 .. 4.5) and
+       ours were island-shifted (u -12.5 .. 11.5), by a different integer pair per island.
+     - Cause: WorldNodeBuild.WorldEntries called NodeMeshEntries.FromWorld without keepsTexcoords, so every world
+       node entry was shifted; only the physics path (WorldCollision) passed KeepsTexcoords. ConvertMeshForBuilder
+       writes one DMX per mesh for every builder (its only caller of HammerMesh_ShiftTexcoordIslands is 1810e0483
+       in 0923), so the render path gets the same keep. Ported: WorldEntries passes MapMeshCorners.KeepsTexcoords
+       per material (this also reaches Vrad3Job's scene, which reads WorldEntries).
+     - Capture re-read: the 2-entry material answered found 1, value 1 (no 0x7c928c7c read follows, as the
+       disassembly's je 1810e126c says), and the .vmap holds italy_cobblestone_01 on exactly 2 meshes.
+     - Verified: full_compile_test.py s2c_rc_probe s2c_coloradjust --cs2-open --no-cubemaps against
+       %TEMP%/fresh_compile/s2c_coloradjust.vpk: 20 of 25 files (from 19), every vmdl_c (8 of 8) byte for byte,
+       n0_lr0_agg_merge_italy_cobblestone_01_0 included. Left: the three lightmap textures (the bake), the .nav
+       (Valve's nav varies run to run, ledger 57; not checked against a second Valve run) and the .vwrld stamp.
+
+211. **The bake's face collapse, edge collapse and bad-face removal, read** (2026-11-03; rc 0923 decompiles,
+     capture_bake.py --ops on a standalone resourcecompiler 1103 with CS2 closed; specimens s2c_edgecollapse and
+     s2c_edgecollapse2, tools/physics/edge_collapse_map.py: probe01 with node 92 subdivided at level 1 and vertex 0
+     moved onto vertex 12, exactly or 5e-7 above it). Addresses: GEOMETRY_AGENT_0923 in make_manual.py.
+     - RemoveBadFaces (1810d9ca0) runs on the half-edge mesh before the bake: each face, by handle, that the
+       triangulator cannot cut whole is removed (1813aca90: each loop half-edge loses the face; an edge left with no
+       face goes through 1813ad160 on the twin: unlink both halves from their origins, 1813892f0, an orphan vertex
+       freed, then the twin and the half-edge freed). The bake then lists faces in dense order (1810c6520 ->
+       180d54520). Ported in SubdivisionBake.Bake (RemoveFace, RemoveFreeEdge).
+     - CollapseFace (181384470 -> 181384060) is a chain of edge collapses (181382170) from the face's first vertex,
+       each on the pair's lower half-edge handle; this replaces ledger 6's model of the face collapse
+       (SubdivisionBake.CollapseInner). The edge collapse (link test, new vertex, unlink, frees, two-gon
+       dissolves 1813a71a0) and MergeVertices' wrapper 181383600 (vertex and corner snapshots at t) are ported
+       (SubdivisionBake.Collapse, CollapseEdge, DissolveTwoGon); MergeVertices keeps each merge's returned vertex
+       as the cluster's first argument, as 1813a8ae0 does.
+     - Verified on s2c_edgecollapse: every face list after each of the 483 bake operations equals the capture's
+       (BakeBeforeMergeProbe), the mesh after the merge equals it (BakeMergeCaptureTests, Valve's merge there is a
+       splice, MergeVertexPair(0, 12)), and world_physics.vmdl_c is Valve's byte for byte. The export of all 92
+       subdivided meshes of c2m2 (environment prefab, multi, c2m2, coaster) and atixref is unchanged from before
+       (SubdivisionBakeHashProbe), so the faithful face collapse gives the modelled one's output there.
+     - Verified on s2c_edgecollapse2 (a 5e-7 edge: the merge collapses two edges, Valve's MergeVertexPair(12, 70)
+       -> 122 and (122, 0) -> 125 as ours; capture_bake.py --ops now logs each merge's face list): both merges'
+       face lists (handles, loops, dense order) equal the capture's, the merged mesh equals it, and
+       world_physics.vmdl_c is Valve's byte for byte. The rule that got there: 181383600 hands 181382170 the
+       pair's lower half-edge (the twin when its index is not above e's, as 1810a8520 picks), while the
+       snapshots use e as given. The 92-mesh export check above is unchanged with it.
+     - Not exercised by either specimen, so ported from the decompile but unchecked against Valve: the corner
+       snapshot write-back (both sides were triangles, so no face survived), a collapse the link test refuses.
+       Refused by name: a face left folded on itself (1813adf00 -> 1813ad160) and a free or folded edge after a
+       dissolve (1813a71a0 -> 1813ad160). Not read: the new vertex's write stamp, ours only (the physics weld's
+       latest rule, MeshWeld), taken from the first argument; it decides only when the merged vertex welds with
+       another within 1/32.
+     - Seen, not worked on (world geometry, the main session's): the specimens' agg_merge_reflectivity_30 render
+       model differs (s2c_edgecollapse: 235 Valve vertices against our 228; normals and two positions on the
+       subdivided box).
 
 182. **Hollow nodes take no id in an instance's or a prefab's block** (2026-10-29, research/vmap-decompile: probe
      maps compiled by resourcecompiler 1.41.9.3 -world -fshallow, each read off the copies' ids; numbered past main's
@@ -5082,3 +6074,537 @@ game can answer is raised with the user first, and runs with -insecure.
 - **Stitched subdivided faces** (2026-09-28, decompile). The bake runs on a
   port of Valve's half-edge mesh (containers, edge split, add edge, arc-length
   split, grid write-back); c2m2's prefab and Mako are whole-file exact.
+
+## The resource compiler line (main), 2026-11-03
+
+Ledgers 230-240 belong to the standalone compiler vpkstuff takes (branch `main`, the work on
+`resources/rc-types`); their code and docs live there (docs/TEXTURES.md, docs/MATERIALS.md,
+docs/RC_PARITY.md C9), the addresses in make_manual's RESOURCES_AGENT_0923 / _1103. Every RC
+reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler on its own (main's
+`tools/re/texture/rc_probe.py`, which backs the probe addon up and restores it).
+
+230. **A .vtex's channel groups, and None beside other algorithms** (2026-11-03; rc 0923 decompile of
+     180133da0, RC probes). READ, MEASURED where noted.
+     - Each output channel group runs GenerateMips on its inputs' whole images (all four channels),
+       then the channel copy (181277690) takes the source channels; a .vtex channel names its inputs
+       and reads the first one with that name. The 5 algorithm probes of 10-13, recompiled, equal ours.
+     - The first group sets the output's size and level count; its level loop ends at a group mip
+       count of 1, so a first None group keeps one mip (`none_box_rgba`), a later one fills every
+       level from its level 0 (`box_none_rgba`, `sticker_normal_*`). A later larger group upsizes
+       the output (18013ce60, with mips when it has several: character's 1x1 metal before 16x16
+       masks). Open: a first one-level group smaller than a later one-level group (refused).
+     - Reflectivity is per group: each group's last mip averaged (180c3bb80), avg[src] added to the
+       destination's slot as level 0 is copied (Box groups: the texture's 1x1; None: its image mean).
+231. **Mip algorithms beyond Box** (2026-11-03; rc 0923 decompiles 180142990, 180144200, 1801447c0,
+     1801443f0, 18014fa90 with 18014f380 / 180142710 / 18014f840, 180148350's lambda 180149d20, and
+     disassembly of 18014f380 and 18014fa90 for the float order and constants). READ.
+     None, BoxInverse, MipNormal (the Box chain with its own dependency), PreserveCoverage (the
+     coverage weight table carried as bit patterns, comiss/jae NaN behaviour kept),
+     HemiOctAnisoRoughness (the unshuffled planes) and AnisoRoughness_RG's shuffle; fingerprints
+     from the dependency calls (PreserveCoverage 5). 14 probes (RGBA8888 isolating each chain, BC7 /
+     ATI2N as shaders pack them) compile to RC's whole files. CS2's shaders' m_mipProcessingCommand
+     over all 103 programs leaves AnisoNormal (generic) and RGBM (sky) unported.
+232. **Mod2XCenter** (2026-11-03; rc 0923 decompiles of ApplyImageProcessor 18013f300 and 18013fee0).
+     READ. Per masked channel the row-order sum, each pixel (0.5 - sum / (w h)) + v; dependency
+     "Image Mod2X" 1. Three probes (linear, sRGB, g_tDetail's BC7) exact. ConvertToYCoCg (sky) left.
+233. **The main line against today's RC: uint32 0/1 and VData v2** (2026-11-03; the map branch's
+     reading, ledger 61, f35010e and bcb19b5, ported; RC probes). READ there, MEASURED here. Every
+     10-13 RcReference fixture had moved. Kv3V5Writer writes a uint 0 / 1 as types 26 / 27 (v5; a
+     v4 block keeps 15 / 16, the reader 1800c4120 refusing 26 / 27 below format 5); RED2's uint32
+     fields (m_nFileCRC, argument fingerprints, special fingerprints and user data) are uints at 0
+     and 1; VData records Compiler Version 2 and the ModTools strip fingerprint. VRF takes the map
+     branch's two patches. 18 .vtex, 5 algorithm, 12 .vmat (13 children) and 4 KV3 fixtures exact.
+234. **(unused)**
+235. **RED2 sorts are V_stricmp_fast** (2026-11-03; rc 0923 disassembly: the RED2 finalize
+     18016dd80..18016df5d sorts its lists through 18017a780 / 18017a9c0 / 18017abe0 / 18017ae90 /
+     18017b0a0 / 18017a5a0 and the searchable tables through 181ebae60 -> 181ea5d30 -> std::sort
+     181ea6ae0; every comparator's import call is tier0!V_stricmp_fast, IAT 1820ed908). READ.
+     A-Z folded to a-z, so '_' sorts before letters: csgo_complex's
+     _dummyReferenceAlphaTestReferenceInMainShader opens cx_alphatest's searchable data, where
+     .NET's uppercase fold put it last. EditInfo.Red2Sorted uses MsvcSort; above 32 entries, equal
+     names follow our insertion order, which is not checked against RC's.
+236. **.svg is stored as it is** (2026-11-03; rc 0923 decompile of 18015e2d0). READ. The vector
+     graphic compile hands the source file's bytes to the Panorama writer (1800f6960) and RED2 has
+     their CRC; panorama/t.svg exact. The in-house Panorama sanitizer is now opt-in.
+237. **.wav: the v5 container and CVoiceContainerBase's new fields** (2026-11-03; the 20261103 dll's
+     schema field table 18304f840; the strings first appear in the 20261023 build). READ for CTRL,
+     MEASURED for the probe list. CTRL saves _class, m_bRegisteredVMix (false), m_nResourceName (""),
+     m_vSound, m_pEnvelopeAnalyzer; RC writes RED2, an empty DATA, CTRL, version 5. RED2 also lists
+     an absent `<name>.vmix` sibling, taken from RC's RED2 like the nine before it; where RC builds
+     that list is NOT located (no standalone ".vmix" string in the 1103 dll). sounds/t.wav exact.
+238. **TGA as RC reads it** (2026-11-03; rc 0923 decompiles 180c3ea20, 180c71290, 180c70da0). READ.
+     Only descriptor bit 0x20 is read: right-to-left and the alpha bit count are ignored, a 32-bit
+     pixel's fourth byte is alpha as it is. tga_rtl and tga_noalphabits exact. vpkstuff's F23
+     (treat 0 declared alpha bits as opaque) would leave RC. Colour-mapped TGAs, which RC reads,
+     are still refused.
+239. **Material formats, m_nMaxRes, string attributes, the representative size** (2026-11-03; the
+     1103 dll's image format table 0x182fecf08, rc 0923 decompile of 18010c660, RC's own
+     logical-CRC spew from a patched side copy of the 1103 dll). READ / MEASURED.
+     - m_outputTextureFormat indexes the image format table: 0 RGBA8888 and 23 DXT5 compile now;
+       15 RGBA16161616F, 26 BC6H and 67 R8_UNORM (new in this build) do not.
+     - A variable's m_nMaxRes is the generated .vtex's m_nOutputMaxDimension, printed after
+       m_outputFormat when not 0 (the spew of cx_weapon's glitter normal). Inputs above it are
+       refused: the downsize in 180133da0 is not ported.
+     - Attribute type 41 holds a string (MaterialLayerType "csgo_weapon") and RC lists it. MEASURED:
+       the type's meaning comes from the values and RC's output, not from code.
+     - DATA's RepresentativeTextureWidth/Height only when an attribute is named RepresentativeTexture
+       (18010c660); csgo_weapon has none. cx_weapon and its five children equal RC's.
+240. **DXT5 to DXT1 looks at the kept mips** (2026-11-03; rc 0923 decompile of 180133da0 at
+     "Found DXT5 texture with solid 255 alpha!"). READ. Plane 3 of every mip the texture keeps must
+     be exactly 1; a 7x5 block texture keeps one level, so the odd-side filter's 1.5 alpha below it
+     does not count (dxt5_7x5). The rule now covers a material's DXT5 children too.
+241. **Particle snapshots (.vsnap) from a CMapMesh** (2026-11-04; rc 0923 decompiles 180f7aa30,
+     181083850, 181394380, 180ff0100, 18139a960, 1813a2d80, 1813a3180, 18138be80, 1812f5060,
+     181322440, 1813220e0, 1803401b0, 18033fe60, 181907da0, 181908020; tier0 0923 180050840 /
+     180050ae0, the same in 1103). READ, one part MEASURED.
+     - Particles are face corners (half-edges with a face): first each open edge loop's entries
+       (181394380 over 180ff0100's lower-handle edges), each giving the corner on the edge's face
+       that ends at the edge's tail there; then every faced half-edge by handle; each once.
+       Position = its vertex's, normal = the corner's face-vertex normal.
+     - The saved .vsnap is SaveKV3 text generic of { stream_data = { num_values, streams = [ { name,
+       type (position_3d / normal_3d from 1830149f0), values = [ [x, y, z], ... ] } ] } }; its CRC32
+       is the RED2 additional input (2605952937 on probe_classes node 3, ours equal).
+     - CompileSnap: DATA (binary_auto) num_particles + attributes {name, type float3, data_offset,
+       data_size}, SNAP = CBlockCompress::FastCompress of the attribute buffer (LZSS, 3-byte hash
+       into 2048 slots). No RERL, resource version 0.
+     - MEASURED: the DMX arrays as the runtime mesh's handles and dense order (the loader is not
+       read; Valve's corner sweep is in index order on the specimen).
+     - Paths (CMapPath, CMapCable: 1810b5100, 1810b8270, 181112010, 18110f230, 180f31d40, 18126a5a0):
+       the samples of the cable sampler (1812802d0 mode 0, path space) at particleSnapshotSpacing;
+       color = the node pair's color_tint (V_sscanf "%d %d %d", white when absent) as linear float
+       (x * 1/255 clamped, x / 12.92 or V_powf((x + 0.055) / 1.055, 2.4)), lerped by place; radius
+       stays 0 (its write wants type class 4, generic_float is class 2 at 18237a0a0).
+     - The world and a CMapEntity fill nothing (180f7a100) and write no file; a mesh is in its own
+       space, the node's scales ignored.
+     probe_classes' node_3 and s2c_snapprobe's five snapshots byte for byte (ParticleSnapshotTests,
+     tools/coverage/snapshot_specimen.py). Refused: other node types, the unidentified mesh "color"
+     stream (mesh +0x10de), instances and prefabs; the Only Entities build writes none (not measured).
+242. **Movable nav meshes from func_movelinear** (2026-11-04; rc 0923 decompiles 180fb5ce0, 180fb6cf0,
+     180fdee80, 1818ef5e0, 180105f50, 1818e9510, 1818d1320, 1818ed5a0, 1818f58c0; navsystem 1015
+     1800250e0, 1800260e0, 18006bee0). READ.
+     - 180fb5ce0: func_movelinear entities (180fc6f40, flags 3) with CreateMovableNavMesh whose first
+       child is a mesh, each an entry: id path, vf 0xa8 (the inverse world matrix), its nodes.
+     - navsystem runs each mover through the stage runner with the first list one stage short (no
+       IslandRemoval) and no second list, skips one with no polygons ("no polys present"), and
+       appends the rest after the static polygons (indices and connections offset only), tagged
+       with MurmurHash2(id path ints, seed 0x3501a674).
+     - The .nav lists every mover (name "%d" per id, the 12 floats) and writes each polygon's tag.
+     probe_classes and s2c_navmovable (tools/coverage/movable_nav_specimen.py, Valve's compile with
+     CS2 open) .nav byte for byte up to the custom data (NavMovableTests, NavGenPipelineTests).
+     - func_mover: itself and the visible entities parented to it (180fb6e00: parentname compared
+       case-sensitively against the targetname, 180fb77a0's tree, sub-maps searched too), prop_deformable
+       left out; s2c_navmovable4 exact.
+     - point_nav_movable_mesh read (ref_ent by targetname, 180fc7220 mode 1 / 180fefbc0), refused: Valve
+       found 0 entities for a ref_ent naming a visible func_brush on s2c_navmovable2 and 3, not explained.
+     Refused: point_nav_movable_mesh, prop_deformable, instances / prefabs, ladders.
+243. **A prop draw's CMesh streams: the colour's name and the extra fields** (2026-11-04; rc 0923 decompiles
+     1801d30d0 WRB_LoadPropMeshes, 181363de0, 1812dd570, 1801fee20, 1813319d0; the stricmp operand at
+     1801d3627 is "color", 1827860d8). READ, one rule MEASURED and open.
+     - The six streams come from the table at 183bb3dd0 (position, normal, tangent, texcoord, color,
+       texcoord 1). When the draw has a vertex colour field (+0x60 < field count) and its own material
+       has a vertex input signature (vf 0x98), the first index-0 stream named "color" is renamed: the
+       field's shader semantic (+0x2c) when set, else the material's attribute of the field's semantic
+       and index (1801d3050, its name at +0x40); otherwise it stays "color".
+     - Each extra field (+0x40 list) is appended in field order: its shader semantic, else the
+       material's attribute of its semantic and index, both index 0, else its own semantic and index;
+       one whose name and index a stream has takes that stream's place (refused, not met). Its type is
+       0x22 for DXGI 0x2a / 0x2b, else 0x23 / 0x29 / 0x2a / 0x2b by component count.
+     - The fixed "VertexPaintTintColor when COLOR0 exists" rule it replaces was measured. atixref: the
+       five foliage aggregates (cypress_a, foliage_bark_pine_01, lily_flower, mall_trees_branches01,
+       urban_trees_branches03) keep their colour as "Color", and inferno_plaster_facade_01_dirty keeps
+       inferno_roof_chimney_01_64x32a's unnamed TEXCOORD4 as VertexPaintBlendParams (all 255): six
+       more node files exact (world nodes 277 -> 283 of 395).
+     - MEASURED, open: an aggregate whose draws' streams differ is one vertex buffer in Valve's output,
+       the stream a draw lacks as zeros (inferno_fountain_01 beside the chimney, 12,146 vertices of 0).
+       Not CMesh_Concatenate (1812dd570 refuses differing sets), not InputLayout_MatchSignature
+       (181363de0 adds a field only when the mesh has the stream), not 1813319d0 (one DmeMesh per
+       CMesh). Ours writes two vertex buffers and a note. CS2_CLOSED_QUEUE A.12.
+244. **A prop aggregate's draw and fragment order** (2026-11-04; rc 0923 decompiles 180268e80 WRB_BuildAggregate,
+     180296ed0 / 180296c80 and their insertion pass 1802a0ff0, 180272ce0, 1801d30d0). READ, one input MEASURED.
+     - BuildPropAggregates loads each model with WRB_LoadPropMeshes at the group's lodlevel, -1 for every
+       aggregate candidate, so each CMesh's byte +0x58 is its embedded mesh's LOD mask (18174e370).
+     - WRB_BuildAggregate std::sorts the mesh list (180296ed0) and the run's 0x238 entries (180296c80) with one
+       comparator: +0x58 ascending, then vertex count (+0x18) descending, then memcmp of count x stride (+0x1c)
+       floats < 0. Each mesh is a draw in that order; the fragments follow the sorted entries. The CMesh copy
+       loop after the sorts clears +0x58 and +0x40.
+     - atixref -world: world nodes 283 -> 315; every agg_prop model is Valve's but the A.12 trim aggregate; both
+       metal_door_001 buckets equal Valve's second run (the known swap).
+     - MEASURED, open: n0.vwnod's fragment lists of 21 aggregates. Entries of one mesh, and of meshes whose
+       vertices are equal, tie in the comparator, so std::sort leaves them in an order set by its input: the
+       stable sort by (attribute bits, CMesh pointer) of CAggregateMeshList (180290090), which is heap order.
+       CS2_CLOSED_QUEUE A.11.
+245. **Draw tints and instanced objects' fades and origin** (2026-11-04; rc 0923 decompiles 1802ed7f0,
+     18126a260, 1812e5580, 18026c150, 18026e9c0, 18026ed20, 18023f6d0, 18025ece0, 181360310). READ.
+     - A world entry's tint (+0x28) is linear, byte x 0.003921569 (WRB_CollectMeshEntries).
+     - CMesh_SetTint (1812e5580) sets UseTintColor (+0x14f) and the tint (+0x154). GroupRenderObjects,
+       the vis merger and CompileInstanced call it with the entry's +0x28 when that is not (1, 1, 1, 1); the
+       overlay projector (181362050) with the overlay's tint.
+     - AddDrawDescriptors writes the draw's m_vTintColor as V_powf(c, 2.2) (18126a260) per component when
+       +0x14f is set. atixref's three cm00 objects with tintColor 221 now Valve's.
+     - CompileInstanced copies its group's first entry's +0xb0, +0xb4 and +0x80..+0x88 into the object's
+       +0x38, +0x3c and +0x68 (fades, lighting origin), as the vis merger does (ledger 59).
+     - An overlay entry's +0x80 is its descriptor's +0x64 (18025ece0 at 18025f3xx), FLT_MAX from
+       OverlayDesc::OverlayDesc (181360310); GetOverlayDescs does not set it.
+     n0.vwnod's scene objects now differ only in the blocklight shadow objects' light probe handshake.
+246. **An aggregate's streams: the union and the zero-filled relayout** (2026-11-04, CS2 closed; Frida on a
+     standalone resourcecompiler, tools/re/capture_aggstreams.py on atixref -world -fshallow, package
+     restored cmp-ok; rc 0923 decompiles 180268e80, 1802619c0, 1812e4040). MEASURED where, READ how;
+     settles 243's open item (CS2_CLOSED_QUEUE A.12).
+     - MEASURED: inferno_fountain_01's CMesh leaves WRB_LoadPropMeshes with stride 18 and no
+       VertexPaintBlendParams and reaches WRB_MeshesToModelDoc, the same pointer, with stride 22 and
+       VertexPaintBlendParams all zero, after position, normal, tangent, texcoord, VertexPaintTintColor,
+       texcoord 1 (the chimney's order). So the fill is inside WRB_BuildAggregate.
+     - READ: WRB_BuildAggregate calls 1802619c0 on Step_SplittingMeshWith's (CMesh, ref) list before the
+       sorts. 1802619c0 builds the union of the list's streams, meshes in list order and each mesh's
+       streams in order, a stream new when no earlier one has its name (case-blind), index (+0x10),
+       float count (+0x18) and +0x1d; a new one is copied whole (name, semantic, index, count, +0x1c,
+       +0x1d, type +0x20). The union's offsets (+0x14) are then the running sum of the counts.
+     - Then per mesh: when some union stream has no stream equal in name and semantic (case-blind),
+       index, offset, count, +0x1c and +0x1d, 1812e4040 relays it out: stride = max(offset + count)
+       over the union, a zeroed buffer, each union stream's floats copied from the mesh's stream of the
+       same index, count and name (case-blind; the first such), else left 0; the stream table becomes
+       a copy of the union. A mesh already in the union's layout is untouched.
+     - Ported (NodePropAggregates.StreamUnion): the run's kept streams united in our mesh order, the lacking
+       ones appended as zeros to the draw and to its sort key's welded floats. atixref -world: the trim
+       aggregate is Valve's byte for byte, 476 of 553 files (world nodes 319 of 395, 91.34% of their bytes).
+       Valve's list is in pointer-hash order (Step_SplittingMeshWith's map by CMesh pointer): a union that
+       the order would change, or a mesh whose streams are out of the union's order, is a note.
+247. **Fields a material does not take leave the layout** (2026-11-04; rc 0923 decompiles 181364720,
+     181363de0, 1802f5680 and its caller 1802f69f0 at 1802f6b8d; the flags byte 18307e21e is 0 in .data and
+     nothing writes it). READ.
+     - ModelCompile_MeshInputLayouts passes that byte as CMesh_BuildPackedInputLayout's flags (| 8 for the depth
+       layout, | 0x10 for the remainder). With bit 2 clear, a field InputLayout_MatchSignature did not take is
+       removed (the walk from the last field down, 1813655xx), unless its second pass kept it: PerVertexLighting,
+       LightmapUV, PropWorldOrigin, curvature, bentnormal, blendindices, blendweight(s) found in the semantic
+       table. A material with no signature (param_7 null) skips both: every field stays, with no semantic
+       (atixref's milwall001, already exact).
+     - The fields keep the mesh's stream order: matched ones are written back at their mesh field's index
+       (1813656xx), so the signature does not reorder them.
+     - atixref -world: 10 of the 19 blocklight shadow models exact (world nodes 319 -> 329, 486 of 553 files);
+       the other 9 differ in draw order (their list's entry order, upstream of the per-cluster split
+       18026cfd0 / 181366f30, which keeps the gathered order) and 2 in a few tangent frame bits.
+248. **A render object's draw order, its draws' own layouts, and the RERL order** (2026-11-04; rc 0923 decompiles
+     180344ae0, its caller 18033f200, 1801fee20, 180d49d20, 1802f69f0, 18016c0e0, 18017a5a0, 18017be30). READ, one
+     order MEASURED.
+     - WRB_MeshesToModelDoc (1801fee20) makes one ModelDoc mesh per CMesh, so a render object's draws come from the
+       model compiler's merge, not from the node: ModelCompile_WeldMeshes loads the meshes back in DAG order
+       (180d49d20) and calls 180344ae0. For each mesh i not yet taken (i below the last), it gathers the later
+       untaken meshes with its material (V_stricmp_fast), +0x184, tint (+0x14f both clear, or both set with equal
+       +0x154) and stream layout (name and +8 case-blind, +0x10, +0x14, +0x18, +0x1c, +0x1d). A group of two or more
+       is CMesh_Concatenate'd in order into a new mesh appended to the list, and its members leave the list; a mesh
+       no group took keeps its place. The draws are the unmerged meshes in order, then the merged groups in
+       first-use order. Our "groups in first-use order" was fitted. atixref: the lone toolsblocklight or
+       VertexPaintTintColor mesh of seven blocklight shadow objects now leads, as Valve's.
+     - ModelCompile_BuildDrawSets appends each mesh to the first 400-byte set whose layouts match and keeps its
+       meshes at +0x178/+0x180. MEASURED: the draws come out set by set (blocklight8 and 10 end with their second
+       vertex buffer's draw); the walk that emits them is not followed past 1802fb130.
+     - ModelCompile_MeshInputLayouts (1802f5680) lays out each mesh with its own material's signature and depth
+       list. Ours used the first draw's material for every draw, so a second material without a depth list was
+       split anyway (atixref's italy_windows_glass_01a beside italy_windowkit_wood_01; five cb_nomerge /
+       d_nomerge models).
+     - The RERL writer 18016c0e0 (the only one, called from 180171830) std::sorts the references by
+       V_stricmp_fast of the name before writing them, so every RERL is in case-blind path order (the 17 of 17
+       measured). Ported in ValveLayout's RERL. atixref's disco_wall_toggle_246 and blocklight10 now Valve's.
+     - atixref -world: 486 -> 498 of 553 files.
+249. **Instanced meshes stay apart; the model compile's own tangents** (2026-11-04; rc 0923 decompiles 180272c80,
+     1813319d0, 180d47b90, 1802f69f0 and its disassembly at 1802f6cc0, 180344980, 1803447d0, 1812e1450, 1812db920,
+     18020be10, 18025fab0). READ.
+     - CInstancedMeshList::OnAdd sets CMesh +0x14c on every entry of the instanced list. CMeshToHalfEdge writes it
+       as the DmeMesh's NoCollapse and DmeMeshToCMesh reads it back (+0x14d PackToSharedVB, +0x14f UseTintColor
+       likewise). The merge (180344ae0) skips a NoCollapse mesh; ModelCompile_BuildDrawSets gives one without
+       PackToSharedVB a set of its own in a second list (1802fcd90), and that list's sets come before the shared
+       ones (1802fcea0, 1802fde10). The set match itself compares the four layouts' fields by D3D semantic name,
+       +0x20, +0x24, +0x28, +0x2a and +0x2b (1802f6cc0..1802f6d36). atixref's nomerge objects: one vertex buffer
+       per draw, as Valve's.
+     - WRB_CompileNodeModel's argument block has preserve_tangents 1 (18020be10 writes it). The mesh compile
+       (180344980) runs ModelCompile_WeldMesh before the merge: a mesh whose tangents 1812e1450 accepts (its first
+       four-float stream named *tangent*, w = +-1 and |t|^2 within 0.001 of 1 or 0 at every vertex) is only
+       welded at 1e-7; any other gets CMesh_ComputeTangents (MikkTSpace on): a missing tangent stream is appended
+       after the others, each corner gets the generator's tangent, a vertex keeps its first corner's, and a later
+       corner differing by 1e-4 in x, y or z, or in w, gets a copy of the vertex appended. Ported as
+       WorldNodeModels.ModelTangents with MeshTangents.Corners.
+     - So a draw whose material reads no tangent, which PrepareForMerge's filter strips, packs a recomputed
+       tangent in Valve's NORMAL word, not 0x401 (the "default tangent" of ledger 60 and OPEN 1.c2): dev/black_simple
+       in cb_nomerge26 and 16 mesh_overlay models now Valve's.
+     - atixref -world: 498 -> 520 of 553 files (95.17% of bytes).
+250. **Draw sets match before the texcoord compression** (2026-11-04; rc 0923 decompile of 1802f69f0: the set match,
+     then 1802f6840 over each set at its lines after the grouping). READ.
+     - ModelCompile_BuildDrawSets matches a mesh to a set on its layouts as ModelCompile_MeshInputLayouts made them;
+       WRB_CompressTexcoordsToSnorm runs afterwards, once per set over all its meshes. So an unflagged texcoord is
+       R16G16_FLOAT for the match, and the set becomes R16G16_SNORM only when every mesh's values lie in [-1, 1].
+       Ours chose the format per draw first, so a draw that fit split off into a set of its own.
+     - atixref's agg_nomerge_hr_metal_grating_001_0 is one vertex buffer, as Valve's (521 of 553 files).
+     - The model compile's tangent step (ledger 249) now runs on aggregate fragments too, after BuildAggregate's
+       order; atixref's fragments all carry valid tangents, so no byte changes.
+251. **The model compile copies every direction once more** (2026-11-05, CS2 and Steam closed; Frida on rc 1103
+     compiling atixref -world -fshallow, rc 0923 decompiles 180d46590 and DmeMeshToCMesh 180d47b90). MEASURED + READ.
+     - tools/re/capture_tangentframe.py hooked CompressTangentFrame (182067e80) and kept every input whose angle lands
+       on an axis step (9,497 of 477,626 calls). Our TangentFrame.Compress gives Valve's word on all 9,497
+       (TangentFrameCaptureProbe), so the one-step angles of OPEN 1.c7 were input bits. In every differing frame
+       Valve's tangent is ours scaled by about 1 + 1.2e-7, and a -0 component of ours is +0 in Valve's.
+     - capture_aggstreams.py --dump tangent: a world node mesh's tangent stream still has our bits at
+       WRB_MeshesToModelDoc's entry and has Valve's at DmeMeshToCMesh's exit. That function is the model compile's
+       CMesh -> DmeMesh -> CMesh round trip, the same copy ledger 37 reads for BuildNode's input.
+     - Read: DmeMeshToCMesh flags each stream by name (V_stristr, in order): position, bentnormal or normal; else
+       none for speed, balance or wrinkle; else tangentu, tangentv or tangent. The flag goes to 180d46590 as its
+       transform argument, with "is the position" (the first position stream, local_3a0) beside it. A flagged
+       stream that is not the position is turned by Matrix3x4_Rotate. A float3 is then renormalised unless its CMesh
+       stream's byte +0x1c is set; a float4 always is, w kept. The renormalise sums z, y, x and multiplies by the
+       reciprocal of the root (NodeMeshEntries.Normalise). An exact 1 / len on our tangent gives Valve's bits
+       (checked on four frames by hand, then on the whole map).
+     - The world node model compile hands the identity (measured: only the renormalise's scale and the +0 zeros
+       differ). Brush entity models do not take this round trip: atixref's 144 are Valve's without it and 15 differ
+       with it.
+     - Ported as WorldNodeModels.DmeCopy (before ModelTangents, world node models only) and NodeMeshEntries.Copy.
+       atixref -world: 521 -> 539 of 553 files (97.05% of bytes); entity models 144/144, world nodes 381/395.
+       Fresh Valve -world references of 2026-11-05: ze_hold_em_p 45/45 files, probe01 and cardtest every world
+       node (their map root differs only because the run starts from the installed package, PARITY_BASE).
+     - Left on atixref: agg_nomerge_inferno_plaster01yellow_brick02_blend_0 (its vertex count differs, 67 frames
+       with another tangent, not this rule), hr_concrete_wall_painted_001_1, inferno_trim_wood01_painted_blend_02_0,
+       the vism0 overlay field order, metal_door_001's bucket swap (within Valve's variance) and n0.vwnod.
+252. **A world node model's field order is the DmeMesh round trip's** (2026-11-05, CS2 open; rc 0923 decompiles of
+     1813319d0, its eight typed writers 181323b30 .. 181327b30, 1812e0b10, 181320d30, 180d4f480 and its typed field
+     writers 180d4ca10 .. 180d4d3c0, 180d463b0, 180d473d0; tables 18243b690, 18243b8d0, 1822b73e0). READ. Replaces
+     WorldNodeModels' fitted Rank (position, texcoords, normal, tangent, rest).
+     - MapBuilder_CMeshToHalfEdge passes over the lowest-index blendweight(s) and blendindices streams (1812e0b10)
+       and gives every other stream a row of 18243b690 (0x2c each): the first whose float count (+0x20) and name
+       match (position 2/3, normal 3, tangent 3/4, texcoord 2, color, vertexPaintTintColor and
+       vertexPaintBlendParams 1), else the count row (18243b820: counts 1-4, types 3, 8, 11, 17), else "invalid"
+       (18243b958, type 0, class 0), which no writer takes. Row byte +0x24 clear (only the two position rows) puts
+       the field in the vertex list (half-edge +0x38), else in the face-vertex list (+0xb0); 181320d30 appends, so
+       each list keeps the mesh's order.
+     - HalfEdge_WriteDmeMesh (180d4f480) writes the vertex list, then the face-vertex list, each in seven passes by
+       the type's DMX group (1822b73e0): type 12 (cfe0 with 0xc, 0), float (cc00), Vector2 (cdf0), the other
+       Vector3 (cfe0 with 0, 0xc), Vector4 (d1d0), int (ca10), color (d3c0); then the blend fields (180d4f1f0,
+       weights then indices, 181899f00). DmeMeshToCMesh lists the fields in that order (180d463b0) and its stream
+       layout (180d473d0) follows it. So a count-1 stream such as VertexGenericIntegerData (float) comes right
+       after the position, and VertexPaintBlendParams (color) last.
+     - Ported as WorldNodeModels.DmeFieldOrder. atixref -world: 539 -> 547 of 553 files (97.45% of bytes), the 8
+       vism0 overlay objects now Valve's; ze_hold_em_p -world 45/45 files.
+253. **Aggregate fragments get the tangent check after their weld** (2026-11-05 night, CS2 closed; Frida
+     tools/re/capture_aggstreams.py A.14 on rc 1103 compiling atixref -world -fshallow; rc 0923 decompiles of
+     Step_SplittingMeshWith 180260710, CMesh_Weld 1812d80c0, 1812e1450). MEASURED + READ.
+     - The tangent check and CMesh_ComputeTangents run on atixref's three left aggregates before
+       WRB_MeshesToModelDoc (log order), called from Step_SplittingMeshWith, whose only caller is WRB_BuildAggregate
+       (180268ef5). Per fragment group it welds at 0 (a tangent still joins within 0.001 per component), runs the
+       check on the welded mesh and, when it fails, recomputes with a split list whose vertex copies go to the
+       group's entries ("Computing tangents mesh %i, %i v -> %i").
+     - Valve refuses brick02's 243-vertex fragment (vertex 236, |t|^2 0.9927, w -1), hr_concrete_wall_painted_001's
+       194 (vertex 124, 0.9719; 197 vertices after the recompute) and trim_wood01's 124 (vertex 58, w 0.36). Our welded
+       tangents equal Valve's at the check bit for bit, so only the step was missing.
+     - Ported: FragmentOrder runs ModelTangents (the check and the recompute) on each welded fragment before the sort.
+       atixref -world: 547 -> 550 of 553 files (97.96% of bytes); ze_hold_em_p 45/45. Left: n0.vwnod (A.11) and
+       metal_door_001's bucket swap (Valve's own runs differ there).
+254. **Three kinds of render object keep CreateRenderObject's handshakes** (2026-11-05 night, CS2 closed; rc 0923
+     decompiles of 18026bab0 and its seven callers). READ.
+     - CreateRenderObject zero-fills the record (cubemap +0x7c, light probe +0x80 0, boost +0x84 1, fades 0, lighting
+       origin FLT_MAX) and copies its ninth argument (a 3x4 transform; DAT_182771b20 is the identity) to +0x8.
+     - The cluster compile (18026c150), the vis merger's object (18026e9c0) and CompileInstanced (18026ed20) then copy
+       their first entry's +0xa0, +0xa4 and boost (and the last two the fades and origin). The block light split
+       (180270a20), CSkyboxMeshList (180272480) and CSkyboxMaterialMeshList (180272620) copy nothing.
+     - Ported: RenderObject.EntryHandshakes (false for those three); WorldNodeFiles writes 0, 0, 1 for them.
+       atixref's 19 blocklight _shadow / _noshadow objects now carry Valve's probe 0 (written as INT64_ZERO).
+     - What is left in atixref's n0.vwnod is prop aggregate fragment order: Valve's two -world runs disagree on 17
+       aggregates and agree on the rest; ours equals one run on 3 of the 17 and differs on 113, 225, 232 and 233
+       where both runs agree. CAggregateMeshList::Compile sorts by CMesh pointer (180290090, A.11), so this is heap
+       order.
+
+255. **resourcecompiler's up-to-date test, and where a map's dependencies are not compiled** (2026-11-05 night, CS2
+     closed; rc 0923 decompiles of 18018b630, 1801692f0, 18016f170, 180167ad0, 180168770; strings 182782160 /
+     182781d20.) For 8.b1 (a map's addon content compiled by compile-map).
+     - Settled from the code: Hammer's `-fshallow` is "Force compile top-level resources, but only compile children
+       and associates as needed" (RC's own help, 182782160); `-fshallow2` forces children too, associates as needed.
+     - Settled from the code: 1801692f0 compiles one file. It skips a file shadowed by a higher-priority extension
+       and one in a read-only search path, then asks 18016f170 whether the output is up to date: true skips it,
+       false compiles it (or, at mode 4, `-dependency_check_only`, only logs it).
+     - Settled from the code: 18016f170 returns false at once when the file's mode (+0x60) has any bit but 4 set (a
+       forced compile). Otherwise it loads the existing compiled file's header (version 0xc), inits its edit info
+       (181c213e0, must return 2), and recompiles on the first mismatch, in this order: special dependencies
+       (180172920), special input dependencies (180172be0), each argument dependency against six typed tables
+       (180177a70 / 177ce0 / 177f40 / 1781a0 / 178400 / 178660 at +0x1d0 ... +0x428), input dependencies
+       (180172390), additional dependencies (180172390 again), child resources present (180172f60), and no
+       inputs at all ("No inputs specified, recompiling"). All equal: "All inputs have identical CRCs,
+       skipping" and 180170170 records the existing outputs.
+     - Read, not the queue: 180167ad0 registers a compiled resource as an input dependency (types must be listed
+       in CompileDependsOnResourceTypes); 180168770 is the Perforce add of inputs. Neither queues a dependency.
+     - MEASURED (2026-11-05, rc 1103, tools/coverage/addon_material_specimen.py makes s2c_addonmat: probe01 with two
+       materials that exist only as sources in the addon, materials/s2cmat/cx_full.vmat and cx_color.vmat, nothing
+       compiled; compile_fresh.py s2c_rc_probe s2c_addonmat -- -world -fshallow -v; log and package kept as
+       %TEMP%/fresh_compile/s2c_addonmat_nomats.*): the map compile does NOT compile them. It logs "Failed loading
+       resource materials/s2cmat/cx_full.vmat_c (ERROR_FILEOPEN)", lists them as strong references, logs
+       "CAssociateResourceBlockLoader::BlockingLoadResourceFileData: Trying to load an illegal resource name
+       materials/s2cmat/cx_full.vmat!" and "RESOURCE COMPILE WARNING: Mesh 'meshset_0' referencing missing material",
+       exits 0, and writes nothing under game/csgo_addons/s2c_rc_probe/materials. A map's materials are strong
+       references, not children or associates, so -fshallow's "as needed" does not reach them: in Valve's pipeline
+       they are compiled before the map (by the tools when an artist saves them, or resourcecompiler run on the
+       asset itself). 8.b1 is therefore not part of the map compile; compiling an addon's sources is its own step.
+     - Exact (2026-11-05): `s2c compile-addon` (AddonCompile, main's ResourceCompiler) on cx_full.vmat and
+       cx_color.vmat writes RC 1103's eight files byte for byte (the two materials, three child textures beside their
+       images, default_ao and default_normal under materials/default/) and no others (%TEMP%/addon_ref/s2cmat_1105;
+       AddonCompileTests). With them compiled, Valve's -world -fshallow of s2c_addonmat has no missing-material
+       warning (%TEMP%/fresh_compile/s2c_addonmat.vpk), and our compile-map -world over it gives all 13 files byte
+       for byte (world.vwrld_c with S2C_WORLD_STAMP=1793883340,11095541016954127721, its stamp and fingerprint).
+       Not ported: RC's up-to-date test; other source types.
+
+256. **Prop aggregate fragment order is mimalloc's block reuse** (2026-11-05 night, CS2 closed; Frida
+     tools/re/capture_aggorder.py on rc 1103 compiling atixref -world -fshallow: g_pMemAlloc Alloc / Realloc / Free
+     while BuildNode (18024b430) runs, each bucket after WRBMeshList_SortMorton and at WRB_BuildAggregate). MEASURED.
+     - tier0's allocator is mimalloc (ULowLevelAllocationScheme_mimalloc). Each prop entry's sort key (entry +0x0) is
+       a 0x1a8 object (448 bin), allocated mostly in WRB_LoadPropMeshes (rc+1d485e) and BuildNode's own prop steps.
+     - In 43 of the 64 prop aggregates the stable sort's pointer order is not the allocation order; nearly all of
+       their objects took a block freed earlier (LIFO reuse of the page's free list), spread over several 64K pages.
+       The 21 others are in allocation order. Where a block lands depends on every 448-bin allocation and free of the
+       run (682,937 frees in BuildNode alone), and cross-thread frees reach the free list nondeterministically:
+       Valve's own two -world runs disagree on 17 atixref aggregates.
+     - So no data reproduces it short of emulating the allocator over all of resourcecompiler's allocations. Ours
+       keeps creation order, which equals Valve's where no block was reused; n0.vwnod's fragment order passes under
+       the variance rule only where it matches a run. Settled as Valve-nondeterministic (heap), not ported.
+257. **Bomb damage without a nav or world physics writes nothing** (2026-11-05 night; modtools 1015 decompiles of
+     CMapCompileModifierCS2BombDamage::Run 18003ad70, GatherBombsites 18003b5d0, BuildGrid 18003b750,
+     SampleNavAreas 18003d030). READ + MEASURED.
+     - Run logs "Baking CS2 Bomb Damage:", then GatherBombsites answers false unless the context has the nav mesh
+       (+0x18) and context[2]'s vf 0 returns the world; BuildGrid answers false when SampleNavAreas finds no nav or
+       no points. Either ends the step with no file and no error ("Bomb Damage bake completed" is not logged).
+     - Valve's -world builds of probe01 and cardtest from an empty package (fresh_compile/*_world_1105.vpk) carry no
+       baked_bomb_damage.vdata_c. compile-map failed the build there ("the package has no ... to sample"); it now
+       logs and writes nothing. Found by the parity sweep: probe01 -world 0/13 -> 13/13, cardtest 0/14 -> 14/14
+       from an empty package (no PARITY_BASE needed any more).
+258. **A prop_static's model path as the static model record takes it** (2026-11-06; rc 0923 decompile of
+     EntityLump_StaticModelRecord 180245770). READ + MEASURED.
+     - The record returns before doing anything when the model key (+0x108) is empty; a path whose extension
+       (V_GetFileExtension) is neither "vmdl" nor "vmdl_c" (V_stricmp_fast) becomes models/dev/error.vmdl; any other
+       gets V_SetExtension ".vmdl". So a prop_static with no model has no record: no entry, no scene object.
+     - Ported as NodePropEntries.RecordModel, used by the baked prop list and the prop aggregate / standalone list.
+       probe_classes lit (-s2cbake, Valve's driver 32.0.16.1088 reference): its bare prop_static had given n0.vwnod a
+       second scene object with an empty model; now 144 of 145 files, only the .nav (survival play area, not ported).
+
+259. **The default hit group's albedo from the vmat_c, and artist values clamped to the variable's range**
+     (2026-11-06, CS2 open; scenesystem 20261015 and materialsystem2 20261015 decompiles, checked against
+     Valve's atixref host capture %TEMP%/hostcap_atixref). READ + MEASURED.
+     - PathTraceScene_MaterialData (scenesystem 180098cd0) asks the material for LightSim_Albedo through
+       CMaterial2 vf 0x70 (materialsystem2 18000bea0: the key in the store's 12-hash chunks, the chain, then the
+       parent set; three floats copied) before any colour texture. toolsblocklight and toolssolidblocklight
+       carry LightSim_Albedo = (0, 0, 0, 0) in their own m_vectorAttributes, so their block is albedo (0, 0, 0)
+       with +16 = -1 (no g_tColor), not the colour texture ours bound. Ported: MaterialInfo.VectorAttributes,
+       RtxMaterials.DefaultBlock (components clamped 0..0.99 as 180098cd0 does). A LightSim_Albedo only the
+       shader declares still refuses.
+     - SET_BY_ARTIST values: GetValueFromMaterialParamAsVector4D (materialsystem2 18002f3b0) and
+       GetValueFromDynamicMaterialParam (18002c000) clamp each component of the material's value to the
+       variable description's range (floats +0x18c min / +0x19c max, read from the VCS's m_flMin / m_flMax by
+       1800b01f0; ints +0x15c / +0x16c as floats; bools to 0 or 1). A defaulted variable is not clamped.
+       rock_b's g_flDetailBlendFactor 1.1 and web_joist_001_base's 2.0 become the declared maximum 1.0, as in
+       Valve's block. Ported: RtxMaterials.MaterialBlock (ArtistInRange). Not read: whether the
+       artist-and-expression source clamps its artist input.
+     - atixref, -s2cbake GPU path against Valve's job on driver 32.0.16.1088: every material block word now equals
+       Valve's but bindless indices. Irradiance differs on 3.81M of 12.32M lit luxels (R), from 4.51M; direct
+       shadows unchanged (95,886 R luxels), so their cause is elsewhere (tools/vrad3/chart_diff.py localises
+       them to charts).
+260. **Surface properties (.vsurf) as resourcecompiler compiles them** (2026-11-06; rc 0923 decompiles of
+     CResourceCompilerSurfaceProperties vf11 18012e470, 18012eb80, 18012e360, the context's 180175570 / 180175420;
+     the 1103 build's 18012e640 / 18012ed50 / 18012e530 are the same instructions with relocations masked; RC 20261103
+     probes s2c_kv3_surf1-3 on the main line, branch resources/kv3-types). READ + MEASURED.
+     - RC picks a compiler from game/bin/assettypes_common.txt (m_CompilerIdentifier); vsurf names
+       CompileSurfaceProperties: resource version 1, RED2 rows KV3 Compiler Version 2 and Surface Properties Compiler
+       Version 2. The list must hold an entry named "default" (its members are read into a table nothing uses).
+     - Each entry becomes a new table: its base chain merged first, deepest base first (the base is the first entry
+       of the whole list with that name; earlier entries are already compiled, later ones as written; a visited set
+       refuses a loop), every base member but "hidden" (key token 0x244342da) at any depth, tables merged member by
+       member and anything else set; then the entry's own members; then m_nameHash (string token of the compiled
+       table's surfacePropertyName, uint32) and m_baseNameHash (the base's token, 0 without one, uint32). Members are
+       found by the lower-cased name, so a set keeps the first spelling and its place.
+     - The name becomes a surface_prop subasset definition, listed once (A-Z folded); every audiosounds value of the
+       compiled table, inherited ones too, a soundevent subasset reference, counts added. A nameless entry takes its
+       base's name, so RC refuses it as a duplicate (s2c_kv3_surf3: "Surface Property "default" is a duplicate of
+       "default"").
+     - Ported as SurfacePropertiesCompile; s2c_kv3_surf1 (a stock compile decompiled) and s2c_kv3_surf2 (base chains,
+       a base later in the list, hidden at both depths, keys in other case) are RC's byte for byte.
+261. **Composite material kits (.vcompmat): the strip pass** (2026-11-06; rc 0923 decompiles of
+     CResourceCompilerVCompMat vf11 18015aa40, 180159960, 18015a270, 181eb70f0, 181eb7070, 181eae3f0; RC 20261103
+     probes s2c_kv3_cm1 and cm3). READ + MEASURED.
+     - CompileVCompMat (assettypes_common.txt): resource version 0, RED2 rows Composite Materials Compiler Version 1
+       and KV3 Compiler Version 2. No m_Points refuses.
+     - 180159960 removes the root's m_KVthumbnail and each point's m_ModelName, m_nSequenceIndex, m_flCycle,
+       m_nMeshGroupMask, m_bEnableChildModel, m_ChildModelName and m_KVModelStateChoices, and every input container and
+       property mutator whose m_bEnabled is false (absent reads true), back to front. It also fails the compile when an
+       include or a specific container material is not in the content tree; that check changes no byte and is not made.
+     - 18015a270 then compiles a child texture for each loose variable of an enabled container with a
+       m_strTextureContentAssetPath (its vtex template with $TEXTURE_REPLACEMENT_TOKEN, named "%s_%s_%x.vtex"). Not
+       ported: refused by name. cm3's disabled container carries one and compiles, as RC's does.
+     - Ported as CompositeMaterialCompile; cm1 and cm3 are RC's byte for byte.
+262. **What the shared KV3 compile does with every type's tree** (2026-11-06; rc 0923 decompiles of
+     CResourceCompilerKV3::vf0 1800fa170 -> 1800f9db0, 1800f8950, 1800f8b70, 1800f8d90, context vf0 180166b40 and vf1
+     180166c10, the edit info finalize 18016c650; RC 20261103 probe s2c_kv3_cm1). READ + MEASURED.
+     - After the type's own vf11, 1800f8950 fixes up every resource and resource_name string in place
+       (FixupResourceName_NoExtension, ResourcePath: dot segments, lower case, forward slashes; a rooted or absolute
+       path is "Bad resource reference"), keeping the flag.
+     - 1800f8b70: a soundevent: string is a soundevent subasset reference (count 1 each); a resource: string goes to
+       the strong set (RERL), a resource_name: string to the weak set, each keyed by the resource id. The finalize sorts
+       the weak list with std_sort_ResourceRefs (18017a5a0, V_stricmp_fast of the name) into m_WeakReferenceList, and
+       RERL's writer sorts the strong ones the same way. 1800f8d90 turns panorama: image names into references (not
+       ported, refused).
+     - Ported as Kv3References for every KV3 text type. Before it, m_WeakReferenceList was always empty, soundevent:
+       strings counted nothing, references kept their written spelling and a KV3 source's RERL kept first-seen order:
+       none of the RcReference fixtures has two references out of order or a resource_name, so nothing caught it.
+       s2c_kv3_cm1's two prewarm .vmat weak references (written in the other order) are RC's.
+263. **The ModelDoc compiler: a static .vmdl from model DMX files** (2026-11-06; rc 0923 decompiles of 180344980,
+     180d49a80, 180d49d20, 180d47970, DmeMeshToCMesh 180d47b90, 180d463b0, 180d473d0, 180d46590, 1818bde50,
+     1818be180, CMesh_Append 1812d6c70, ModelCompile_WeldMesh 1803447d0, ModelCompile_ReadMeshArgs 1802f9cc0,
+     MeshInputLayouts 1802f5680, BuildDrawSets 1802f69f0, CMesh_BuildPackedInputLayout 181364720 and its table
+     183014ae8; Valve's references from the installed 1.41.9.6 resourcecompiler, two runs each). READ, MEASURED.
+     - `Models/DmxModelMeshes` + `Models/ModelDocCompiler` (docs/MODELS.md): a DMX binary_seqids 9 file reads with
+       the binary 9 layout; the mesh's "bind" base state, its vertexFormat fields in order, one vertex per corner,
+       values copied by 180d46590, face sets grouped per DmeMesh by material + %f lightmap scale (case-insensitive
+       symbol table) and appended by CMesh_Append (same streams: one block, indices offset). A .vmdl compiles with
+       preserve_tangents 0: ModelCompile_WeldMesh always recomputes tangents (WorldNodeModels.Build gains
+       preserveTangents). RED2: the .vmdl and each mesh file with CRC32, the arguments 1802f9cc0 reads recorded as
+       FloatArgs at their defaults (meshlets_max_* -1.0f), IsChildResource 0.
+     - dkr_remix's 111 render-only models (tools/pipeline/model_corpus_render.txt; Valve's two runs identical on
+       all 111): 95 byte for byte, 9 refused, 7 differ. The 7: six by one packed tangent frame word each (the
+       shared recompute, OPEN 1.c7 / CS2_CLOSED_QUEUE A.14) and skybox_bottom (below).
+     - Open, refused by ModelDocCompiler: (a) the fourth layout 1802f5680 builds for a non-map mesh, the standard
+       streams its material leaves unread, written as an extra unbound vertex buffer (skybox_bottom; three of its
+       name conditions are not read); (b) the set match compares all four layouts, depth ones included (built
+       whenever the material has a depth list: dkr_remix urban_trees_* keep branches and bark apart); (c) texcoord
+       precision in the match: coaster_railing_01's parts past 16 and within 16 share one float32 set, while
+       atixref's blocklight shadows keep past-16 and within-1 parts apart. Treating every texcoord as the table's
+       R16G16_FLOAT in the match fixed (c) and broke three atixref blocklight models (550 -> 547 of 553), so it was
+       reverted; the field 181364720 stores the table format in, and BuildDrawSets' settings object +0x1f9
+       (embedded_map_mesh), need the disassembly. s2c_foliagels' generic_tree_large_1 nomerge objects (peer
+       report: Valve R16G16_SNORM where we write R16G16_FLOAT) are the same question on the map side.
+264. **source1import's .vmat form compiles as RC compiles it** (2026-11-10; tier0 0923 decompiles of
+     LoadKV3FromKV3OrKV1 1800cd310, LoadKV3FromKV1Text_Translated 1800cccc0, 1800cdce0, 1800cf9c0, 1800ce210 and
+     the value typing 1800cf320 (strtoll 1802c29a4 -> 1802c1f50, 64-bit; strtod 1802c1470); rc 0923 decompiles of
+     CResourceCompilerMaterial::CompileResourceInternal 18010f480, 18010e280, 18010e430, 18010e550, 18010f200,
+     the sort 1801156e0 -> 180115f60, AddSubassetReference 180175420 (context vf3, vtable 18277e6f0), the
+     feature combo record 181fa2f30 / 181faa3b0 / 181fac660, ProcessTexture 18010aa00; Valve's references from
+     the installed resourcecompiler, 11-10). READ, MEASURED.
+     - `Materials/VmatSource`: tier0 types each KV1 value by its text: empty -> string; 18 chars `0x..` -> uint64
+       (refused); strtod ends past strtoll and at the end, no ERANGE -> double `(double)(float)d`; strtoll ends at
+       the end and fits int32 -> int; else string. ValveKeyValue 0.70 retypes numbers itself (`"1.000"` -> 1), so
+       the vmat is read by `Kv1Text`, a raw-text reader of plain KV1 (quoted strings, plain tokens, braces, //
+       comments, UTF-8 BOM) that refuses what tier0's tokenizer is not ported for (`#`, `=`, `\"`, `/*`,
+       UTF-16, duplicate keys, backslashes in values the compile reads).
+     - `MaterialCompiler`: 18010f480 walks the root once: int -> m_intParams (kept as a float, refused past
+       2^24), double -> m_floatParams, `''` or `[` string -> m_vectorParams (V_sscanf `[%f %f %f %f]` into
+       zeros), other strings no param (texture paths; `SkyTexture`); tables by name (V_stricmp_fast):
+       attributes / DecalAttributes / SystemAttributes -> attributes (int -> int attribute, plus a float one
+       outside SystemAttributes; double -> float; `''`/`[` -> vector; other string -> string; tables inside
+       skipped); ToolAttributes and dynamicparams are refused (not ported); every other table is skipped,
+       `legacy_import` included (RC never names it). Every list is sorted with V_stricmp_fast (was ordinal).
+       Searchable: the feature combo's values that are not 0 (181fac660 decode, context vf18; was "the F_
+       values the vmat sets"), then int, float, string attributes in that order, later writes replacing
+       earlier ones. A string attribute PhysicsSurfaceProperties is a surface_prop subasset reference (count 1).
+       181faa3b0 pins the static combos of each mode whose name contains "Tool" (strstr, 18274ef4c), so their
+       attributes never count (lightmappedgeneric's ToolsVis environmentmapped).
+     - `GeneratedTexture.NamedInput` (18010aa00): the child is named after the first input, a
+       `materials/default/` pick replaced by the next non-default input, a `[` constant by the next image.
+     - Verified: probes s1i_lmg and s1i_attrs (RcReference/materials, CRLF, quoted, both attribute tables,
+       legacy_import, edge typings) byte for byte with their children; the 77 material tests pass. Porter
+       addon ze_el_salto_del_angel_v1 (200 vmats) RC-compiled into a scratch addon (tools/re/rc_addon_materials.py):
+       105 of the 107 vmats s2c compiles are Valve's bytes.
+     - Open: (a) 181fa2f30's walk over every other free static combo with its rule checks (we take each
+       non-Tool, no-fallback mode's settings); (b) a child's display size (METADATA) comes from its first input,
+       where RC's differs for a default normal + material roughness (27 el_salto `_rough` children, 140 bytes);
+       (c) not compiled yet: constant `[r g b]` texture inputs (named `<material>_<variable>`), image `.txt`
+       settings, cube textures (sky.vfx `g_tSkyTexture`), dynamicparams, csgo_lightmapped_4wayblend's two extra
+       default children in RED2 (blendproddirtgrass).

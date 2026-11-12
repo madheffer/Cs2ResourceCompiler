@@ -81,7 +81,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
     private readonly Package _coreShaders;
     private readonly IReadOnlyList<AggregateModel> _aggregates;
     private readonly IReadOnlyList<IReadOnlyList<AggregateCulling.Fragment>>? _fragments;
-    private readonly string _skyMaterial;
+    private readonly string? _skyMaterial;
     private readonly Dictionary<string, (int R, int G, int B)> _shaderIdColors;
 
     private readonly Dictionary<object, GpuDevice.GpuBuffer> _buffers = new(ReferenceEqualityComparer.Instance);
@@ -98,8 +98,8 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
     /// <param name="game">The game folder (.../game) holding csgo and core.</param>
     /// <param name="mapVpk">The compiled map's package: world nodes, models, lightmaps.</param>
     /// <param name="aggregates">The draw list's aggregates' models, in its order (<see cref="AggregateModels"/>).</param>
-    /// <param name="skyMaterial">env_sky's material.</param>
-    public CubemapFaceRenderer(GpuDevice gpu, string game, string mapVpk, IReadOnlyList<AggregateModel> aggregates, string skyMaterial,
+    /// <param name="skyMaterial">env_sky's material, or null for a map with no env_sky (no sky object, nothing drawn).</param>
+    public CubemapFaceRenderer(GpuDevice gpu, string game, string mapVpk, IReadOnlyList<AggregateModel> aggregates, string? skyMaterial,
         IReadOnlyList<IReadOnlyList<AggregateCulling.Fragment>>? fragments = null)
     {
         _fragments = fragments;
@@ -239,11 +239,12 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
         CreateTarget(AmbientOcclusion, Format.R8G8B8A8Srgb, WindowWidth, WindowHeight);
         Clear(AmbientOcclusion, Format.R8G8B8A8Srgb, WindowWidth, WindowHeight, new(0, 0, half, half), null, null, [1f, 1f, 1f, 1f]);
 
-        // 6. The colour layer, then the sky.
+        // 6. The colour layer, then the sky (a map with no env_sky has no sky object).
         foreach (var d in draws.Where(d => d.Layer == CubemapFaceDrawList.Layer.Colour))
             foreach (var c in d.Commands)
                 WorldDraw(d, c, CubemapFacePipelines.Pass.Colour, blocks.WorldView, blocks, transforms, instanceRecords, instanceIds, cullBits, FaceDepth, observe, FaceColour);
-        Sky(blocks, instanceIds, observe);
+        if (_skyMaterial != null)
+            Sky(blocks, instanceIds, observe);
 
         // 7. The face's stencil cleared, then the quarter resolution depth.
         Clear(FaceDepth, Format.D24UnormS8Uint, (uint)face, (uint)face, new(0, 0, face, face), null, 0, null);
@@ -471,14 +472,30 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
     /// A material's $Globals for a pixel program: <see cref="ProgramGlobals.Fill"/> with g_bRenderingToCubemaps = 1 and
     /// gameinfo's ShaderIDColors (ledger 120), the block the program's reflection declares.
     /// </summary>
-    private byte[] Globals(string key, ValveProgram program, Material material, Dictionary<string, VfxExpression.Value> attributes, VfxExpression.Value? shaderIdColor = null)
+    private byte[] Globals(string key, ValveProgram program, Material material, Dictionary<string, VfxExpression.Value> attributes, VfxExpression.Value? shaderIdColor = null,
+        Func<string, VfxVariableDescription, int>? textureSlot = null, Func<string, int>? samplerSlot = null)
     {
         if (_globals.TryGetValue(key, out var made))
             return made;
         var size = program.Reflection.Resources.First(r => r.Binding == 0 && r.Kind == SpirvReflection.Kind.UniformBuffer).BlockSize;
         var block = new byte[(size + 15) & ~15];
         var tokens = new Dictionary<string, VfxExpression.Value>(attributes, StringComparer.OrdinalIgnoreCase);
-        ProgramGlobals.Fill(program, block, new ProgramGlobals.MaterialScope(material, program, tokens, shaderIdColor), (_, _) => -1, _ => -1);
+        ProgramGlobals.Fill(program, block, new ProgramGlobals.MaterialScope(material, program, tokens, shaderIdColor, Reflectivity), textureSlot ?? ((_, _) => -1), samplerSlot ?? (_ => -1));
+        // S2C_CUBE_GLOBALS_PATCH=<program name part>:<offset>=<int>[;...] (diagnosis): a word written over the block.
+        if (Environment.GetEnvironmentVariable("S2C_CUBE_GLOBALS_PATCH") is { Length: > 0 } patches)
+            foreach (var patch in patches.Split(';'))
+                if (patch.Split(':', '=') is [var name, var offset, var value] && program.Name.Contains(name, StringComparison.Ordinal))
+                    BitConverter.TryWriteBytes(block.AsSpan(int.Parse(offset, System.Globalization.CultureInfo.InvariantCulture)), int.Parse(value, System.Globalization.CultureInfo.InvariantCulture));
+        // S2C_CUBE_GLOBALS_OUT=<dir>: each block as made, to compare with a capture's (diagnosis).
+        if (Environment.GetEnvironmentVariable("S2C_CUBE_GLOBALS_OUT") is { Length: > 0 } dump)
+        {
+            Directory.CreateDirectory(dump);
+            var file = Path.Combine(dump, string.Concat(key.Select(c => char.IsLetterOrDigit(c) ? c : '_')));
+            File.WriteAllBytes(file + ".bin", block);
+            // The program's SPIR-V hash and its constants (name, offset, type), to find the capture's draws of it.
+            File.WriteAllLines(file + ".txt", [Convert.ToHexStringLower(System.Security.Cryptography.SHA1.HashData(program.Spirv)),
+                .. program.Constants.Select(c => $"{c.Offset} {c.Name} {c.Variable.VfxType}")]);
+        }
         return _globals[key] = block;
     }
 
@@ -600,12 +617,236 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
         return null;
     }
 
+    // ---- the global late-bound bindless set (set 4) ----
+
+    /// <summary>Set 4's bindless sampler array (g_globalLateBoundBindlessSet's samplers; csgo_foliage's vertex program).</summary>
+    private const int BindlessSamplerBinding = 29;
+
+    /// <summary>Our indices into the bindless texture arrays, from 1 (0 is no texture), and each one's image and view type.</summary>
+    private readonly Dictionary<string, (int Index, SceneDrawRunner.SceneImage Image, ImageViewType ViewType)> _bindlessTextures = [];
+
+    /// <summary>The engine samplers registered in the bindless sampler array, by slot.</summary>
+    private readonly Dictionary<int, Sampler> _bindlessSamplers = [];
+
+    private static ImageViewType? IndexViewType(VfxVariableType type) => type switch
+    {
+        VfxVariableType.Texture2DIndex => ImageViewType.Type2D,
+        VfxVariableType.Texture3DIndex => ImageViewType.Type3D,
+        VfxVariableType.TextureCubeIndex => ImageViewType.TypeCube,
+        VfxVariableType.Texture2DArrayIndex => ImageViewType.Type2DArray,
+        VfxVariableType.TextureCubeArrayIndex => ImageViewType.TypeCubeArray,
+        _ => null,
+    };
+
+    private static string Dim(ImageViewType type) => type switch
+    {
+        ImageViewType.Type2D => "2D", ImageViewType.Type3D => "3D", ImageViewType.TypeCube => "Cube",
+        ImageViewType.Type2DArray => "2DArray", ImageViewType.TypeCubeArray => "CubeArray", var t => t.ToString(),
+    };
+
+    /// <summary>The program's bindless texture arrays in set 4 (the variables named g_bindless_*), as resources.</summary>
+    private static IEnumerable<SpirvReflection.Resource> BindlessArrays(ValveProgram program)
+        => program.Reflection.Resources.Where(r => r.Set == 4 && r.Kind == SpirvReflection.Kind.SampledImage
+            && Named(program, r.Set, r.Binding, r.Kind) is { } v && v.Name.StartsWith("g_bindless_", StringComparison.Ordinal));
+
+    /// <summary>
+    /// A texture index variable's slot (ProgramGlobals.Fill): the material's texture under the variable's name, in
+    /// our next free index. A program with no bindless array of that dimension keeps -1, as it had before bindless.
+    /// </summary>
+    private int BindlessTexture(ValveProgram program, string name, VfxVariableDescription v, Material material)
+    {
+        if (IndexViewType(v.VfxType) is not { } viewType || !BindlessArrays(program).Any(r => r.Dim == Dim(viewType)))
+            return -1;
+        var path = material.TextureParams.GetValueOrDefault(name)
+                   ?? throw new InvalidDataException($"{program.Name}: no material texture {name} for the bindless {Dim(viewType)} array");
+        var key = $"{path} {v.SrgbRead} {viewType}";
+        if (!_bindlessTextures.TryGetValue(key, out var entry))
+            _bindlessTextures[key] = entry = (_bindlessTextures.Count + 1, Vtex(path, v.SrgbRead, viewType), viewType);
+        return entry.Index;
+    }
+
+    /// <summary>The first slot of the bindless sampler array that material-configured samplers take, after the engine's.</summary>
+    private const int BindlessUserSamplerBase = 32;
+
+    /// <summary>
+    /// A sampler index variable's slot: an engine sampler by name (<see cref="CubemapFaceSamplers.Engine"/>), or for a
+    /// g_sUserConfig* name the material-configured state, which is the program's sampler group whose Filter is the
+    /// material's (255) or absent, evaluated on the material (as GpuMaterialSampler takes g_sUserConfig). Each distinct
+    /// state gets its own slot. The AllowGlobalMipBias variants take no bias: the global mip bias is 0 in the captures.
+    /// </summary>
+    private int BindlessSampler(ValveProgram program, string name, Material material)
+    {
+        if (!program.Reflection.Resources.Any(r => r.Set == 4 && r.Binding == BindlessSamplerBinding && r.Kind == SpirvReflection.Kind.Sampler))
+            return -1;
+        if (CubemapFaceSamplers.Engine.TryGetValue(name, out var s))
+        {
+            if (!_bindlessSamplers.ContainsKey(s.Slot))
+                _bindlessSamplers[s.Slot] = SamplerOf(CubemapFaceSamplers.State(s.Filter, s.AddressU, s.AddressV, s.AddressW, s.Compare, null, null));
+            return s.Slot;
+        }
+        if (!name.StartsWith("g_sUserConfig", StringComparison.Ordinal))
+            throw new NotSupportedException($"{program.Name}: the engine sampler {name} is not measured");
+        var groups = CubemapFaceSamplers.Groups(program, new ProgramGlobals.MaterialScope(material, program, new Dictionary<string, VfxExpression.Value>()))
+            .Where(g => g.Filter is null or 255).Select(g => g.State).Distinct().ToList();
+        if (groups.Count != 1)
+            throw new NotSupportedException($"{program.Name}: {name} has {groups.Count} material-filter sampler states to take its state from");
+        var sampler = SamplerOf(groups[0]);
+        foreach (var (slot, had) in _bindlessSamplers)
+            if (slot >= BindlessUserSamplerBase && had.Handle == sampler.Handle)
+                return slot;
+        var next = Math.Max(BindlessUserSamplerBase, _bindlessSamplers.Keys.DefaultIfEmpty(0).Max() + 1);
+        _bindlessSamplers[next] = sampler;
+        return next;
+    }
+
+    /// <summary>
+    /// Set 4's bindless arrays: every registered sampler at its slot, every registered texture of the array's
+    /// dimension at its index. False for any other binding.
+    /// </summary>
+    private bool BindBindless(ValveProgram program, SpirvReflection.Resource r, SceneDrawRunner.Bindings bindings)
+    {
+        if (r.Set != 4)
+            return false;
+        if (r.Kind == SpirvReflection.Kind.Sampler && r.Binding == BindlessSamplerBinding && Named(program, r.Set, r.Binding, r.Kind) == null)
+        {
+            // Slot 0 (no sampler) holds one too: a read through an index we do not model must not fault the device.
+            bindings.Sampler(r.Set, r.Binding, 0, SamplerOf(CubemapFaceSamplers.State(0x15, 0, 0, 0, null, null, null)));
+            foreach (var (slot, sampler) in _bindlessSamplers)
+                bindings.Sampler(r.Set, r.Binding, (uint)slot, sampler);
+            return true;
+        }
+        if (r.Kind == SpirvReflection.Kind.SampledImage && Named(program, r.Set, r.Binding, r.Kind) is { } v && v.Name.StartsWith("g_bindless_", StringComparison.Ordinal))
+        {
+            // Element 0 (no texture) is zeros of the array's dimension, for the same reason: an unbound element read
+            // by an index we leave 0 lost the device (atixref, non-deterministically, before 2026-10-29's fix).
+            var zeroType = r.Dim switch { "3D" => ImageViewType.Type3D, "Cube" => ImageViewType.TypeCube, "CubeArray" => ImageViewType.TypeCubeArray, "2DArray" => ImageViewType.Type2DArray, _ => ImageViewType.Type2D };
+            bindings.Image(r.Set, r.Binding, 0, Constant($"zero {zeroType}", Format.R8G8B8A8Unorm, zeroType, 0).View);
+            foreach (var (_, (index, image, viewType)) in _bindlessTextures)
+                if (Dim(viewType) == r.Dim)
+                    bindings.Image(r.Set, r.Binding, (uint)index, image.View);
+            return true;
+        }
+        return false;
+    }
+
+    private byte[]? _probeVolumeBuffer;
+
+    /// <summary>
+    /// PerViewLightProbeVolumeConstantBuffer_t from the map's env_combined_light_probe_volume entities in lump order
+    /// (<see cref="LightProbeVolumeRecords"/>), the default probe texture registered in the bindless set. The +0x8c
+    /// default (type 0x15) gets no texture: no program reads it on atixref, and its image is not read.
+    /// </summary>
+    private byte[] ProbeVolumeBuffer()
+    {
+        if (_probeVolumeBuffer != null)
+            return _probeVolumeBuffer;
+        var volumes = new List<LightProbeVolumeRecords.Volume>();
+        foreach (var entry in (_map.Entries!.GetValueOrDefault("vents_c") ?? []).OrderBy(e => e.GetFullPath(), StringComparer.Ordinal))
+        {
+            _map.ReadEntry(entry, out var bytes);
+            foreach (var (_, key) in Source2.Compiler.Lighting.Vrad3Job.LumpEntities(bytes, entry.GetFullPath()).Where(e => e.Class == "env_combined_light_probe_volume"))
+            {
+                static System.Numerics.Vector3 V(string? t) => t!.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => float.Parse(x, System.Globalization.CultureInfo.InvariantCulture)).ToArray() is var a ? new(a[0], a[1], a[2]) : default;
+                static int N(string? t) => int.Parse(t ?? "0", System.Globalization.CultureInfo.InvariantCulture);
+                if (key("lightprobetexture") is { Length: > 0 } texture && _map.FindEntry(texture + "_c") != null)
+                    throw new NotSupportedException("a baked light probe volume: only the default probe texture's record is ported");
+                volumes.Add(new(V(key("origin")), V(key("angles")), V(key("box_mins")), V(key("box_maxs")),
+                    N(key("light_probe_size_x")), N(key("light_probe_size_y")), N(key("light_probe_size_z"))));
+            }
+        }
+        return _probeVolumeBuffer = LightProbeVolumeRecords.Buffer(volumes, DefaultProbeTexture(), 0);
+    }
+
+    /// <summary>The engine's default probe texture (vfn 0x198 type 6): 2 x 2 x 2 R8G8B8A8 zeros, measured; our bindless index.</summary>
+    private int DefaultProbeTexture()
+    {
+        const string key = "engine default probe texture";
+        if (!_bindlessTextures.TryGetValue(key, out var entry))
+        {
+            const uint side = LightProbeVolumeRecords.DefaultTextureSide;
+            var image = _runner.CreateImage(Format.R8G8B8A8Unorm, side, side, side, 1, 1, ImageViewType.Type3D, ImageUsageFlags.SampledBit);
+            _runner.Write(image, 0, 0, new byte[side * side * side * 4]);
+            _textures[key] = image;
+            _bindlessTextures[key] = entry = (_bindlessTextures.Count + 1, image, ImageViewType.Type3D);
+        }
+        return entry.Index;
+    }
+
+    /// <summary>
+    /// A live resource in the bindless set under a fixed key: its index stays, the image is the current one (the
+    /// face's targets are made again per face). Null when the target does not exist yet (index 0).
+    /// </summary>
+    private int BindlessLive(string key, SceneDrawRunner.SceneImage? image, ImageViewType viewType)
+    {
+        if (image is not { } live)
+            return 0;
+        var index = _bindlessTextures.TryGetValue(key, out var had) ? had.Index : _bindlessTextures.Count + 1;
+        _bindlessTextures[key] = (index, live, viewType);
+        return index;
+    }
+
+    /// <summary>
+    /// PerViewConstantBufferCsgo_t for a program that reads the bindless set. +68 g_tBRDFLookupTextureIndex indexes
+    /// textures/dev/brdf_lut.vtex (64 x 64 x 3 RGBA16F, read unguarded for the specular term; the captured image is
+    /// the file's pixels byte for byte, ledger 195). +72 (g_tCubemapFogTextureIndex), +76 and +80 index what the named
+    /// path binds as the fog cube (a cube of zeros), DynamicAmbientOcclusion (the AO target, R8G8B8A8 UNORM) and
+    /// DynamicAmbientOcclusionDepth (the half depth), matched in atixref face 0's capture: a 256 BC6 cube, a 1280 x 720
+    /// R8G8B8A8 target no draw of the face writes, and the D24S8 that the half depth downsample writes. +64 (blue noise)
+    /// is read by none of the csgo_ programs; +84 (SSAO) and +88 (particle shadows) only under flags the cube view
+    /// leaves 0. The block's writer (client CreatePerViewConstantBufferCsgo) is not read for these words.
+    /// </summary>
+    private byte[] CsgoWithIndices(byte[] csgo)
+    {
+        var b = (byte[])csgo.Clone();
+        BitConverter.TryWriteBytes(b.AsSpan(68), BindlessLive("brdf lut", Vtex("textures/dev/brdf_lut.vtex", false, ImageViewType.Type2DArray), ImageViewType.Type2DArray));
+        BitConverter.TryWriteBytes(b.AsSpan(72), BindlessLive("environment map", Constant("zero Cube", Format.R8G8B8A8Unorm, ImageViewType.TypeCube, 0), ImageViewType.TypeCube));
+        BitConverter.TryWriteBytes(b.AsSpan(76), BindlessLive("ambient occlusion", _live.ContainsKey(AmbientOcclusion) ? Viewed(AmbientOcclusion, Format.R8G8B8A8Unorm) : null, ImageViewType.Type2D));
+        BitConverter.TryWriteBytes(b.AsSpan(80), BindlessLive("ambient occlusion depth", _live.GetValueOrDefault(HalfDepth), ImageViewType.Type2D));
+        return b;
+    }
+
+    /// <summary>
+    /// BakedLightingConstantBuffer_t for a program that reads the bindless set (the csgo_ shaders read their lightmaps
+    /// only so; generic binds them by name): g_tLightmapIrradianceIndex (+16), g_tLightmapDirectionalIndex (+20),
+    /// g_tLightmapShadowsIndex (+24) and g_tLightmapDebugChartIndex (+28), the block's members in the shaders'
+    /// reflection, index the package's irradiance, directional_irradiance, direct_light_shadows and
+    /// debug_chart_color. Matched in ze_hold_em_p face 0's capture (BC6H, BC1, BC5, BC1 through UNORM / UFLOAT views).
+    /// A world without lightmaps keeps 0 (what the game binds there is not read). The SH2 indices (+36 .. +48) stay 0.
+    /// </summary>
+    private byte[] BakedWithIndices(byte[] baked)
+    {
+        var lightmaps = (_map.Entries!.GetValueOrDefault("vtex_c") ?? []).Where(e => e.DirectoryName.EndsWith("lightmaps", StringComparison.Ordinal)).Select(e => e.FileName).ToHashSet();
+        var b = (byte[])baked.Clone();
+        foreach (var (offset, name) in new[] { (16, "irradiance"), (20, "directional_irradiance"), (24, "direct_light_shadows"), (28, "debug_chart_color") })
+            if (lightmaps.Contains(name))
+                BitConverter.TryWriteBytes(b.AsSpan(offset), BindlessLive($"lightmap {name}", Lightmap(name, false, ImageViewType.Type2D), ImageViewType.Type2D));
+        return b;
+    }
+
+    /// <summary>
+    /// PerViewLightingConstantBufferGpu_t for a program that reads the bindless set: +31936 indexes the shadow atlas
+    /// (1801af7b0's first index, the binner's +0xef80 texture: the D16 atlas the face's first pass clears; element 384
+    /// in ze_hold_em_p face 0's capture). The other three indices there (+31940 .. +31948) stay 0: not read.
+    /// </summary>
+    private byte[] LightsWithIndices(byte[] lights)
+    {
+        var b = (byte[])lights.Clone();
+        BitConverter.TryWriteBytes(b.AsSpan(31936), BindlessLive("shadow atlas", _live.GetValueOrDefault(ShadowAtlas), ImageViewType.Type2D));
+        return b;
+    }
+
+    /// <summary>The error for a binding <see cref="Named"/> cannot place, with what the write sequence does list in that set.</summary>
+    private static string Unnamed(ValveProgram program, int set, int binding, SpirvReflection.Kind kind)
+        => $"{program.Name}: set {set} binding {binding} ({kind}) is named by no variable; the sequence lists in set {set}: "
+           + string.Join(", ", program.Sequence.RenderState.Where(f => f.LayoutSet == set).Select(f =>
+               $"{program.Program.VariableDescriptions[f.VariableIndex].Name} {program.Program.VariableDescriptions[f.VariableIndex].RegisterType} slot {f.BindingSlot}"));
+
     private void Dispatch(ValveProgram program, uint x, uint y, uint z, Func<string, (GpuDevice.GpuBuffer Buffer, bool Written)> input)
     {
         var bindings = new SceneDrawRunner.Bindings();
         foreach (var r in program.Reflection.Resources)
         {
-            var v = Named(program, r.Set, r.Binding, r.Kind) ?? throw new InvalidDataException($"{program.Name}: set {r.Set} binding {r.Binding} is named by no variable");
+            var v = Named(program, r.Set, r.Binding, r.Kind) ?? throw new InvalidDataException(Unnamed(program, r.Set, r.Binding, r.Kind));
             var name = v.RegisterType == VfxRegisterType.ConstantBuffer ? v.Name : v.SourceString;
             bindings.Buffer(r.Set, r.Binding, 0, input(name).Buffer, 0, Vk.WholeSize);
         }
@@ -642,6 +883,15 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
         var streams = BoundStreams(model, call, pass);
         var material = Material(call.Material);
         var bindings = new SceneDrawRunner.Bindings();
+        // Both stages' $Globals first: filling them registers the bindless textures and samplers the draw indexes.
+        var globals = new[] { vs, ps }.Select((program, stage) => program == null || !program.Reflection.Resources.Any(r => r.Kind == SpirvReflection.Kind.UniformBuffer && r.Binding == 0 && r.Set == stage) ? null : Globals(call.Material + " " + program.Name, program, material,
+            new() { ["g_bRenderingToCubemaps"] = VfxExpression.Value.Of(1f) }, ShaderIdColor(material),
+            (name, v) => BindlessTexture(program, name, v, material), name => BindlessSampler(program, name, material))).ToArray();
+        // The Csgo and baked lighting blocks' bindless indices are registered here too, before set 4's arrays are bound.
+        var bindless = new[] { vs, ps }.Any(p => p != null && BindlessArrays(p).Any());
+        var csgo = bindless ? CsgoWithIndices(blocks.Csgo) : blocks.Csgo;
+        var baked = bindless ? BakedWithIndices(blocks.Baked) : blocks.Baked;
+        var lightBlock = bindless ? LightsWithIndices(blocks.Lights) : blocks.Lights;
         foreach (var (program, stage) in new[] { (vs, 0), (ps, 1) })
         {
             if (program == null)
@@ -650,20 +900,22 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
             {
                 if (r.Kind == SpirvReflection.Kind.UniformBuffer && r.Binding == 0 && r.Set == stage)
                 {
-                    bindings.Buffer(r.Set, 0, 0, Buffer(Globals(call.Material + " " + program.Name, program, material,
-                        new() { ["g_bRenderingToCubemaps"] = VfxExpression.Value.Of(1f) }, ShaderIdColor(material))), 0, Vk.WholeSize);
+                    bindings.Buffer(r.Set, 0, 0, Buffer(globals[stage]!), 0, Vk.WholeSize);
                     continue;
                 }
-                var v = Named(program, r.Set, r.Binding, r.Kind) ?? throw new InvalidDataException($"{program.Name}: set {r.Set} binding {r.Binding} is named by no variable");
+                if (BindBindless(program, r, bindings))
+                    continue;
+                var v = Named(program, r.Set, r.Binding, r.Kind) ?? throw new InvalidDataException(Unnamed(program, r.Set, r.Binding, r.Kind));
                 switch (r.Kind)
                 {
                     case SpirvReflection.Kind.UniformBuffer:
                         bindings.Buffer(r.Set, r.Binding, 0, Buffer(v.Name switch
                         {
                             "PerViewConstantBuffer_t" => perView,
-                            "PerViewConstantBufferCsgo_t" => blocks.Csgo,
-                            "BakedLightingConstantBuffer_t" => blocks.Baked,
-                            "PerViewLightingConstantBufferGpu_t" => blocks.Lights,
+                            "PerViewConstantBufferCsgo_t" => csgo,
+                            "BakedLightingConstantBuffer_t" => baked,
+                            "PerViewLightProbeVolumeConstantBuffer_t" => ProbeVolumeBuffer(),
+                            "PerViewLightingConstantBufferGpu_t" => lightBlock,
                             _ => throw Unbound(program, v.Name),
                         }), 0, Vk.WholeSize);
                         break;
@@ -674,7 +926,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
                             "InstanceBuffer" => Buffer(instanceRecords),
                             "CullBits" => cullBits ?? throw Unbound(program, v.SourceString),
                             // No barn light is binned in the cubemap view (the light block lists none): no thread reads it.
-                            "BarnLights" => Buffer(BarnLightsNone),
+                            "BarnLights" => Buffer(blocks.BarnLights is { Length: > 0 } barn ? Pad(barn, BarnLightsNone.Length) : BarnLightsNone),
                             _ => throw Unbound(program, v.SourceString),
                         }, 0, Vk.WholeSize);
                         break;
@@ -703,6 +955,11 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
             DepthFormat = _live[depthTarget].Format,
         };
         var state = CubemapFacePipelines.Apply(template, pass, ps != null ? (VfxRenderStateInfoPixelShader)ps.RenderState : null);
+        // S2C_CUBE_TRACE=1: each colour draw's programs and pipeline state (diagnosis).
+        if (pass == CubemapFacePipelines.Pass.Colour && Environment.GetEnvironmentVariable("S2C_CUBE_TRACE") == "1")
+            Console.Error.WriteLine($"cube trace {model.Model} {command}: {vs.Name} / {ps?.Name}; write mask {state.ColorWriteMask}, depth {state.DepthTest} {state.DepthWrite} {state.DepthCompare}, "
+                + $"stencil {state.StencilTest} {state.StencilFront.CompareOp}, cull {state.Cull}, blend {state.Blend}, streams {string.Join("+", streams.Select(x => x.Stride))}, "
+                + $"attributes {string.Join(" ", state.Attributes.Select(x => $"{x.Location}:{x.Binding}/{x.Format}+{x.Offset}"))}");
         (GpuDevice.GpuBuffer, ulong)[] vertexBuffers = [.. streams.Select(s => (Buffer(s.Data), 0ul)), (Buffer(instanceIds), 0ul), (Buffer(Zero16), 0ul)];
         _runner.Draw(state, bindings, vertexBuffers, (Buffer(model.Indices), 0ul, model.IndexType),
             new SceneDrawArgs(true, (uint)command.IndexCount, (uint)command.InstanceCount, (uint)command.FirstIndex, command.VertexOffset, (uint)command.FirstInstance),
@@ -785,6 +1042,25 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
         return Upload($"lightmap {name} {srgb} {viewType}", bytes, srgb, viewType);
     }
 
+    private readonly Dictionary<string, float[]?> _reflectivity = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A material texture's header reflectivity (TextureAverageColor), null when no package holds it.</summary>
+    private float[]? Reflectivity(string path)
+    {
+        if (_reflectivity.TryGetValue(path, out var made))
+            return made;
+        foreach (var pak in new[] { _map, _csgo, _core })
+            if (pak.FindEntry(path + "_c") is { } e)
+            {
+                pak.ReadEntry(e, out var bytes);
+                using var resource = new Resource();
+                resource.Read(new MemoryStream(bytes));
+                var r = ((Texture)resource.DataBlock!).Reflectivity;
+                return _reflectivity[path] = [r.X, r.Y, r.Z, r.W];
+            }
+        return _reflectivity[path] = null;
+    }
+
     private SceneDrawRunner.SceneImage Vtex(string path, bool srgb, ImageViewType viewType)
     {
         var key = $"{path} {srgb} {viewType}";
@@ -811,16 +1087,32 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
         resource.Read(new MemoryStream(vtex));
         var tex = (Texture)resource.DataBlock!;
         var format = GpuTextures.VulkanFormat(tex.Format, srgb) ?? throw new NotSupportedException($"{key}: {tex.Format}");
+        // The game views every BC1 texture with alpha forced to one (the captures' view swizzles: ze_hold_em_p's BC1
+        // material maps and lightmaps), which is Vulkan's BC1 RGB format; BC1 RGBA would read a punch-through block's
+        // alpha as 0.
+        if (tex.Format == VTexFormat.DXT1)
+            format = srgb ? Format.BC1RgbSrgbBlock : Format.BC1RgbUnormBlock;
         var layers = tex.Depth > 1 && viewType != ImageViewType.Type3D ? tex.Depth : (tex.Flags & VTexFlags.CUBE_TEXTURE) != 0 ? 6 : 1;
         var metrics = tex.GetEveryMipLevelMetrics().ToList();
-        var image = _runner.CreateImage(format, (uint)tex.Width, (uint)tex.Height, viewType == ImageViewType.Type3D ? (uint)tex.Depth : 1u, (uint)metrics.Count, (uint)layers, viewType, ImageUsageFlags.SampledBit);
+        // Resident from the render system's preload level (GpuTextures.PreloadLevel, 512): the cube build renders
+        // in the frame it is asked for, with nothing streamed in (ledger 195: ze_hold_em_p's 2048 maps are 512 on the
+        // GPU in a build with and without RenderDoc). A one-mip texture (the lightmaps) is whole.
+        // S2C_CUBE_MAXTEXTURE=<side> (diagnosis) sets another cap, 0 none.
+        var cap = int.TryParse(Environment.GetEnvironmentVariable("S2C_CUBE_MAXTEXTURE"), out var side) ? side : GpuTextures.MaxPreloadResolution;
+        var first = cap > 0 ? GpuTextures.PreloadLevel(tex.Width, tex.Height, metrics.Count, cap) : 0;
+        if (Environment.GetEnvironmentVariable("S2C_CUBE_TRACE") == "1")
+            Console.Error.WriteLine($"cube upload {key}: {tex.Width} x {tex.Height} x {tex.Depth} {tex.Format}, {metrics.Count} mips");
+        var image = _runner.CreateImage(format, (uint)Math.Max(1, tex.Width >> first), (uint)Math.Max(1, tex.Height >> first), viewType == ImageViewType.Type3D ? (uint)tex.Depth : 1u,
+            (uint)(metrics.Count - first), (uint)layers, viewType, ImageUsageFlags.SampledBit);
         foreach (var (level, _, _, _, size) in metrics)
         {
+            if (level < first)
+                continue;
             var data = new byte[size];
             tex.ReadTextureMipLevel(data, level);
             var per = data.Length / layers;
             for (var l = 0; l < layers; l++)
-                _runner.Write(image, level, (uint)l, data.AsSpan(l * per, per));
+                _runner.Write(image, (uint)(level - first), (uint)l, data.AsSpan(l * per, per));
         }
         return _textures[key] = image;
     }
@@ -873,7 +1165,8 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
     /// </summary>
     private void Sky(CubemapFaceBlocks.Face blocks, byte[] instanceIds, Action<Action>? observe)
     {
-        var material = Material(_skyMaterial);
+        var skyMaterial = _skyMaterial!;
+        var material = Material(skyMaterial);
         var features = Features(material);
         var vs = Program(_csgoShaders, "sky", "vs", [], [], features);
         var ps = Program(_csgoShaders, "sky", "ps", [], new() { ["D_FOG_TYPE"] = 0 }, features);
@@ -884,10 +1177,10 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
                 if (r.Kind == SpirvReflection.Kind.UniformBuffer && r.Set == stage && r.Binding == 0)
                 {
                     bindings.Buffer(r.Set, 0, 0, Buffer(stage == 0 ? blocks.SkyWsToOs
-                        : Globals("sky " + _skyMaterial, ps, material, new() { ["SkyTint"] = VfxExpression.Value.Of(1f, 1f, 1f, 0f) })), 0, Vk.WholeSize);
+                        : Globals("sky " + skyMaterial, ps, material, new() { ["SkyTint"] = VfxExpression.Value.Of(1f, 1f, 1f, 0f) })), 0, Vk.WholeSize);
                     continue;
                 }
-                var v = Named(program, r.Set, r.Binding, r.Kind) ?? throw new InvalidDataException($"{program.Name}: set {r.Set} binding {r.Binding} is named by no variable");
+                var v = Named(program, r.Set, r.Binding, r.Kind) ?? throw new InvalidDataException(Unnamed(program, r.Set, r.Binding, r.Kind));
                 switch (r.Kind)
                 {
                     case SpirvReflection.Kind.UniformBuffer when v.Name == "PerViewConstantBuffer_t":

@@ -40,8 +40,12 @@ MU = "s2c:geometry/overlays"
 SP = "s2c:smartprops"
 MS = "s2c:physics/material-sampler"
 IO = "s2c:io"
+SA = "s2c:baked/steamaudio"
+MD = "s2c:models/modeldoc"
 
 RESOURCECOMPILER = [
+    ("180f88460", "MapNode_WorldTransforms", ENT, "mode 1/2: up the parents (vf 0x600) while vf 0x400; a node referenced through 'target' collects its referrers (g_pDataModel vf 0x3b8 / 0x3c0 on 1800d3270's handle), recurses into each in that order, then composes its own transform (vf 0x110, 180ffd750); no kind-0 reference starts from its own (180f82b60). Ledger 46"),
+    ("180fc6f40", "MapNode_FindByClassWildcard", ENT, "(node, out, pattern, flags): MapWorld_GatherLights' 'light_*' search"),
     ('18023b500', 'WorldRendererBuilder_Construct', BAKE, "+0x2f8, the builder's requested lightmap side, 0x7fffffff; +0x2fc Engine2/LightmapQueries"),
     ('180240b7f', 'WorldRendererBuilder_ReadWorldKeys', BAKE, "worldspawn's max_lightmap_resolution into +0x2f8 when above 0, else 0x7fffffff (1802413cd); novis_min_draw_volume_size +0x300, novis_max_triangles_per_cluster +0x304, lightmap_queries +0x2fc"),
     ('18025dd8d', 'CWorldRendererBuilderNode_BakeLightMaps', BAKE, "BakeLighting (180217740) with the builder's +0x2f8 and +0x2fc"),
@@ -62,7 +66,7 @@ RESOURCECOMPILER = [
     ('1800fb1c0', 'CNavGenInput_Construct', NAV, 'bounds FLT_MAX/-FLT_MAX, +0x120 15.0; +0x128 left to 180f20e40'),
     ('180fb6de0', 'MapCompile_NavPhysicsWorld', NAV, '*(*(ctx + 0x18) + 8) + 8: the settle world handed to navsystem'),
     ('180fb6cf0', 'MapCompile_NavBodyEntry', NAV, '0x78-byte entries from the 0x90 stride list at ctx + 0x18'),
-    ('180fb5440', 'NavGen_CollectAvoidMarkups', NAV, "'NavGen' 'AVOID'"),
+    ('180fb5440', 'NavGen_CollectAvoidMarkups', NAV, "'NavGen' 'AVOID': each 0x48-byte record copied whole into a 0x50 markup, then the AVOID tag and a cleared flag byte"),
     ('180f209f0', 'NavGen_CollectMarkupVolumes', NAV, 'func_nav_markup (180f1ef70): each navProperty_<tag> string key registers (tag, value) (1818c7010) and adds a markup (180f20720); else a navProperty_NavAttributes array (180f22330) adds one with index -1; CNavGenInput +0x90'),
     ('180f21d70', 'NavGen_MarkupProperties', NAV, 'string keys (type 5) named navProperty_*: the name past the prefix and the value'),
     ('180f20720', 'NavGen_AddMarkup', NAV, "the entity's geometry bounds and matrix per instance path (180f88460), a 0x50-byte markup"),
@@ -70,7 +74,36 @@ RESOURCECOMPILER = [
     ('1818c7010', 'NavGen_MarkupTagIndex', NAV, '(tag, value) table of 0x80-byte entries at +0x38, count +0x30; added when new'),
     ('180f1f830', 'NavGen_CollectNoNavBlocks', NAV, "'prop_deformable', 'block_base_nav_mesh', 'NavGen' 'NONAV'"),
     ('180f21ac0', 'NavGen_CollectOrientedMeshes', NAV, "'info_gravity_shift', 'CreateProjectedNavMesh', 'info_nav_oriented'"),
-    ('180f203b0', 'NavGen_CollectLinkAreas', NAV, "'ai_nav_link_area'"),
+    ('180f203b0', 'NavGen_CollectLinkAreas', NAV, "CNavGenInput +0xc0 (ledgers 175, 177): 180fc6f40 for 'ai_nav_link_area' (mode 2 classname, flags 3 visible nodes and sub-worlds), IsA CMapNavLink; per instance path (one, the identity, after the bake) start = (step matrix x node) translation, end = start + locatoroffset (+0x185c)"),
+    ('180f2ddc0', 'MapEntity_ClassNameMatches', NAV, 'the game class (handle +0x538) name +0x98, V_CompareNameWithWildcards(pattern, name, 0); an empty name never matches (search mode 2)'),
+    ('180fefbc0', 'MapEntity_TargetNameMatches', NAV, 'vfn 0x7e0 targetname (the name 180fca010 hashes into the world 200 name buckets), V_CompareNameWithWildcards(pattern, name, 0) (search mode 1)'),
+    ('181063b90', 'CMapNavLink_Create', NAV, '0x18b0 bytes: width +0x1858 128, locatoroffset +0x185c (128, 0, 0), locatorangles +0x1868 (0, 180, 0), type +0x1888 0'),
+    ('181064a10', 'CMapNavLink_IsA', NAV, 'CMapNavLink, CMapEntity, CMapGameDataNode, CMapEntityIONode'),
+    ('181064ab0', 'CMapNavLink_UpdateLocators', NAV, 'CMapNavLinkLocator children +0x4a8 0 at the origin, 1 at origin + locatoroffset; created when missing; scripts/npc_units.vdata and navlinks.vdata'),
+    ('181065c90', 'CMapNavLink_ExportToLump', LUMP, 'CMapEntity_ExportToLump, then width, locatoroffset and locatorangles ("%f %f %f"), nav_link_movement ("__ground__" for type 4), the reverse for types 0 and 4'),
+    ('181065ee0', 'CMapNavLink_CopyFrom', NAV, 'type, width, offset, angles, the two movement strings and the preview strings'),
+    ('181068680', 'CMapNavLink_AttributeTable', NAV, 'navlink_type, width, locatoroffset, locatorangles, nav_link_movement, nav_link_preview, nav_link_movement_reverse, nav_link_preview_reverse (hammer_embedded_properties)'),
+    ('18106b4f0', 'CMapNavLink_SetLocatorOffset', NAV, "change tracking under the name 'locatorOffset', then +0x185c"),
+    ('1810663e0', 'CMapNavLink_TypeChoices', NAV, "navlink_type's editor choices: Generic, Climb Up, Jump Down, Vault Over, Ground (0 to 4)"),
+    ('181067770', 'CMapNavLink_TypeToString', NAV, 'navlink_type as its MapNavLinkType_t name (table 18300fa90, 0x20-byte rows: value, name, display name), "" past 4'),
+    ('181067b60', 'CMapNavLink_TypeFromString', NAV, 'V_stricmp_fast against each MapNavLinkType_t name of 18300fa90, an unknown name 0'),
+    ('18106b6d0', 'CMapNavLink_SetType', NAV, "change tracking under 'navlink_type', then +0x1888"),
+    ('18106b850', 'CMapNavLink_SetWidth', NAV, '+0x1858 as given'),
+    ('18106b350', 'CMapNavLink_SetLocatorAngles', NAV, "change tracking under 'locatorAngles', then +0x1868 as given"),
+    ('18106b6b0', 'CMapNavLink_SetMovement', NAV, 'nav_link_movement into +0x1878'),
+    ('18106b6c0', 'CMapNavLink_SetMovementReverse', NAV, 'nav_link_movement_reverse into +0x1880'),
+    ('18106b830', 'CMapNavLink_SetPreview', NAV, 'nav_link_preview into +0x1890 (not exported)'),
+    ('18106b840', 'CMapNavLink_SetPreviewReverse', NAV, 'nav_link_preview_reverse into +0x1898 (not exported)'),
+    ('181065610', 'CMapNavLink_SetScales', NAV, 'vf 0x98: always (1, 1, 1)'),
+    ('181065720', 'CMapNavLink_OnLocatorChanged', NAV, 'locator 0 differing: the link takes its origin and angles, locatoroffset kept in place; locator 1: locatoroffset and locatorangles = locator 1 - link'),
+    ('181064300', 'CMapNavLinkLocator_IsA', NAV, 'CMapNavLinkLocator, CMapProceduralLocator, CMapLocator, CMapTransform (vtable 182362db0, vf 0xc8 181076410)'),
+    ('180fca3d0', 'CMapWorld_PostLoad', NAV, 'the world itself into its entity list (+0x1828), then every node of the tree (180fc4e40)'),
+    ('180fca010', 'CMapWorld_OnNodeAdded', NAV, 'a CMapEntityIONode not yet listed: AddToTail on +0x1828 (index on the node, 180fefb50) and its targetname into the 200 name buckets (+0x1840)'),
+    ('180fcb150', 'CMapWorld_OnNodeRemoved', NAV, 'FastRemove from +0x1828 when the node is at its stored slot: the last entry moves into the slot; a node found elsewhere is not removed, only its slot cleared (-1); then out of the name buckets (ledger 179)'),
+    ('180fef240', 'CMapEntityIONode_ListSlot', NAV, "the node's slot in its world's entity list (set by 180fefb50); OnNodeAdded lists only a node whose slot is negative (ledger 179)"),
+    ('180f6d410', 'MapDoc_DeleteNode', NAV, 'flags 3 from the bake; unregisters the subtree (180f684c0) and runs the queued deletes'),
+    ('180f684c0', 'MapDoc_UnregisterSubtree', NAV, 'children first; a CMapInstance whose target no other instance names (180f8e9e0) has its target deleted too'),
+    ('180f7a350', 'CMapNode_SetVisible', NAV, 'the visibility state byte +0x370 (180f8f920 starts it at 1)'),
     ('180fb15e0', 'NavGen_CollectLadders', NAV, "CNavGenInput +0x60 (ledger 107): meshes under the root (180fb2830) with a mapbuilder.ladder material (int attribute 0x1a382654, material vfn 0x50) through 180fb21f0, func_ladder entities' meshes last; FUN_1818ca470 adds each (top, bottom, normal, width)"),
     ('180fb1380', 'NavGen_CollectFuncLadders', NAV, "'func_ladder' entities of the flat node array (+0x1828/+0x1830, flag 1: byte +0x370 set), then of each sub-map (180fc8c80) with flag 4"),
     ('180fb2830', 'NavGen_LadderWalk', NAV, 'skips func_ladder entities; a mesh (vfn 0x138) with a ladder material goes to 180fb21f0, any other node recurses into its children'),
@@ -82,8 +115,14 @@ RESOURCECOMPILER = [
     ('180f20e40', 'NavGen_CollectOrientedMeshEntities', NAV, "'info_nav_oriented_mesh'"),
     ('180f20c70', 'NavGen_CollectOrientedMeshClips', NAV, 'debug gen/render clips'),
     # The nav inventory and the mesh build's ladders (docs/NAV.md, 2026-10-28).
+    ('180fb6cf0', 'NavGen_MovableEntry', NAV, "a movable entry (0x90 at ctx +0x18) out: the id path, the 3x4 matrix at +0x38, the gravity byte +0x88"),
+    ('180fdee80', 'CMapEntity::vf21_WorldToLocal', NAV, "vf 0xa0's world matrix through 18125aba0 (the inverse)"),
+    ('180105f50', 'NodeIdPath_Hash', NAV, "MurmurHash2 of the id path's ints, seed 0x3501a674 (an out-of-line tail first); a movable mesh's polygon tag"),
+    ('1818ef5e0', 'CNavMesh_SetMovableMeshes', NAV, "per navsystem entry: 180105f50 of the id path as the key, the entry copied"),
+    ('1818ed5a0', 'CNavArea_MovableTag', NAV, "1818f58c0 over the mesh's +0x2d0 map, keyed by the area's +0x60; -1 for a static area"),
     ('180fb5ce0', 'NavGen_CollectMovableMeshes', NAV, "func_movelinear / func_mover CreateMovableNavMesh, point_nav_movable_mesh ref_ent / navgen_on_ref_ent / GravityFollowsRotation, prop_deformable enable_map_generated_navmesh; called from 180fb5020"),
-    ('180f4aed0', 'NavGen_CollectAvoidMaterials', NAV, "'nav_attribute_avoid': the compile context's AVOID list that 180fb5440 turns into markups"),
+    ('180f4aed0', 'NavGen_CollectAvoidModels', NAV, "per node of the table at [ctx + 8] (0x28-byte slots, list +0x10 / +0x18; node at entry +0x40): the first CModelHelper (dynamic_cast from CBaseHelper), its model's KV3 (helper +0xb8, +0x38) member nav_data (18174cf40), bool nav_attribute_avoid (181eae3f0, hash 5bd259e0); a hit adds node bounds +0x14c with min + (18, 18, 0), max - (18, 18, 0), then the 3x4 node vfn 0xa0 writes (0x48 bytes); reached through 180fb6b80 from 1800fdd3b"),
+    ('180fb6b80', 'NavGen_CollectAvoidModels_Thunk', NAV, "rcx = [rcx + 8]; non-null jumps to 180f4aed0 with the AVOID list in rdx"),
     ('180fc8c80', 'MapWorld_SubMaps', NAV, "a map's sub-maps (flag 3 / 7), as the func_ladder collector recurses into them"),
     ('1818c78a0', 'CNavGenInput_GetLadder', NAV, 'top, bottom, normal, width of the 0x28-byte entry at +0x68'),
     ('1818e6970', 'CNavLadder_Construct', NAV, 'mesh +0x70, the seven area slots cleared, id +0x68 from the counter 183023cb0'),
@@ -102,6 +141,7 @@ RESOURCECOMPILER = [
     ('1818dc3b0', 'CNavMesh_Reset', NAV, 'sets the ladder id counter to 1'),
     ('1818d2b40', 'CNavToolsPhysicsInterface_TraceLine', NAV, 'vfn 0x10 (vtable 182771930): the shape {0, 0, 0, 0.1} with byte 1 at +0x28, then vfn 0x20'),
     ('1818d2c10', 'CNavToolsPhysicsInterface_TraceShape', NAV, 'query: interacts with the mask, +0x2f / +0x30 from the caller, flags 0x49; result fraction +0xac, normal +0x90, start-solid +0xbb, the hit attributes at +0x50 and their first qword | 1 at +0x28'),
+    ('18129b060', 'ClosestPointOnTriangleF', NAV, "Ericson's regions in floats (NavMeshLadders.ClosestPointOnTriangle; oracle-exact)"),
     ('1818d1fa0', 'CNavToolsPhysicsInterface_CastShape', NAV, 'world vfn 0x560 into up to 128 hits of 0x48 bytes, the least fraction (+0x34) kept'),
     ("1802c4a20", "ShapeBuilder_LoopShapes", H, "shape loop over a physics model"),
     ("180c253c0", "ShapeBuilder_BuildHullShape", H, "RnHullCreate through the interface, the region SVM, then the move"),
@@ -128,7 +168,13 @@ RESOURCECOMPILER = [
     ("18108d780", "CMapMesh_ApplyAutoMaterial", B, "SetWholeMeshOverrideMaterial then vf 0x768(2); called per child mesh with the class's auto_apply_material"),
     ("1810c68f0", "BakeWholeMeshOverrideMaterial", B, "AssignMaterialToFaces: every face gets the override's index (181378b30 finds or adds it)"),
     ("180f99af0", "MapPrefab_LoadTargetWorld", B, "reads prefab_has_runtime_entity_by_default; the prefab world's ray scene is made here and instanced into the main one at identity"),
-    ("1813319d0", "MapBuilder_CMeshToHalfEdge", B, "one vertex per CMesh vertex; triangles repeating an index skipped; streams then bone weights"),
+    ("1813319d0", "MapBuilder_CMeshToHalfEdge", B, "one vertex per CMesh vertex; triangles repeating an index skipped; streams then bone weights; MeshID, NoCollapse (+0x14c), PackToSharedVB (+0x14d), UseBaseVertex, UseTintColor, TintColor as DmeMesh attributes"),
+    ("18243b690", "CMeshToHalfEdge_StreamRows", B, "0x2c rows: name[0x20], float count +0x20, per face vertex +0x24, half-edge type +0x28; named rows, then by count 1-4 at 18243b820 (types 3, 8, 11, 17); 'invalid' (18243b958, type 0) adds nothing"),
+    ("1812e0b10", "CMesh_FindBlendStreams", B, "the lowest-index blendweight(s) and blendindices streams, which CMeshToHalfEdge passes over"),
+    ("181320d30", "HalfEdgeData_AddField", B, "appends a field (name, type) to a half-edge data list; -1 when the name exists"),
+    ("180d4f480", "HalfEdge_WriteDmeMesh", G, "vertex fields (+0x38), then face-vertex (+0xb0), each as 180d4cfe0 type 12, float 180d4cc00, Vector2 180d4cdf0, Vector3 180d4cfe0, Vector4 180d4d1d0, int 180d4ca10, color 180d4d3c0; blend fields 180d4f1f0 after: WorldNodeModels.DmeFieldOrder"),
+    ("1822b73e0", "HalfEdge_TypeToDmeGroup", G, "0x2c rows: half-edge type, DMX group +8 (2 int, 3 float, 8 color, 9 Vector2, 10 Vector3, 11 Vector4)"),
+    ("180d463b0", "DmeMeshToCMesh_ListFields", G, "the vertex data's fields in its vertex format order, those the mesh's +0x84 mask takes"),
     ("18131e190", "HalfEdge_JoinCoincident", B, "BuildPhysicsPieces calls it (mesh, 3, 1e-7) after the conversion: BrushHulls.HalfEdgeJoin"),
     ("18131e250", "HalfEdge_JoinCoincidentList", B, "CVertexKDTree over the positions; each vertex merges into the first earlier unmerged box hit within tol that MergeVertexInto accepts"),
     ("1812f2390", "HalfEdge_MergeVertexInto", B, "mode bit 2: both vertices open (1812f1c60); bit 1: no shared face (1812edc10); then 1812f27a0"),
@@ -199,7 +245,14 @@ RESOURCECOMPILER = [
     ("181081be0", "CMapMesh_CopyFrom", G, "CMapMesh vf 0x3d8 (the collapse's node copy, 180f86650): a fixed property list without renderwithdynamic, fademindist, fademaxdist or keep_vertices (ledger 164)"),
     ("181086b70", "CMapMesh_Ctor", G, "fademindist -1 (+0x3b50), fademaxdist 0 (+0x3b54), renderwithdynamic 0 (+0x3b74), keep_vertices 0 (+0x3b76); CMapStaticOverlay's factory 18118fb60 runs it"),
     ("1810e9960", "CMapMesh_SetRenderWithDynamic", G, "+0x3b74; the property's getter is 1810e6fa0"),
-    ("1810dca50", "HammerMesh_UpdateExtraAttributeStreams", G, "adds VertexPaintTintColor / VertexPaintBlendParams / VertexPaintBlendParams1 when a material input has that name (table 18237b480); arg 2 removes unwanted ones (ledger 164)"),
+    ("1810dca50", "HammerMesh_UpdateExtraAttributeStreams", G, "with arg 2 set removes VertexPaintTintColor / VertexPaintBlendParams / VertexPaintBlendParams1 no material input names, then adds the ones an input names (table 18237b480: per-vertex float4, defaults 1,1,1,1 / 0 / 0) in that order (ledgers 164, 201)"),
+    ("1810c27d0", "AddExtraAttributeStream", G, "row n of 18237b480: per-vertex (+0x14 1) into the attribute grid +0xb20 (5 x 6 slots of 0x30, name +0x18, index +0x32) by name and index; a new one through 1810c1f70 with the row's type byte (+0x18) and defaults (+0x1c); an existing one keeps its data (ledger 201)"),
+    ("1810d9e70", "RemoveExtraAttributeStream", G, "row n of 18237b480: the slot of that name and index removed from +0xb20 (1810d9630) and the face-vertex grid +0x1570 (1810da2a0) (ledger 201)"),
+    ("18237b480", "ExtraAttributeStreamTable", G, "data: 0x38-byte rows {name, index +8, +0xc, +0x10, element kind +0x14 (1 vertex, 3 face), type byte +0x18, float4 default +0x1c}: VertexPaintTintColor (1,1,1,1), VertexPaintBlendParams 0, VertexPaintBlendParams1 0, then PerVertexLighting and VertexPaintDetailWeight (outside 1810dca50's three) (ledger 201)"),
+    ("183014fa0", "MeshStandardAttributeNames", G, "data: 23 standard mesh attributes (position, normal, tangent, color, texcoord 0, texcoord 1, materialindex, blendweight 0-3, blendindex 0-3, textureAxisU/V 0-1, textureScale 0-1, flags, lightmapScaleBias); indices at 18243e6d0, counts at 18243e730 (ledger 201)"),
+    ("181087410", "HammerMesh_AddStandardAttribute", G, "standard attribute n of 183014fa0 into the grid (its slot word at +0x5b8 + 2n) when absent (ledger 201)"),
+    ("1810d9930", "HammerMesh_RemoveStandardAttribute", G, "clears standard attribute n's slot (+0x5b8 + 2n) and its data (ledger 201)"),
+    ("1810dfff0", "ConvertMeshForBuilder_KeepsTexcoords", G, "inside 1810dff20: per material, bool attribute HasTexcoordTransform (0x2661694a, vf 0x48) 1, or 0x7c928c7c present and 0, stops the texcoord shift (ledger 201)"),
     ("181ef9b30", "Material_GetInputList", G, "the material's vf 0x98: records of 0xc4 bytes, the input name at +0x40"),
     ("181363320", "OverlayDesc_SetFace", MU, "copies a face's positions, texcoords and optional streams into the descriptor's 0x78-byte face record"),
     ("18125d940", "AngleQuaternion", X, "half angles times 0.00872664619"),
@@ -217,7 +270,7 @@ RESOURCECOMPILER = [
     ("1810dff20", "CMapMesh_ConvertMeshForBuilder", G, "the DMX of the mesh the builder reads; DmeMesh attributes collisionGroup, interactAs/With/Exclude; the builder record keeps collision property (+0xa0), group, as, with (+0xb8) but no exclude, then detail layers (vf 0x6b0) and the simplification error (vf 0x6c0, +0x90)"),
     ("180ffd010", "MapMeshBuffer_Unserialize", G, "hammerMeshDataBuffer; then the 0xf0 record's fields from ConvertMeshForBuilder's (+0x24 tint, +0x28/+0x2c fades, +0x35 lighting mode, +0x36 visexclude, +0x37 disablemerging, +0x38 renderwithdynamic, +0x39 renderToCubemaps, +0x3a emissive, +0x3c boost, +0x48 bakelighting)"),
     ("180d47810", "DmeMeshToCMeshes", G, ""),
-    ("180d47b90", "DmeMeshToCMesh", G, "stream layout from the DMX; CMesh +0x184 = V_powf(2, the face set's lightmapScaleBias)"),
+    ("180d47b90", "DmeMeshToCMesh", G, "stream layout from the DMX; CMesh +0x184 = V_powf(2, the face set's lightmapScaleBias); +0x14c NoCollapse, +0x14d PackToSharedVB, +0x14e UseBaseVertex, +0x148 MeshID, +0x14f UseTintColor from the DmeMesh"),
     ("180d5c570", "CMesh_WriteDmeMesh", G, ""),
     ("1810c1eb0", "HammerMesh_CopyFrom", G, ""),
     ("1810c4e50", "HammerMesh_TransformToWorld", G, "normals and tangents rotated, not renormalised"),
@@ -278,14 +331,15 @@ RESOURCECOMPILER = [
     ("18129c490", "Quad_Bilinear", MU, "(lerp(c1, c2, t) - lerp(c0, c3, t)) * s + lerp(c0, c3, t)"),
     ("1812a5bf0", "Line_ClosestApproach", MU, "distances along two lines to their closest approach"),
     ("181259470", "Triangle_AreaWeights", MU, "sub-triangle areas over the triangle's; inside when they sum to 1 within 0.001"),
-    ("1812db920", "CMesh_ComputeTangents", G, "MikkTSpace-style (182080a60) when UseMikkTSpace; corners whose tangents differ by 1e-4 or in w split their vertex"),
+    ("1812db920", "CMesh_ComputeTangents", G, "MikkTSpace-style (182080a60) when UseMikkTSpace; a missing tangent stream appended (type 0x2b); a vertex takes its first corner's tangent, a later corner differing by 1e-4 or in w gets an appended copy"),
+    ("1812e1450", "CMesh_HasValidTangents", G, "the first 4-float stream named *tangent*: w = +-1 and |t|^2 within 0.001 of 1 (or 0) at every vertex"),
     ("182080a60", "TangentSpace_Generate", G, "weld on equal position, normal, texcoord; triangle tangents; corner groups; angle-weighted sums; MeshTangents.cs"),
     ("18207fc00", "TangentSpace_WeldLookup", G, ""),
     ("182080440", "TangentSpace_TriangleTangents", G, ""),
     ("1820807b0", "TangentSpace_GroupCorners", G, ""),
     ("18207fe20", "TangentSpace_Accumulate", G, "polynomial acos: sqrt(1 - x) ((0.05147786 x - 0.2053972) x + 1.570337)"),
     ("18125cd10", "Matrix3x4_TransformAABB", X, "centre and extents"),
-    ("181360310", "OverlayDesc::OverlayDesc", MU, ""),
+    ("181360310", "OverlayDesc::OverlayDesc", MU, "+0x64..+0x6c FLT_MAX (the overlay entry's +0x80 origin), +0x70 empty (ledger 245)"),
     ("181360610", "OverlayDesc_Assign", MU, "mode +0, far +4, render order +8, back faces +0xc, angle +0x10, +0x14, +0x15, tint +0x18, material +0x20, target ids +0x28, faces +0x48 (0x78 each), material adjust nibbles +0x60, +0x64 x3, +0x70 string"),
     ("181194f40", "CMapStaticOverlay_GetOverlayDescs", MU, "one descriptor per material group of the overlay's polygon group: tint = group colour times the overlay's (x * y + 127) / 255, alpha from 18108c0c0; mode 3 collects the target node ids"),
     ("181191460", "CMapStaticOverlay_GetOverlays", MU, "only with exactly one polygon group (+0x3cb8)"),
@@ -316,7 +370,7 @@ RESOURCECOMPILER = [
     ("180254d10", "EnvVolume_Pick", WN, "a named entry takes the first non-moveable record of that targetname; else the containing volume (sphere: r^2 > d^2; box: 181257020 == 0) beats the rest, higher indoor_outdoor_level among containing, then lower score (later on ties); returns the record's handshake (+0x50) or 0"),
     ("181257020", "Box_DistanceSquared", X, "per axis (mins - p)+ + (p - maxs)+, squared, summed z, y, x"),
     ("180255470", "WRBNode_PropEntry", WN, "a node entry from a prop's mesh: fade +0x160/+0x164, bakelightdoublesided, lightmapscalebias, flags from disableinlowquality, rendertocubemaps, renderwithdynamic, emissive mode 1, lighting origin"),
-    ("1801d30d0", "WRB_LoadPropMeshes", WN, "a model's draw calls as CMeshes of 18 floats a vertex (position, normal, tangent, texcoord, color, texcoord); vertices from the resource system's geometry info (vf 0xf0), unpacked there"),
+    ("1801d30d0", "WRB_LoadPropMeshes", WN, "a model's draw calls as CMeshes of 18 floats a vertex (position, normal, tangent, texcoord, color, texcoord) plus the extra fields; vertices from the resource system's geometry info (vf 0xf0), unpacked there; the color stream renamed by the colour field's shader semantic or the material's attribute (1801d3050) when the material has a signature, extras named the same way, typed 0x22 (DXGI 0x2a/0x2b) or by component count (ledger 243)"),
     ("1812d7510", "CMesh_ApplyPropDeformer", G, "positions, normals and tangents through the prop's lattice deformer; mirrored deformers flip winding and tangent w"),
     ("181287fd0", "PropDeformer_ApplyArrays", G, ""),
     ("181288080", "PropDeformer_Transform", G, "points deformed; tangents as the normalised difference of deform(p + t) and deform(p); normals by 181289460"),
@@ -430,8 +484,11 @@ RESOURCECOMPILER = [
     ("180d4a120", "Texcoords_AnyAbove16", WN, "true when any of a two-float stream's components passes 16 in magnitude"),
     ("180258310", "WRBMeshList_KeepTexcoordPrecision", WN, "a mesh list: when one texcoord stream is flagged (+0x1d) or passes 16 (180d4a120), every texcoord stream of every mesh gets +0x1d (kept float32); from WRBMeshList_GroupAggregates; BuildPropAggregates inlines it per run"),
     ("1802f6840", "WRB_CompressTexcoordsToSnorm", WN, "per layout stream: an unflagged two-component texcoord becomes R16G16_SNORM (0x25), four-component 0xd, when every mesh's values lie in [-1, 1] (1802fc990)"),
-    ("180d46590", "DmeMeshToCMesh_CopyAttribute", WN, "one vertex attribute by type (+0x1c & 0x3f): float3 points through the matrix, directions turned by it and renormalised (zero length: +0s), float4 directions the same with w kept; the map path hands an identity whose zeros are all +0"),
+    ("180d46590", "DmeMeshToCMesh_CopyAttribute", WN, "one vertex attribute by type (+0x1c & 0x3f): float3 points through the matrix, directions turned by it and renormalised (zero length: +0s), float4 directions the same with w kept; a float3 direction skips the renormalise when its CMesh stream byte +0x1c is set; a direction is a stream whose name has position (not the first), normal, bentnormal or tangent (not after speed/balance/wrinkle); the map path and the world node model compile hand an identity whose zeros are all +0 (ledgers 37, 251)"),
     ("1802f69f0", "ModelCompile_BuildDrawSets", WN, "draw-set groups (400 bytes: four layouts, then the meshes) from the mesh list (+0x14c instanced, +0x14d), each through 1802f6840"),
+    ("18016c0e0", "Resource_WriteRERL", I, "the RERL block: entries std::sorted (18017a5a0) by V_stricmp_fast of the name, then ids and names written; the only caller is 180171830"),
+    ("18017a5a0", "std_sort_ResourceRefs", I, "MSVC introsort of the 0xe0-byte reference entries by V_stricmp_fast of the name"),
+    ("18017be30", "std_insertion_sort_ResourceRefs", I, "insertion pass of 18017a5a0 (V_stricmp_fast of the name)"),
     ("1802fc990", "CMesh_StreamWithinUnitRange", WN, "min >= -1 and max <= 1 over a two-float stream"),
     ("1802fcb30", "CMesh_Stream4WithinUnitRange", WN, "as 1802fc990 for a four-float stream"),
     ("1802f5680", "ModelCompile_MeshInputLayouts", WN, "per mesh (0x148 bytes): the full layout, and with a material depth list (INSG m_depth_elems) the depth (flags | 8) and remainder (flags | 0x10) layouts; a fourth for non-map meshes"),
@@ -449,7 +506,11 @@ RESOURCECOMPILER = [
     ("1802902e0", "std_insertion_sort_MeshEntries", WN, "the stable sort's insertion pass (33 or fewer)"),
     ("18026c150", "WRBMeshList_GroupRenderObjects", WN, "runs of equal cubemap, probe, flags & 0x10420000, +0x1a6, object flags; named %s_cm%02d_lp%02d"),
     ("18026bab0", "WRBNode_CreateRenderObject", WN, "name <node>_lr%i[_c%i]{_s|_d}[_cb][_dl][_b][_kv][_nv][_bl][_rtem]_<name>"),
-    ("1802ed7f0", "CResourceCompilerMesh::AddDrawDescriptors", WN, "per draw: vertices renumbered by first use in the incoming index buffer, then vcache, overdraw at 1.03, UV density"),
+    ("1802ed7f0", "CResourceCompilerMesh::AddDrawDescriptors", WN, "per draw: vertices renumbered by first use in the incoming index buffer, then vcache, overdraw at 1.03, UV density; m_vTintColor = V_powf(c, 2.2) (18126a260) of the CMesh tint +0x154 when UseTintColor +0x14f (ledger 245)"),
+    ("18126a260", "V_powf_Gamma22", WN, "V_powf(x, 2.2f)"),
+    ("1812e5580", "CMesh_SetTint", WN, "+0x14f UseTintColor = 1, +0x154 the tint (ledger 245)"),
+    ("180296ed0", "std_sort_AggregateMeshes", WN, "BuildAggregate's mesh list (16-byte refs), comparator as 1802a0ff0 (ledger 244)"),
+    ("1802a0ff0", "std_insertion_sort_AggregateMeshes", WN, "comparator: CMesh +0x58 ascending, vertex count +0x18 descending, memcmp of count x stride +0x1c floats (ledger 244)"),
     ("1812b9370", "meshopt_optimizeVertexCache", WN, "stock meshopt, kVertexScoreTable at 18243aab0 (same values)"),
     ("1812b8c10", "meshopt_optimizeVertexCacheTable", WN, ""),
     ("1812c4f30", "meshopt_optimizeOverdraw", WN, "stock meshopt; threshold 1.03 from AddDrawDescriptors"),
@@ -457,7 +518,18 @@ RESOURCECOMPILER = [
     ("1812c4c40", "meshopt_generateSoftBoundaries", WN, "cluster ACMR times the threshold"),
     ("1812c4230", "meshopt_calculateSortData", WN, "mesh centroid over the vertices; area-weighted cluster centroid dotted with the cluster normal"),
     ("1812b88e0", "meshopt_buildTriangleAdjacency", WN, ""),
-    ("18033f200", "ModelCompile_WeldMeshes", WN, "CMesh_Weld at 1e-7 over the model's meshes (via 1803447d0)"),
+    ("18033f200", "ModelCompile_WeldMeshes", WN, "CMesh_Weld at 1e-7 over the model's meshes (via 1803447d0), then the merge 180344ae0"),
+    ("180344980", "ModelCompile_LoadAndMergeMeshes", WN, "the mesh compile's meshes from the DmeModel (180d49a80), WeldMesh with preserve_tangents, then the merge 180344ae0"),
+    ("18020be10", "WRB_SetNodeModelArgs", WN, "the node model's compile arguments from WRB_CompileNodeModel's block: preserve_tangents (byte 0, 1), generate_draw_bounds, embedded_map_mesh (1), embedded_aggregate_mesh, keep_vertices, create_pooled_vb, generate_meshlets"),
+    ("180344ae0", "ModelCompile_MergeMeshes", WN, "groups untaken later meshes by material (V_stricmp), +0x184, tint and stream layout; a group of 2+ is CMesh_Concatenate'd and appended, its members removed, so unmerged meshes keep their order before the merged groups"),
+    ("180d49a80", "ModelCompile_LoadDmeModelMeshes", MD, "options record for DmeMeshToCMesh (+0x84 mask -1, +0x89 0, +0x8a 0: a vertex per corner, +0x8b 1: group face sets, +0x8c 1, +0x8d 0), walks the DmeModel (180d49d20), returns its CMeshes"),
+    ("180d49d20", "DmeModel_WalkMeshes", MD, "the model's bind base state (1818b59f0) gives each joint its matrix; each child DmeDag: its joint's matrix else its own transform's, concatenated with the identity (182771b20), its DmeMesh to 180d47970, children through 180d49bb0"),
+    ("180d47970", "DmeDag_MeshToCMeshes", MD, "mode 1: the mesh's 'bind' base state (1818be180) into DmeMeshToCMesh with the dag matrix and import scale"),
+    ("1818bde50", "DmeFaceSet_TriangulateFace", MD, "a face of three corners copied as listed; longer ones projected (18125b510) and triangulated (18136f810)"),
+    ("1818be180", "DmeMesh_FindBaseState", MD, "base state by name, V_stricmp_fast"),
+    ("1818b59f0", "DmeModel_FindBaseState", MD, "the model's base state (transform list) by name"),
+    ("180cb1b50", "DmeMesh_Field100", MD, "returns +0x100; DmeMeshToCMesh sets NoCollapse on grouped meshes when > 0 (what it counts is not read)"),
+    ("183014ae8", "CMesh_PackedLayoutStreamTable", MD, "data: 31 (name, semantic index, DXGI format) rows CMesh_BuildPackedInputLayout looks up first; texcoord 0/1 R16G16_FLOAT; count table 183014ec0 after"),
     ("1803447d0", "ModelCompile_WeldMesh", WN, "tangents (CMesh_ComputeTangents) unless preserved, UseMikkTSpace, then CMesh_Weld at the given tolerance"),
     ("1812d9920", "Mesh_UvDensity", WN, "sqrt(world area / uv area), sorted, index ((n-1)*pct)/100; pct 20 or 95"),
     ("18025f9d0", "WRB_UseAggregateInstances", WN, "gameinfo ResourceCompiler/WorldRendererBuilder/UseAggregateInstances; enables agg_prop and agg_merge"),
@@ -473,14 +545,17 @@ RESOURCECOMPILER = [
     ("1812e2a10", "CMesh_RemoveStream", WN, "drops one stream and its floats; later streams' offsets (+0x14) shift down by its count"),
     ("18026f590", "WRBMeshList_GroupAggregates", WN, "runs of equal material name and attribute bits 0x6000000000 / 0x100000, up to 0x7ffb meshes, into the aggregate builder"),
     ("180268e80", "WRB_BuildAggregate", WN, "Added aggregate with %i meshes, %i fragments; %s_lr%i_%s"),
+    ("1802619c0", "WRB_AggregateStreamUnion", WN, "the union of a (CMesh, ref) list's streams (name case-blind, index, count, +0x1d), first seen first, offsets summed; every mesh not in that layout relaid by 1812e4040 (ledger 246)"),
+    ("1812e4040", "CMesh_RelayoutStreams", WN, "a mesh into a given stream table: stride max(offset + count), zeroed buffer, floats copied from the stream of the same index, count and name, else 0 (ledger 246)"),
+    ("1801d4dc0", "WRB_LoadMaterials", WN, "names + '.vmat' through the resource system (vf 0x70) into handles; a missing one resolves to materials/error.vmat (ledger 42)"),
     ("180296ed0", "std_sort_AggregateFragments", WN, "MSVC introsort of the (CMesh, ref) fragments: CMesh +0x58 ascending, vertex count +0x18 descending, then memcmp of the vertices"),
-    ("180296c80", "std_sort_AggregateEntries", WN, "the run's 0x238 entries by their CMesh, the fragments' comparator"),
+    ("180296c80", "std_sort_AggregateEntries", WN, "the run's 0x238 entries by their CMesh, the fragments' comparator (1802a0ff0's; ledger 244)"),
     ("18025fab0", "WRB_CompileNodeModel", WN, "the CMesh list to an in-memory ModelDoc (1801fee20) and compiled as <name>.vmdl; meshletMaxVertices/Triangles"),
     ("1801fee20", "WRB_MeshesToModelDoc", WN, "(CMesh, group) pairs into meshSet_%i nodes by (CMesh +0x58, group); ConvertFromCMesh each"),
     ("180272620", "CSkyboxMaterialMeshList::Compile", WN, "vf 0x20: entries grouped by +0x1c0 (skyboxslot, CUtlString ==, first seen), each group mesh_skyboxslot_%s, flags 0x400"),
     ("180272480", "CSkyboxMeshList::Compile", WN, "vf 0x20: one mesh_skybox object, flags 0x400"),
     ("180270740", "CMeshList_TaggedMembers", WN, "each entry with a tag: 1 with attribute bit 37, else 2 with bit 38, else 0"),
-    ("18026ed20", "CClassifiedMeshList::CompileInstanced", WN, "vf 0x38: entries hashed by (+0x40 node id, +0xa8); a group all CanAggregate with +0x21 goes to the stash, else one object %s%d_%s (global counter DAT_183bb3764), cluster 0"),
+    ("18026ed20", "CClassifiedMeshList::CompileInstanced", WN, "vf 0x38: entries hashed by (+0x40 node id, +0xa8); a group all CanAggregate with +0x21 goes to the stash, else one object %s%d_%s (global counter DAT_183bb3764), cluster 0; the object takes the first entry's +0xb0/+0xb4/+0x80 (fades, origin) and SetTint per tinted entry (ledger 245)"),
     ("180271160", "COverlayMeshList::Compile", WN, "vf 0x20: groups (0x28) by render order +0xac, flags & 0x80, attribute bit 23; bit 1 a closed group; +0xe aggregatable"),
     ("180271110", "COverlayMeshList::CompileBucket", WN, "vf 0x30: vf 0x20 at the running index, returns it advanced by the groups added"),
     ("180271780", "COverlayMeshList::Flush", WN, "vf 0x40: aggregatable groups through GroupAggregates as agg_overlay, then each group GroupRenderObjects mesh_%soverlay%d (ns for the no-split list); objects take +0x74 order and flags"),
@@ -536,7 +611,7 @@ RESOURCECOMPILER = [
     ("181365a40", "CMesh_CreatePackedVB", WN, "vertex buffer written field by field through the packed input layout (181365ce0 per format)"),
     ("181365ce0", "CMesh_PackField", WN, "one layout field of one vertex, a switch on the DXGI format"),
     ("1802ec6e0", "CResourceCompilerMesh_PackDrawVB", WN, "allocates stride * vertices and calls CMesh_CreatePackedVB; warns when the sizes disagree"),
-    ("1810d5f40", "MaterialEditor_LowPrecisionUvInputs", G, "shader inputs named LowPrecisionUv*/uv* by texcoord index; editor UI, not the compile"),
+    ("1810d5f40", "MaterialEditor_LowPrecisionUvInputs", G, "per material input (Material_GetInputList), the texcoord index the mesh semantic table (181366d90) gives a semantic starting with lowprecisionuv or uv; CMapMesh_NameSlotsAfterOverride adds texcoord 1 when one is 1, else removes it (ledger 201)"),
     ("180233190", "CVisibilityMeshMerger_CandidateLess", VIS, "ChooseTarget's std::sort predicate: score, clusters added, union/own surface ratio (0.0001), 0xffff overflow, vertices"),
     ("180237240", "CVisibilityMeshMerger_SortCandidates", VIS, "MSVC std::sort over the 0x50-byte candidates (insertion sort under 33)"),
     ("180238620", "CVisibilityMeshMerger_InsertionSortCandidates", VIS, ""),
@@ -768,7 +843,7 @@ RESOURCECOMPILER = [
     ("181054970", "PhysPart_AddCapsule", ST, "centres times the scale, or through the matrix; radius times the largest scale; shape scale 1"),
     ("181054e80", "PhysPart_AddHull", ST, ""),
     ("1810554d0", "PhysPart_AddMesh", ST, ""),
-    ("1810dcca0", "CMapMesh_NameSlotsAfterOverride", ST, ""),
+    ("1810dcca0", "CMapMesh_NameSlotsAfterOverride", ST, "with arg 2 set (ledger 201): texcoord 1 by MaterialEditor_LowPrecisionUvInputs (add 181087410 attribute 5, remove 1810d9930; face textureAxisU/V 1 and textureScale 1 alongside), then HammerMesh_UpdateExtraAttributeStreams(mesh, 1)"),
     ("1812d87e0", "CMesh_JoinVertices", ST, ""),
     ("1819c9db0", "PhysMesh_ConnectedComponents", ST, ""),
     ("1819d5190", "PhysModel_HasJoints", ST, "joint test on the model's physics; not ported"),
@@ -802,9 +877,43 @@ RESOURCECOMPILER = [
     ("180f2d290", "DmElement_IsNameAttribute", LUMP, ""),
     ("180f2e4d0", "CMapGameDataNode_SetClass", LUMP, "masks spawnflags"),
     ("180f34460", "Fgd_HasSpawnflag", LUMP, "case blind"),
-    ("180f5ff40", "MapDoc_CollapseInstance", LUMP, "the copy from vf 0x860 (CMapInstance::vf268), then the id remap 180f90cb0"),
-    ("180f60740", "MapDoc_BakeInstances", LUMP, "rounds until none collapses: tile meshes, then every CMapInstance-typed node (prefabs too) in tree order"),
-    ("180f7aa30", "CMapNode::vf205", LUMP, "snapshot path generator"),
+    ("180f5ff40", "MapDoc_CollapseInstance", LUMP, "visibility state off (+0x370): deleted (180f6d410, flags 3); else the copy from vf 0x860 (CMapInstance::vf268; CMapPrefab_Collapse for a prefab), then the id remap 180f90cb0; no copy and vf 0x868 false: deleted (ledgers 181, 183)"),
+    ("180f60740", "MapDoc_BakeInstances", LUMP, "rounds until none collapses: terrain features (180f60af0), tile meshes (180f5f490), then every CMapInstance-typed node (prefabs too) collected by 180f86e70 (flags 0xd) once per round and collapsed in that order; the filter drops only non-instances (vf 0x868 / 0x870 are 1800de990, return 0) (ledger 179)"),
+    ("180f60af0", "MapDoc_BakeTerrainFeatures", LUMP, "each CMapTerrainFeature (180f57ff0) whose visibility state +0x370 is on and vf 0x850 says so is deleted; first step of each bake round"),
+    ("180f57ff0", "MapWorld_CollectTerrainFeatures", LUMP, "180f86e70 for 'CMapTerrainFeature', mode 1"),
+    ("1810158a0", "CMapInstance::vf69", LUMP, "joining a world: the node's own vf69, then 181019590 with the target its element handle (+0x558) resolves to (ledger 180)"),
+    ("181019590", "CMapInstance_ResolveTarget", LUMP, "a target in another world (not the instance's, not null, vf 0x888 false) with two or more referrers (180f8ba70 kind 0), or in another document, is cloned (180f86a90) into the instance's world (180f5f230) and the handle moved to the clone (181017400); with fewer it is moved into the instance's world (vf 0x1c8), its listed nodes joining right after the instance (s2c_aheadprobe: 0 and 1 other referrers); then SetTarget (ledgers 180, 183)"),
+    ("1810197f0", "CMapInstance_SetTarget", LUMP, "+0x550 = the target; resets the old and new target's cached referrer counts (180f8f0d0)"),
+    ("181018fa0", "CMapInstance_ClearTarget", LUMP, "resets the target's cached referrer counts, clears the handle and +0x550"),
+    ("1810ecf10", "CVisibilityMgr::vf10", LUMP, "init: 'nodes' at +0x498, 'hiddenFlags' at +0x4c0, +0x508 = 0 (its only writer)"),
+    ("1810eeba0", "VisibilityMgr_NodeShown", LUMP, "true unless mask & hiddenFlags[node] & ~+0x508 (VisibilityMgr_IsNodeVisible passes mask 0xb: flag 4 alone does not hide; ledger 181)"),
+    ("1810f2750", "VisibilityMgr_StoredVisible", LUMP, "the per-node visible byte of the document's set at +0x730 (true when absent)"),
+    ("180f8ba70", "MapNode_ReferrerCount", LUMP, "the instances whose 'target' attribute names the node, by vf 0x858 kind (0, 1; 3 the sum), counted through the element referrers once and cached at +0x388 / +0x38c until 180f8f0d0 resets them (ledger 180)"),
+    ("180f8f0d0", "MapNode_ResetReferrerCounts", LUMP, "+0x388 = -1 (both counts); the only writer of -1 besides the node's init 180f8f920"),
+    ("180f88920", "MapNode_CollectReferrers", LUMP, "the instances whose 'target' names the node (180f8ba70 kind 3 sizes the list); CMapInstance_Collapse deletes the target (180f63d00) when this finds exactly one"),
+    ("180fc5010", "MapWorld_RegisterSubtree", LUMP, "per node in preorder: OnNodeAdded, then vf 0x228 (the node joining the world), then its children"),
+    ("180f75010", "CMapNode::vf57", LUMP, "reparent: off the old world's lists (180fcb650), onto the new parent (vf 0x1f8), then 180fc5010 under the new world"),
+    ("180f86a90", "MapNode_Clone", LUMP, "a copy of a node and its subtree (used for a target cloned by 181019590)"),
+    ("180f5f230", "MapDoc_AddNode", LUMP, "adds a node to the document under the given parent"),
+    ("180f86e70", "MapNode_CollectByClass", LUMP, "per child: sub-worlds skipped with flag 1; flag 4 skips a node (and its subtree) with 180f8ba70 >= 1 (an instance target); flag 0x10 vf 0x188, flag 0x20 the visibility state; mode 0 recurses before appending (children first), mode 1 after; flag 8 tests IsA (vf 0x770) else vf 0x3c0"),
+    ("1800de990", "ReturnFalse", LUMP, "CMapInstance vf 0x868 and vf 0x870"),
+    ("18234a700", "CMapPrefab::vftable", LUMP, "vf 0x860 CMapPrefab_Collapse (180f96d40), vf 0x868 1800de990 (false): a prefab whose collapse makes no group is deleted (ledger 183)"),
+    ("181018a30", "CMapPrefab_LoadedWorld", LUMP, "the prefab's map world (+0x550); with 1 and none loaded, looks the handle +0x558 up; CMapPrefab_Collapse returns nothing without it (ledger 183)"),
+    ("180f7aa30", "CMapNode_SaveParticleSnapshot", LUMP, "vf 0x588 fills a CParticleSnapshot; empty: warning, no file; else 181371f50 serializes it and SaveKV3 text generic saves the auxiliary snapshot_file (Maps/ParticleSnapshots.cs)"),
+    ("181083850", "CMapMesh_FillParticleSnapshot", LUMP, "CMapMesh vf 0x588: a particle per face corner, the open edge loops' corners (181395050) then every faced half-edge by handle, deduped; streams position 0xc, normal 0xd, color 0xb (mesh +0x10de, unidentified)"),
+    ("1810b5100", "CMapPath_FillParticleSnapshot", LUMP, "CMapPath / CMapCable vf 0x588: 180f7a100 first, then 1810b8270 at particleSnapshotSpacing (+0x185c); streams position 0xc, color 0xb, radius 3; radius written only for type class 4 (18237a0a0), never for generic_float"),
+    ("180f7a100", "CMapNode_ChildrenAnswer", LUMP, "true when a child's vf 0x130 is non-zero (a mesh's returns this, a path node's 0); the world's and CMapEntity's vf 0x588, which fills nothing"),
+    ("181112010", "CMapPathNode_LinearTint", LUMP, "vf 0x618 then 18126a5a0"),
+    ("18110f230", "CMapPathNode::vf195", LUMP, "color_tint through 180f31d40, default 0xffffffff"),
+    ("180f31d40", "CMapEntity_ColorKey", LUMP, "the key (V_stricmp_fast) parsed V_sscanf %d %d %d into low bytes, alpha 0xff; the default when absent"),
+    ("18126a5a0", "Color32_SrgbToLinear", LUMP, "byte * 0x3b808081, clamp [0, 1], x / 12.92 up to 0.04045 else V_powf((x + 0.055) / 1.055, 2.4)"),
+    ("181394380", "HalfEdge_FindOpenEdgeLoops", LUMP, "over 180ff0100's edges: face-less sides with a faced twin; loops follow next from the first left (or the first back in the set after a step out), entries as the edge's lower handle, swap-remove"),
+    ("180ff0100", "HalfEdge_Edges", LUMP, "each edge once as its lower-handle half-edge, dense order"),
+    ("18138be80", "HalfEdge_IncomingOnFace", LUMP, "around a vertex from its out half-edge: the twin on the face, else the twin's next"),
+    ("1813a2d80", "PolygonMesh_EdgeSideOnFace", LUMP, "the edge's half-edge on a face; 1813a3180 gives its (tail, head)"),
+    ("18139a960", "HalfEdge_EdgeFace", LUMP, "the edge's face, or its twin's when it has none"),
+    ("1812f5060", "CParticleSnapshot_Serialize", LUMP, "string_list when any, stream_data by 181322440 (num_values, streams) and 1813220e0 (name, type from 1830149f0, values)"),
+    ("1803401b0", "CompileSnap", LUMP, "DATA num_particles + attributes (181907da0 name -> id, 181908020 type, data_offset, data_size); skinning when skin0-3; 18033fe60 writes DATA binary_auto and SNAP via FastCompress"),
     ("180f8ee20", "CMapEntity_SnapshotFile", LUMP, "snapshot_file from snapshot_mesh"),
     ("180fa84e0", "EntityKey_TypeValue", LUMP, ""),
     ("180fc1560", "CMapWorld_ExportToLump", LUMP, ""),
@@ -867,8 +976,15 @@ RESOURCECOMPILER = [
     ("1813a5be0", "HalfEdge_IsOpenEdge", SUB, "a side without a face"),
     ("181384e40", "HalfEdge_FaceNormal", SUB, "NewellNormal over the face's loop from its first half-edge"),
     ("1813b1b80", "HalfEdge_SetSmoothingAngle", SUB, "stores cos(angle * 0.017453292) at +0x3470, faces dirty"),
-    ("1813c2090", "SubdivPatch_TangentGrid", SUB, "patch corner tangents lerped (rows normalised), then (n x t) x n normalised; viewport and sampling only"),
-    ("1813c3cf0", "SubdivPatch_NormalGrid", SUB, "patch grid normals, averaged across patch seams; viewport and sampling only"),
+    ("1813c2090", "SubdivPatch_TangentGrid", SUB, "mode 3 stream: gathered corner tangents lerped by (u, v) (rows normalised), then (n x t) x n normalised; the bake's tangent stream (ledger 38, SubdivisionTangents.Grid)"),
+    ("1813c3cf0", "SubdivPatch_NormalGrid", SUB, "mode 2 / 3: 1813be620 normals, seams averaged with the neighbour patch (1813c0960), centre the loop's 1813bd320 corner 3 sum, (0, 0) from 1813c6140 (SubdivisionNormalGrid.Grid)"),
+    ("1813bd320", "SubdivPatch_CornerNormal", SUB, "patch corner k's normal from the displaced corner and its two grid neighbours (table 18243e8a0); frame normal when unsubdivided"),
+    ("1813bdf80", "SubdivPatch_GatherTangents", SUB, "the corner's tangent, it plus next / previous normalised, the loop's sum normalised"),
+    ("1813be620", "SubdivPatch_PositionNormals", SUB, "position grid to normals: one triangle at the corners, two unit normals summed elsewhere"),
+    ("1813c0960", "SubdivPatch_BorderNormals", SUB, "a patch border's normals (side 0 row / 1 column, index 0 / n) rebuilt from the control points and displacement; returns g"),
+    ("1813c6140", "SubdivPatch_VertexCorner", SUB, "the vertex fan's 1813bd320 corner-0 normals from the last crease, summed; 1813850e0 when a fan face is missing or unsubdivided; normalised either way"),
+    ("1813c8830", "SubdivPatch_CornerSmooth", SUB, "edge flags, then the smoothing cosine against the two patches' corner-0 normals"),
+    ("1813c83f0", "SubdivPatch_StreamModes", SUB, "copies a stream's descriptor (mode int, type/index short) into each of its components, then +8 weight / +0xc stride: a stream with no grid (stride 0) weight 1.0, one with a grid weight 0 and the grid's stride (ledger 38)"),
     ("181375e20", "HalfEdge_ContainerAdd", SUB, "handle containers: add"),
     ("181376810", "HalfEdge_AddEdge", SUB, "an edge between the ends of two corners"),
     ("181376f80", "HalfEdge_AddEdgeToFace", SUB, "an edge from a to b across a face unless one is there"),
@@ -886,7 +1002,7 @@ RESOURCECOMPILER = [
     ("1813922e0", "HalfEdge_Lib_1813922e0", SUB, "generic half-edge lib, called by the bake"),
     ("1813937a0", "HalfEdge_Between", SUB, "half-edge from a to b, circling a"),
     ("1813995a0", "HalfEdge_ContainerRemove", SUB, "swap-last, handle to a FIFO free list"),
-    ("181399f40", "HalfEdge_FaceIndex", SUB, "face handle to dense index (level byte array +0x1b38)"),
+    ("181399f40", "HalfEdge_FaceVertexIndex", SUB, "a half-edge's face-vertex slot (record +0x44): indexes the face-vertex streams (+0xb20 set, the level bytes +0x1b38)"),
     ("18139bd10", "SubdivisionBake_FaceData", SUB, ""),
     ("18139c100", "MeshTessellation_ForPhysics", SUB, "triangles for physics"),
     ("18139c1f0", "MeshTessellation_Corners", SUB, "every triangle corner"),
@@ -900,14 +1016,14 @@ RESOURCECOMPILER = [
     ("181083ae0", "CMapMesh_PhysicsSimplificationError", PW, "CMapMesh vf216: override (+0x3c18) ? error (+0x3c1c) squared : 0 if a material has attribute 0x184fc5, else the gameinfo default squared"),
     ("180fb09f0", "MapBuilderSettings_Read", PW, "gameinfo ResourceCompiler/...; PhysicsBuilder/DefaultHammerMeshSimplification -> +0x9c8 (CS2: 0.0)"),
     ("1813b7750", "SubdivisionBake_PatchPositions", SUB, "per-face patch grid of positions"),
-    ("1813b82f0", "SubdivisionBake_PatchPaint", SUB, "per-face patch grid of paint"),
+    ("1813b82f0", "SubdivisionBake_PatchPaint", SUB, "per-face patch grid of every +0xb20 face-vertex stream: each float the corners lerped (rows, then columns), then mulss weight, addss the evaluator's grid value (1813c83f0's record; a stream with no grid adds the +0.0f at 18243e890), so a -0 comes out +0 (ledger 38)"),
     ("1813ba570", "HalfEdge_SplitBetween", SUB, "point at t by arc length along the edge chain; reuses ends within 0.01"),
     ("1813baa40", "SubdivisionBake_Bake", SUB, "splits faces level by level, lower first"),
     ("1813bc230", "MeshTessellation_PatchFrame", SUB, "patch frame: columns B, T, N"),
     ("1813bcc40", "MeshTessellation_PatchGrid", SUB, "the patch's grid of cells"),
     ("1813bda20", "MeshTessellation_CornerPatch", SUB, "one quad patch per corner"),
     ("1813be320", "MeshTessellation_CornerPaint", SUB, "each corner times 1/m in loop order"),
-    ("1813c1cc0", "MeshTessellation_PaintValues", SUB, "patch grids as asked: positions (1813c7b90), normals (1813c3cf0), tangents (1813c2090); from 18102f230 and 1810c0d60"),
+    ("1813c1cc0", "MeshTessellation_PaintValues", SUB, "patch grids by stream mode (descriptor +0x25a): 0 stored/lerp, 1 positions (1813c7b90), 2 normals (1813c3cf0), 3 tangents (1813c2090); from the bake's patch builders 1813b7750 / 1813b82f0 and from 18102f230, 1810c0d60"),
     ("1813c26a0", "MeshTessellation_Stitch", SUB, "patch to a finer neighbour (the ray-trace scene's path)"),
     ("1813c64d0", "SubdivisionBake_Step_1813c64d0", SUB, "called by the bake after the split"),
     ("1813c7a40", "SubdivisionBake_FaceLevel", SUB, ""),
@@ -1208,6 +1324,12 @@ RESOURCECOMPILER = [
     ("180f38990", "MapNode_SetKeyInt", LIGHTS, "%d then MapNode_SetKeyValue"),
     ("180f38940", "MapNode_SetKeyFloat", LIGHTS, "%g then MapNode_SetKeyValue"),
     ("180f1d100", "MapDoc_PreprocessLights", LIGHTS, "Preprocessing Lights: brightness units, lightcookie, precompute keys"),
+    ("1822ae350", "CDataModel::vftable", LUMP, "data: the datamodel linked into resourcecompiler (VDataModelVersion001, QueryInterface 180cda040 at slot 2); vf 0x3b8 180cd7820, vf 0x3c0 180cd99e0 (ledger 46)"),
+    ("180cd7820", "CDataModel_FirstReferrer", LUMP, "vf 0x3b8 (handle): the element's inline referrer record (element +0x38; -1 means none), or a search of the undo table when the element is gone (ledger 46)"),
+    ("180cd99e0", "CDataModel_NextReferrer", LUMP, "vf 0x3c0 (record): record +8"),
+    ("180cdf6f0", "DmReferrers_Add", LUMP, "the new referrer into the inline slot, the old one moved to a new 0x10-byte record right behind it: newest first (ledger 46)"),
+    ("180cd9bd0", "CDataModel_AddReferrer", LUMP, "(handle, attribute): marks the element referenced (+8 bit 0) and adds the attribute's owner through 180cdf6f0; from the DmAttribute element setters (ledger 46)"),
+    ("180cdd8e0", "CDataModel_RegisterElementReferences", LUMP, "every element-typed attribute (type 1) of an element added to (180cdf6f0) or removed from (180ce2e50) its target's referrers; 0x21 element arrays likewise"),
     ("180f1c660", "MapDoc_GatherLights", LIGHTS, "lights of the world and of +0x6b8 docs"),
     ("18100c780", "MapDoc_ListLoadedDocs", LIGHTS, "the +0x6b8 vector's documents in order, loaded ones when asked; no recursion"),
     ("180f1c8b0", "MapWorld_GatherLights", LIGHTS, "light_* legacy classes plus barn/rect/omni2, one entry per world transform"),
@@ -1254,6 +1376,34 @@ RESOURCECOMPILER = [
     ("18024ee30", "LightVis_TestClustersJob", LIGHTS, "sample segments against cluster boxes, eps 0.001"),
     ("180f741a0", "CMapNodeDataProvider::vf35", LUMP, "legacy light description at identity; false for barn/rect/omni2"),
     ("180ef5870", "CBakeResourceHelper::vf2", LUMP, "Hammer preview scene keys, not the lump"),
+    ("180100e40", "SteamAudio_GenerateProbes", SA, "the generation collection (180f54950, first flag clear: mask 0x3400), its vertex bounds as the box (min / max on <=, centre (min + max) 0.5, size max - min, null rotation), steamaudio's generation (vfn 0x30), then the filters 180fbea90 .. 180fbd800 in order"),
+    ("180101690", "SteamAudio_PrepareReverbBake", SA, "worldspawn's reverb_* keys, the probes (180100e40), then the bake collection (180f54950 with flag 1: mask 0x1400) into steamaudio's CreateScene (vfn 0x70)"),
+    ("180f54950", "SteamAudio_CollectGeometry", SA, "clears the outputs; static mask 0x1400 with the first flag, 0x3400 without, 1 with the second; dynamic mask 0xc3001; the walk 180f53f40 from the given node"),
+    ("180f53f40", "SteamAudio_CollectWalk", SA, "skips a node in the exclude list, 180f53780 on it, then its children (+0x1f8 handles) in order"),
+    ("180f53780", "SteamAudio_CollectNode", SA, "CMapSmartProp (+0x688 == 0) and CMapPhysicsPin out; owner solid 0 out; mode from the mesh (+0x3b70) or the owner's steamaudio_geometry_mode: 1 out, 2 static with mask 0, 3 dynamic; else an owner's mesh needs solidity 2, an owner's other node a class with has_static_mesh; per instance path (180f88460) 180f519d0 / 180f52220 pieces through 180f50ed0, and a CMapMeshBase's face geometry (180f54020) through 180f510d0"),
+    ("180f4bb00", "MapNode_HasCollisionGeometry", SA, "a CMapMesh / CMapPath whose CollisionType (vf 0x680) is not 0, a CMapSmartProp, or a model child with physics"),
+    ("180f519d0", "SteamAudio_PhysicsPieces", SA, "PhysMesh_Shapes (181057020, no flags, the deformer 181022480); the node world matrix as (translation, longest unscaled column, quaternion); each shape as triangles (hull 1819589f0 at 1, mesh 1819cea20 at (1, 1, 1)) into 0x48-byte groups keyed (surface index: +0x10 of the surface found by name, -1 for none; InteractsAs; group byte +0x2e), first seen first"),
+    ("180f52220", "SteamAudio_ModelPieces", SA, "an entity model's pieces (not ported)"),
+    ("180f54020", "SteamAudio_FaceGeometryPieces", SA, "a mesh's faces whose material sets tools.steamaudiogeometry (vf 0x48), triangulated (18139f930) with 3 points per triangle, grouped by the material's surface (not ported)"),
+    ("180f50ed0", "SteamAudio_AddPiece", SA, "static: the piece's CTransform matrix (1801feb70) into 180f510d0 with the mask; dynamic: a 0x80-byte entry named <name>:<instance>"),
+    ("180f510d0", "SteamAudio_AppendGroups", SA, "each group with points, 3+ indices and group byte not 1, kept when the mask is 0, the group byte 0 or InteractsAs & mask: points through the matrix (1812651a0), indices offset, one material per triangle (1 for a negative surface)"),
+    ("1801feb70", "CTransform_ToMatrix", X, "QuaternionMatrix (181260150) with the position, the rotation columns times the scale when it is not 1"),
+    ("1819cea20", "RnMesh_Triangulate", SA, "the mesh's vertices (+0x30 count, +0x38) times a scale vector and its triangles (+0x48, +0x50) offset by the vertices before"),
+    ("1810e6fb0", "CMapMeshBase_GetSteamAudioGeometryMode", SA, "+0x3b70, the embedded property steamaudioGeometryMode (0 default, 1 exclude, 2 force static, 3 force dynamic; registered in 1810e3f50)"),
+    ("1813a3370", "HalfEdge_FacesWithMaterials", SA, "the faces whose material (face stream +0x2fbc) is in the mask; mode 0 also drops material flags & 5, mode != 2 faces whose stream +0x2fda value & 7"),
+    ("18139f930", "HalfEdge_TriangulateFaces", SA, "the faces triangulated, 3 points per triangle, the per-triangle face material, optional UV and attribute streams"),
+    ("180fbea90", "SteamAudio_FilterProbesByNavMesh", SA, "probes remaining after filtering by nav mesh"),
+    ("180fbc630", "SteamAudio_AppendLadderProbes", SA, "probes near ladders"),
+    ("180fbcb10", "SteamAudio_AppendMissingNavProbes", SA, "probes near missing navmesh areas"),
+    ("180fbde60", "SteamAudio_FilterProbesByVolumes", SA, "probes remaining after filtering by exclusion volumes"),
+    ("180fbba50", "SteamAudio_AppendZiplineProbes", SA, "citadel_zipline_path_node entities as probes"),
+    ("180fbe450", "SteamAudio_FilterProbesInsideShapes", SA, "probes remaining after filtering by inside shapes, against the physics world"),
+    ("180fbc2d0", "SteamAudio_AppendMapProbes", SA, "probes from the map"),
+    ("180fbd800", "SteamAudio_AppendOpvarProbes", SA, "sound_opvar_set_point entities and proxy probes"),
+    ("1800a1980", "ConVar_snd_steamaudio_enabe_append_probes_to_cover_navmesh", SA, "registered on (bool 1); 180fbcb10 reads it at 1837228c0 + 0x58"),
+    ("1818e4a00", "CNavArea_RandomPoint", SA, "the area's corners (1818dace0) into 1818e3290"),
+    ("1818dace0", "CNavArea_Corners", SA, "4 corners for an area without a polygon (+8 = -1), else the polygon's"),
+    ("1818e3290", "Polygon_RandomPoint", SA, "a triangle picked by area through tier0 RandomFloat, then a uniform point in it (sqrt of a RandomFloat): the global random stream"),
 ]
 
 BOMB = "s2c:baked/bomb"
@@ -1317,7 +1467,7 @@ NAVSYSTEM = [
     ('18006cb10', 'NavGen_CompactRemoved', NAVGEN, 'remap, connections to dropped polygons removed'),
     ('180076d40', 'NavGen_ComputeBounds', NAVGEN, '+0x10..+0x38 per polygon'),
     ('18006b160', 'NavGen_AddJumps', NAVGEN, 'stage 026 (ledger 98): capsules per kind (physics vfn 0x1e8: (0,0,climb)-(0,0,h/2+climb), radius), 32-unit grid, candidate edges, pairs, MSVC sort by squared midpoint distance, adds and marks'),
-    ('180072ef0', 'NavGen_JumpClear', NAVGEN, 'the path (18004d540, 180077e40): a mid, above b mid at a height, b mid; each leg cast both ways through world vfn 0x580 (type 4 shape cast), blocked when the fraction is below 1'),
+    ('180072ef0', 'NavGen_JumpClear', NAVGEN, 'the path (18004d540, 180077e40): a mid, above b mid at a height, b mid; each leg swept both ways through world vfn 0x580 (type 4: the kind cylinder hull, overlap byte 0), blocked when the fraction is below 1'),
     ('18006fcf0', 'NavGen_JumpEdges', NAVGEN, 'edges of polygons with a block whose connections leave the overlap sum <= 0 or at least 2 radius open (edge length 18004e9e0)'),
     ('18006cf00', 'NavGen_JumpTargets', NAVGEN, 'grid query over the XY box of the edge and the edge moved out by MaxJumpHorizDistBase; each polygon once'),
     ('18006bfc0', 'NavGen_JumpPairs', NAVGEN, 'edge pairs (180053170, overlap radius * nav_gen_jump_connection_min_overlap_ratio) dropping more than climb + 4 and at most MaxJumpDownDist, kind rule, XY within MaxJumpHorizDistBase, clear, not covered (+0x61 sticky per target polygon)'),
@@ -1328,6 +1478,7 @@ NAVSYSTEM = [
     ('180077e40', 'NavGen_JumpPath', NAVGEN, 'four float points at t: lerp(a0, a1) with a z, lerp(b1, b0) at a z (twice), lerp(b1, b0)'),
     ('1800217b0', 'NavGen_Generate', NAVGEN, "per world: the stage input (180048b20), the stage list (180022b60), the mesh build (180022200); '>>NAVGEN: Skipped... no walkable seeds present' with no seeds"),
     ('1800250e0', 'NavGen_RunStages', NAVGEN, 'the world and each NAV_GEN_PROJ / movable mesh through the stages (1800260e0, 180026740), appended (18006bee0), JoinNonZup (180072b50, convar 180134a98 nav_gen_join_nonzup, on), compaction (180073ef0)'),
+    ('180020cc0', 'NavGen_MovableTag', NAVGEN, "MurmurHash2 of a movable entry's id path (entry +0x30), seed 0x3501a674; each of its polygons' +4 (1800250e0 movable loop: 1800260e0 with the stage count - 1 and no second list)"),
     ('18006bee0', 'NavGen_AppendPolys', NAVGEN, "polygons and pool appended; the polygons' corners offset by the old pool size, their connections' +0 and +8 by the old polygon count"),
     ('180073ef0', 'NavGen_CompactVertices', NAVGEN, 'the pool renumbered in first-use order over the polygons (map filled with -1), unused vertices dropped; attributes kept only when some are set (ledger 97)'),
     ('180072b50', 'NavGen_JoinNonZup', NAVGEN, 'acts only on polygons with flag 8 (the oriented-mesh path)'),
@@ -1538,6 +1689,19 @@ MODTOOLS = [
 ]
 
 VPHYSICS2 = [
+    ("1800010b0", "StaticInit_IdentityMatrix3x4", SA, "18055e8e0 = the 3x4 identity (1.0 from 1803fdd34)"),
+    ("1800655d0", "CPhysicsWorld::QueryPoint", SA, "world vfn 0x5d8: the RnWorld (+0x30) into 1801fcf60"),
+    ("1801fcf60", "RnWorld_QuerySphere", SA, "body mask from the query's +0x2f (0xf all), the broadphase walk 1801dda70 with 1801ec3c0, then the +0x8ac bit 1 pass (1801c6ae0)"),
+    ("1801dda70", "RnBroadphase_QuerySphere", SA, "each tree whose kind (+0x50) meets the mask, from its root: a node entered when (min(p, max) - max(p, min))^2 summed is at most r^2; leaves to the callback"),
+    ("1801ec3c0", "RnWorld_QuerySphereCallback", SA, "body type against the mask, 1802facf0, the point into the body frame ((k x q) + (c + w k) origin; (t1 dy + t0 dx) + t2 dz rows), shape vfn 0x38 when the exact flag is set, the shape (+0x98) into the results"),
+    ("18024ca60", "CRnSphereShape::OverlapSphere", SA, "vfn 0x38: (dy^2 + dx^2) + dz^2 <= (r + R)^2"),
+    ("18024fbc0", "CRnCapsuleShape::OverlapSphere", SA, "vfn 0x38: segment parameter over max(FLT_MIN, |e|^2), minss 1, maxss 0; (x^2 + y^2) + z^2 <= (r + R)^2"),
+    ("180254790", "CRnHullShape::OverlapSphere", SA, "vfn 0x38: no vertices no hit; GJK (1802eca10) between the point and the hull proxy (18012e550 at the shape scale), distance <= r"),
+    ("1802eca10", "Gjk_DistanceFresh", SA, "a zeroed cache (count 0, direction 0), then 1802ec220"),
+    ("18024af70", "CRnMeshShape::OverlapSphere", SA, "vfn 0x38: 180248c80 with the shape's scale (+0xb8)"),
+    ("180248c80", "RnMesh_OverlapSphere", SA, "a closed mesh (+0xb4 bit 0) holding the point (180248a30) hits, and with r 0 nothing else is tested; else the BVH (scaled boxes within r^2) and each leaf triangle's nearest point (18008b720) within r"),
+    ("1801c7c70", "Broadphase_MakeCastHit", NAVGEN, "the 0x48-byte hit: +0 body +0x78, +8 shape +0x98, +0x10 point and +0x1c normal through the shape's matrix ((n.x r0 + n.y r3) + n.z r6), +0x34 fraction, +0x40 the cast's start-solid byte"),
+    ("18003f500", "CPhysicsShape::GetCollisionAttributes", NAVGEN, "vfn 0x50: the RnShape's +0x50 block (InteractsAs first)"),
     ("180091a10", "VPhysXBodyPart_t::SchemaFactory", ST, "schema class factory (class entry 18044a198, fields 180449fb0): case 2 constructs: all 0 but m_flLinearDrag and m_flAngularDrag 1 and the mass centre override from constants (ledger 169)"),
     ("1803f8740", "CPhysAggregateInstance::vftable", ST, "vfn 0x10 body count, 0x48 physics data, 0x90 scale (+0x28), 0xc0 body, 0xd0 bone name, 0x180 every body asleep"),
     ("180048860", "CPhysAggregateInstance::IsAsleep", ST, "vfn 0x180: every body's vfn 0x408"),
@@ -1569,6 +1733,22 @@ VPHYSICS2 = [
     ("180245a10", "RnMesh_CastBoxUnscaled", "s2c:baked/bomb", "BVH walk; triangles through 180244380, or 180243770 when the mesh has neighbour indices (+0x68)"),
     # The box cast navsystem's ClipPolysToHullClearance runs, ported bit-exact (ledger 101).
     ("180065360", "CVPhys2World::CastShape", NAVGEN, "world vfn 0x558 -> 1801f5080"),
+    ("180065410", "CVPhys2World::SweepShape", NAVGEN, "world vfn 0x580 -> 180202b00 (AddJumps' cast, ledger 171)"),
+    ("180202b00", "CRnWorld::SweepShape", NAVGEN, "by descriptor +0x28: 1 -> 180202e70, 3 -> 180201280, 4 (hull vertices +0x18, count +0x20) -> 180201b00; else fraction 1"),
+    ("180201b00", "CRnWorld::SweepHull", NAVGEN, "180128ff0 at both frames joined (the swept box), the sweep 1801e85a0 (centre 0), proxy (count, vertices, scale 1, radius 1/16), result fraction 1, then 1802023d0"),
+    ("1802023d0", "CRnWorld::SweepWalk", NAVGEN, "body mask from the query's +0x2f, 1801dea00 over the trees with 1801ecb30, then the +0x8ac bit 1 record (1801c6ae0)"),
+    ("1801dea00", "Broadphase_QueryBoxTrees", NAVGEN, "each tree whose kind byte meets the mask: depth-first box overlap (touching counts), leaves to the callback"),
+    ("1801ecb30", "Sweep_Body", NAVGEN, "body type against the mask, the pair filter 1802facf0, the body's sweep from 1800092f0 and the same terms inline, then 1801e23b0"),
+    ("1801e23b0", "Sweep_Shapes", NAVGEN, "by shape type: 0 sphere (18012e650), 1 capsule (18012e600), 2 hull (18012e550, radius 1/16), 3 mesh (1801ee7b0), 4 compound"),
+    ("1801ebc00", "Sweep_Toi", NAVGEN, "RnTimeOfImpact to 1, 32 iterations; with the overlap byte set a state 2 or time 0 is no hit; a time below 1 is kept as the hit"),
+    ("1801ee7b0", "Sweep_Mesh", NAVGEN, "the swept box into the body frame grown by 1/16, RnMesh_QueryBox with the triangle test, each triangle at the shape scale (radius 1/16) into 1801ebc00"),
+    ("1801e85a0", "RnSweep_FromFrames", NAVGEN, "two 3x4 frames: each turn by the trace (m4 + m0) + m8 or the largest diagonal, DPPS-normalised, the end flipped; centres ((c.y m3 + c.x m0) + c.z m6) + m9"),
+    ("180128ff0", "RnPoints_BoundsAtFrame", NAVGEN, "points through a frame (position, quaternion), min and max kept with <="),
+    ("1801ad370", "RnHullCreateCylinder", NAVGEN, "export: 16 angles of pi/8 (V_cosf, V_sinf), bottom then top ring through the axis turn (180089a30 from +z), RnHullCreate of 32, flag 4 when vertical"),
+    ("180071d70", "CPhysics2Interface::CreateCylinderHull", NAVGEN, "interface vfn 0x1e8 -> RnHullCreateCylinder"),
+    ("18012e650", "RnGjkProxy_Sphere", NAVGEN, "count 1, the centre, the scale, radius scale * r at least 1/16"),
+    ("18012e600", "RnGjkProxy_Capsule", NAVGEN, "count 2, the centres, the scale, radius scale * r at least 1/16"),
+    ("1801c6ae0", "RnWorld_RecordQuery", NAVGEN, "with world +0x8ac bit 1: appends the query to the list at +0x8b8 under the world lock (no effect on results)"),
     ("1801d64a0", "RnBroadphase_CastBox", NAVGEN, "a broadphase tree's walk for CastBox: each leaf's body type against the query's mask (+0x2f), 1802facf0, the shape transform from the body (q rows, world mass centre less q (s c)), shape vfn 0x40 with the best fraction, kept strictly below it; a fraction of 0 ends the walk"),
     ("180244dc0", "RnMesh_CastBoxTransformed", NAVGEN, "start and half extents into the mesh frame, triangle box (min - 1/32) - h; Simulation/BoxCast.MeshTransformed"),
     ("180243770", "RnMesh_SweptTriangleTestWings", NAVGEN, "180244380 for triangles with three wings; the same fraction, another normal"),
@@ -2488,7 +2668,13 @@ SMARTPROPS = [
 ]
 
 TIER0 = [
+    ("1800cf320", "KV1ToKV3_SetValueFromText", "s2c:resources/containers", "strtoll(10) end ie, strtod end fe: '' string; 18 chars 0x.. uint64; ie < fe == end and no ERANGE -> double (double)(float)d; ie == end and int32 -> int; else string (ledger 264)"),
+    ("1800cf9c0", "KV1ToKV3_ParseValue", "s2c:resources/containers", "a value token: '{' table (1800ce210), quoted or unquoted text through 1800cf320, 'Expected value after =' (ledger 264)"),
+    ("1800ce210", "KV1ToKV3_ParseTable", "s2c:resources/containers", "'Expected {', members until '}', 'Bad keyname' on { } = (ledger 264)"),
+    ("1800cdce0", "KV1ToKV3_ParseRoot", "s2c:resources/containers", "root key, its table, _root_keyname set when the root has a name (ledger 264)"),
     ("1800d7940", "KV3Text_WriteValue", "s2c:containers", "binary blob (case 6): member over 32 bytes opens line break, #[ at column 1, rows of 32 upper-case pairs, depth + 1 tabs on every row but the first, close line break, depth tabs, ]"),
+    ("180050840", "CBlockCompress::FastCompress", "s2c:entities/lump", "export; LZSS: u32 size (bit 31 stored), u16 flags per 16 tokens, literal or u16 ((distance-1)<<4 | length-3), 3..18 bytes, 4096 back; 2048-slot hash of 3 bytes, last position wins; stored once the write reaches size-4 (Compression/BlockCompress.cs)"),
+    ("180050ae0", "CBlockCompress::FastDecompress", "s2c:entities/lump", "export; the decoder of 180050840"),
     ("1802bdd90", "crt_exp2f", "s2c:baked/bomb", "x split to n + f in [-0.5, 0.5], Cody-Waite expf of f ln2 (1802bdb54) scaled by 2^n"),
     ("1802df0a4", "crt_acosf", "s2c:baked/bomb", "AMD libm float acosf; V_acosf (180007e80) clamps to [-1, 1] first"),
     # Containers: resource names, KV3, RED2, manifests.
@@ -3058,11 +3244,9 @@ SCENESYSTEM = [
     ("1801c6b60", "ClipPolygon_Y", BAKE, "against w >= k y"),
     ("1801c7100", "ClipPolygon_X", BAKE, "against w >= k x"),
     ("1801ad810", "LightBinner_FootprintEdges", BAKE, "edges of the footprint hull (count +0x80, points +0x84) as (nx, ny, quarter diagonal - (ny y + nx x), 0): longer than two pixel diagonals, turning one way; rsqrtss with (3 - r len2 r) (r 0.5); the last folded into the first when they turn back; LightBinnerItems.Edges"),
-    ("1805ec900", "SkyCube_Vertices", BAKE, "data: the sky's unit cube, eight corners at +-0.5; CubemapFaceMeshes.SkyCubeVertices"),
-    ("1805ec960", "SkyCube_Triangles", BAKE, "data: its twelve triangles as one-based ints (1 3 2, 1 4 3, ...); CubemapFaceMeshes.SkyCubeIndices"),
-    ("1805fe430", "LightBinner_SilhouetteTable", BAKE, "data (20261023; 1805fe400 in 20261015): per eye-outside plane mask, a count and up to 8 box corner indices of the outline"),
     ("1801cc400", "LPV_SortRecords", BAKE, "std::sort (introsort, insertion below 0x2520 bytes) of the 0x120-byte records: +0x14 descending, then the float +0x10 ascending, then the object pointer +0 ascending; 1801a9b70 calls it after capping the list at 128 (1801cbc20 nth_element first, logging 'Exceeded maximum number visible lpvs')"),
-    ("1801af7b0", "LightBinner_WriteLightBlock", BAKE, "PerViewLightingConstantBufferGpu_t: g_VisibleLPV from +0xe528 (at most 128): world-to-volume rows 18049b3b0(object +0x30), box +0xd0 .. +0xe4 padded by 0.1, 1 / +0xe8, +0xec, +0xf0 (FLT_MAX for 0), then the int from the view's map; g_vShadowSampleRotations V_sincosf(i / 16 2pi + frame 1.618034); CubemapFaceConstants.LightBlock"),
+    ("1801af7b0", "LightBinner_WriteLightBlock", BAKE, "PerViewLightingConstantBufferGpu_t: g_VisibleLPV from +0xe528 (at most 128): world-to-volume rows 18049b3b0(object +0x30), box +0xd0 .. +0xe4 padded by 0.1, 1 / +0xe8, +0xec, +0xf0 (FLT_MAX for 0), then the int from the view's map; g_vShadowSampleRotations V_sincosf(i / 16 2pi + frame 1.618034); the fast path sun from +0xebd0 (null: (0, 0, -1, 0.04), +31176 -1), cascades and ambient SH only with the shadow object +0xebd8; +304 .. +372 the binner's batches and grid from +0xf370 .. +0xf398; +31936 .. +31960 the atlas (+0xef80) and three other bindless indices, light entries (+0xe3a8), env map bits, volumes; built 0x7de0 bytes (ledger 192); CubemapFaceConstants.LightBlock"),
+    ("1801c5cf0", "BitSet_Count", BAKE, "set bits of the binner's environment map bit set (+0xe498); the light block's +31956 and the env map mask words (1801a9b70)"),
     ("18000f900", "Convar_lb_tile_pixels", BAKE, "registration, default 8 (data 1809239a8)"),
     ("18000f9b0", "Convar_lb_bin_slices", BAKE, "registration, default 8192 (data 1809239b8)"),
     ("180155117", "SkyObject_SetSkyWsToOs", BAKE, "inside the sky object's draw setup: attribute SkyWsToOs (0xfba7d427) = 18049b6d0(object +0x30) with the row (0, 0, 0, 1); SkyTint (0x99e6002a) = object +0xe8 (float3, w 0); CubemapFaceConstants.SkyWsToOs"),
@@ -3116,22 +3300,48 @@ RENDERSYSTEMVULKAN_1015 = [
 ]
 
 
+RENDERSYSTEMDX11_1029 = [
+    # Read from the disassembly (rendersystemdx11 20261029): TextureAverageColor's source (ledger 197).
+    ("1803f40e8", "CRenderDeviceDx11_vtable", I, "data: the device's vtable, stored by its constructor (18003a236); the base class's at 1803f1348 (18002b496) has the same +0x2d8. The object is 180495980, which 180433580 points at and QueryInterface hands out as RenderDevice003 (18005400e)"),
+    ("180030740", "CRenderDevice_GetTextureAverageColor", I, "vf 0x2d8 (both vtables): the 12 bytes at the start of 180074aa0's texture record"),
+    ("180074aa0", "RenderDevice_TextureRecord16", I, "a texture handle's 16-byte record: block +0x180 + (h >> 8) * 8, entry ((h & 0xff) + 0x1260) * 16; an unresolved handle reports an error and gives (1, 0, 1, 1) (not modelled)"),
+    ("180067bf0", "RenderDevice_CreateTexture", I, "writes the record from the creation descriptor's +0x3c (180068161 .. 180068189)"),
+    ("18006a7e5", "TextureDesc_FromVtexHeader", I, "a chunk: .vtex header +0x1a format through a table to desc +0xc, +0x1b mip count to +6, the header's 16 bytes at +4 (the reflectivity) to desc +0x3c, flags +2 to desc +0x10 bits, +0x14 / +0x16 width and height"),
+]
+
+RENDERSYSTEMVULKAN_1029 = [
+    # Read from the disassembly (rendersystemvulkan 20261029).
+    ("1800f7745", "TextureDesc_FromVtexHeader", I, "as rendersystemdx11 18006a7e5: the .vtex header's +4 reflectivity to desc +0x3c (1800f7849 .. 1800f784d)"),
+]
+
+MATERIALSYSTEM_1029 = [
+    # Read from the disassembly (materialsystem2 20261029).
+    ("180154cf0", "g_pRenderDevice", I, "data: RenderDevice003 (the connect table's entry at 1800f85d0); 18009bb70 calls its vf 0x2d8"),
+]
+
+
 MATERIALSYSTEM_1015 = [
     # Read by hand (decompile of materialsystem2 20261015): VfxEval's functions.
     ("18000bb80", "CMaterial2_GetIntAttribute", VIS, "vf 0x50: the key in chunks of 12 hashes at +0x180 (values 12 slots on), then the chunk list at +0x68, then the parent set at +0x60 (ledger 165)"),
+    ("18009c9c0", "VfxEval_Interpret", I, "the stack machine over a compiled expression; opcodes through 0x22 (table 18009e24c). 0x1D (parameter by murmur) looks the hash up in the context's table at +0x18 and its +0xc8 / +0xc0 chains, and fails the evaluation (18009e19c, false) when it is missing or the table is null; 0x20 (parameter by index) reads the context's short table +0x40, the records +0x48 with stride +0x58, a negative short failing; a record is four floats unless +0x1c bit 16 or +0x18 / +0x20 make it an expression of its own (ledger 201)"),
+    ("18009e320", "VfxEval_ReadsMaterialParameter", I, "true when the expression holds an 0x1D or 0x20"),
+    ("18009e3d0", "VfxEval_ResolveParameterIndices", I, "(bytes, length, variables, count, flag): each 0x1D whose murmur matches a variable's name (murmur2 seed 0x31415926, 0x218-byte descriptions) becomes 0x20 with the variable's index; an unknown hash returns false at once unless flag bit 0 (ledger 201)"),
+    ("1800ad440", "VfxProgram_ResolveAttributeExpressions", I, "every program attribute with an expression (records +0x208, 0x58 bytes, length +0x34, bytes +0x38) through 18009e3d0 against the program's variables (+0x138 / +0x130), flag 0 (ledger 201)"),
+    ("1800137d0", "MaterialParameters_AddDeclaredDefaults", I, "per program variable: source (+0xec) 0 or 7 and not in the material (180012ab0): its declared default (1800135f0) appended as a 0x40-byte value record when the type (+0xf4) is not 13..16 or 22..23 and the register type (+0xf8) is 1..3; the variable's short is that record's index, or 0xffff; source 6 only ORs +0x104 into the material's +0x6c (ledger 201)"),
+    ("18000e690", "CMaterial2_MergeProgramAttributes", I, "a render mode's program attributes into the material's store: expressions through VfxEval with a context of the short table (+0x40), records (+0x48, stride 0x40) and no hash table (+0x18 0); a failed evaluation stores 0; 'does not match value set in another mode' when two modes disagree (ledger 157, 201)"),
     ("1800fa000", "VfxEval_FunctionTable", I, "24-byte entries {name, argument count, flag, function}: SrgbGammaToLinear, TextureAverageColor, MatrixMultiply, MatrixColorCorrect2, MatrixColorTint2 and the rest"),
     ("18009b580", "VfxEval_SrgbGammaToLinear", I, "the top three components through 180082e60"),
     ("180082e60", "SrgbGammaToLinear", I, "clamp 0..1; x / 12.92 up to 0.04045, else powf((x + 0.055) / 1.055, 2.4)"),
     ("18009bf90", "VfxEval_MatrixMultiply", I, "two 4x4 off the stack, product through 180081100"),
-    ("18009c090", "VfxEval_MatrixColorCorrect2", I, "(contrast, saturation, brightness), average colour -> 180081260 (VfxEval.ColorCorrect)"),
-    ("18009c3c0", "VfxEval_MatrixColorTint2", I, "(tint, amount) -> 1800818d0 (white equals ColorCorrect(1, 1, 1) word for word; coloured not ported)"),
+    ("18009c090", "VfxEval_MatrixColorCorrect2", I, "(contrast, saturation, brightness), average colour -> 180081260 (Lighting/ColorMatrices.Correct2)"),
+    ("18009c3c0", "VfxEval_MatrixColorTint2", I, "(tint, amount) -> 1800818d0 (Lighting/ColorMatrices.Tint2; white equals ColorCorrect(1, 1, 1) word for word)"),
     ("180081260", "ColorMatrix_Correct", I, "((((((D^-1 R^T) diag(sat, sat, 1)) R) D) diag(bright)) (T(a) diag(contrast)) T(-a)); R = 1800828c0(normalised (0.2125, 0.7154, 0.0721), z)"),
     ("180081100", "Matrix4_Multiply", I, "row-major a x b, each element dpps: (a0 b0 + a1 b1) + (a2 b2 + a3 b3)"),
     ("180081020", "Matrix4_Set", I, "16 floats row by row"),
     ("180080f40", "Vector3_Normalize", I, "length sqrt((y y + z z) + x x); within 1e-17..1e17 times its reciprocal"),
     ("1800828c0", "Matrix4_RotationBetween", I, "unit f to unit t: axis cross(f, t) over its length (the sine), cos = (fz tz + ty fy) + fx tx; identity when the cross is 0"),
     ("1800818d0", "ColorMatrix_Tint", I, "D^-1 R^T (translate, diag(1 - s, 1 - s, 1 - pow(...) amount), translate back) R D; ported for white only"),
-    ("18009bb70", "VfxEval_TextureAverageColor", I, "the texture manager's average colour (vtable +0x2d8), w 1"),
+    ("18009bb70", "VfxEval_TextureAverageColor", I, "a texture argument (type byte 1): RenderDevice003 (180154cf0 in 1029) vf 0x2d8, the texture's .vtex header reflectivity xyz, w 1; any other argument 0 (ledger 197)"),
     ("180081260", "MatrixColorCorrect", I, "Haeberli-style: translate by -average, contrast, saturation about luminance (0.2125, 0.7154, 0.0721), brightness, back"),
     ("1800818d0", "MatrixColorTint", I, "tint about luminance with a powf amount term"),
 ]
@@ -3182,11 +3392,98 @@ SERVER_1015 = [
     ("1814b2585", "CNavMesh_GetGroundHeight_StartSolid", NAV, "the retry point: the trace's start when its start-solid flag (+0x2b) is set, else its end position; a start-solid trace has fraction 0, so both are the start"),
     ("1814c43b0", "CNavArea::GetZ", NAV, "fan triangle (previous, nearest 1814c1ff0, next corner); the one two corners on when the first is degenerate or the point lies outside"),
     ("1814c5a00", "CNavArea::ContainsXY", NAV, "bounds and each edge's outward half-plane grown by the tolerance"),
+    ("18146bed0", "VectorNormalize_Slow", NAV, "server's copy of rc 18125d000, instruction for instruction (1.0 at 181799eb0, FLT_MAX at 181a26b90); returns the length; VectorNormalizeSlow"),
     ("1814c1ff0", "CNavArea::NearestCorner", NAV, "XY, the first of equals"),
     ("1814c2ee0", "Polygon_ClosestPoint", NAV, "fan triangles (v0, v[i], v[i-1]) from the last, 1814762f0"),
     ("1810f5f80", "CNavAreaSearch_Init", NAV, "origin, start area, range (+0x264), spacing (+0x260), the visit lambda 181a145a0 (181108dc0 -> 1810f6dd0: areas in the origin's box)"),
     ("1810fb4e0", "CNavAreaSearch_Run", NAV, "the Dijkstra (1802cdb70 / 180324230 / 1802c7fe0), then rings of samples 1810fb740 / 1810f76b0 (hex lattice)"),
     ("1802c7fe0", "CNavAreaSearch_Expand", NAV, "cost via 1810e5330; areas 2000 or more from the origin closed, crossings beyond it skipped; push 1802e3c80"),
+]
+
+
+# resourcecompiler.dll 20261103: addresses the geometry agent's work cites (written to its own file so it
+# cannot overwrite RESOURCECOMPILER_1103's).
+# resourcecompiler.dll 20260923 (the ReVa program): the half-edge collapse the geometry agent ported (ledger 211).
+GEOMETRY_AGENT_0923 = [
+    ("181383600", "HalfEdge_CollapseEdgeWithAttributes", SUB, "vertex snapshot of (A, B) 1813a3d50, corner snapshots 1813a3f40 (face(e): prev(e), e; face(twin): twin, prev(twin)) at t, 181382170, then writes them to V and to each surviving face's corner at V (18138be80); SubdivisionBake.CollapseEdge"),
+    ("181382170", "HalfEdge_CollapseEdgeTopology", SUB, "link test over A's fan (common neighbours must be the e/twin triangles' edges), new vertex 18137ad80, 1813ab3b0 A then B, unlink e/twin, A and B freed, e and twin freed, 1813a71a0 on each former triangle (e side first), 1813adf00 on both faces; SubdivisionBake.Collapse"),
+    ("181384060", "HalfEdge_CollapseFaceCore", SUB, "the face's vertices from its first; from vertex 0, collapse the edge to each next vertex (lower handle of the pair) and continue from the result; SubdivisionBake.CollapseInner"),
+    ("1813a71a0", "HalfEdge_DissolveTwoGon", SUB, "p.next q, q.next p, one face, distinct twins: face cleared (181389630) and freed (1813aca90), new pair 18137a900 takes the twins' places, p, p', q, q' freed; SubdivisionBake.DissolveTwoGon"),
+    ("1813ab3b0", "HalfEdge_ReplaceVertex", SUB, "every half-edge into the old vertex points at the new one; the new one's out is the last fan half-edge visited"),
+    ("18137ad80", "HalfEdge_AddVertex", SUB, "a new vertex handle (FIFO), out null"),
+    ("1813a3d50", "HalfEdge_SnapshotVertexBlend", SUB, "vertex attributes (b - a) t + a"),
+    ("1813a3f40", "HalfEdge_SnapshotCornerBlend", SUB, "face-vertex attributes of two half-edges, (b - a) t + a per stream type (1813a4470 .. 1813a53e0)"),
+    ("1813aca90", "HalfEdge_RemoveFace", SUB, "loop listed; each half-edge loses the face, an edge whose twin has no face goes through 1813ad160 on the twin; face freed (1813995a0)"),
+    ("1813ad160", "HalfEdge_RemoveEdge", SUB, "faces first if any; then 1813892f0 on h and twin (leave the origin's fan, free an orphan vertex with removeOrphans) and 1813997a0 (free h then twin)"),
+    ("1813892f0", "HalfEdge_UnlinkFromOrigin", SUB, "twin.next == h: origin out null (and freed); else the half-edge before h leads to twin.next, origin out twin.next, twin.next h"),
+    ("1813997a0", "HalfEdge_FreeEdgePair", SUB, "frees h, then its twin (1813ac860)"),
+    ("180d54520", "HalfEdge_ListFacesDense", SUB, "the face handles in dense order; HammerMesh_BakeAllSubdivision (1810c6520) bakes in this order"),
+]
+
+GEOMETRY_AGENT_1103 = [
+    ("1810e11f0", "ConvertMeshForBuilder_KeepsTexcoordsLoop", G, "per mesh material (1810d6020): vf 0x48 HasTexcoordTransform 0x2661694a == 1 -> keep (je 1810e126c); else 0x7c928c7c (default 1) == 0 -> keep; one DMX for every builder, the world renderer's too (ledger 210, WorldNodeBuild.WorldEntries)"),
+]
+
+# The resource compiler line (main, branch resources/rc-types): texture, material, sound, vector
+# graphic and RED2 rules read from the Ghidra project's resourcecompiler 20260923 (ledgers 230-240).
+TEX = "s2c:resources/texture"
+RES = "s2c:resources/containers"
+RESOURCES_AGENT_0923 = [
+    ("180133da0", "CResourceCompilerTexture_CompileResourceInternal", TEX, "per output channel group: inputs, GenerateMips (180142990) per frame, the first group sets the output size and level count (leaves its level loop at a group mip count of 1), a larger later group upsizes the output (18013ce60); averages each group's last mip (180c3bb80) and adds avg[src] to the destination's reflectivity while copying level 0 (181277690); DXT5 -> DXT1 when plane 3 of every kept mip is 1 (ledgers 230, 240)"),
+    ("180142990", "CTextureFrame_GenerateMips", TEX, "dispatch by name: ArtistDefined(/OrAlphaWeighted) via the image's artist string (empty -> Box / AlphaWeighted), None 180144200, Box / Box<n> 1801443f0, BoxInverse 1801447c0, MultiplyBox / MultiplyNoMip 180144ce0, MipNormal (dep Mip Normals, then Box), HemiOctNormal 18014c050, HemiOctIsoRoughness_RG_B / AnisoRoughness_RG (180148350 then a shuffle), HemiOctAnisoRoughness (180148350 raw), AnisoNormal 18014c660, AlphaWeighted 18014e680, PreserveCoverage 18014fa90, GGXCubeMapBlur 180150130, RGBM 180151310, Nice 180151cf0 (ledger 231)"),
+    ("180144200", "CTextureFrame_GenerateMips_None", TEX, "dep Mip None 1; level 0 copied (180c3c3c0) as the only level (ledger 231)"),
+    ("1801443f0", "CTextureFrame_GenerateMips_Box", TEX, "dep Mip Box 1; levels min(mip count 180c49440, param_7), each QuarterSize (180c43450) of the one before; non-power-of-two only with AllowNP2Textures"),
+    ("1801447c0", "CTextureFrame_GenerateMips_BoxInverse", TEX, "dep Mip Box Inverse 1; power of two only; level 0 = v * -1 + 1 per masked channel (+0x8a0), then QuarterSize per level (ledger 231)"),
+    ("18014fa90", "CTextureFrame_GenerateMips_PreserveCoverage", TEX, "dep Mip PreserveCoverage 5; power of two only; target = coverage(input, 1); per level QuarterSize to a scratch, copy, unless target <= 0 or 1x1: bisection on [0, 8] to 0.01 (mid (hi + lo) * 0.5), scale planes 0..2, clamp [0, 1] (180142710), restore uniform pixels (18014f840) (ledger 231)"),
+    ("18014f380", "TextureFrame_AlphaTestCoverage", TEX, "plane 0 scaled and clamped (maxss 0, minss 1) at each 2x2 cell's corners, 16 samples from the weight table (stack, from 0x182a9ecd0 .. 0x182a9ee10), counted at v >= 0.5; count / (float)(((h-1)(w-1)) << 4)"),
+    ("180142710", "TextureFrame_ClampPlane", TEX, "maxps(v, lo) then minps(v, hi) over one plane"),
+    ("18014f840", "PreserveCoverage_KeepUniform", TEX, "in place, row by row: a pixel whose clamped 3x3 neighbourhood of plane 0 is all >= 0.5 or all < 0.5 takes planes 0..2 of the unscaled level back"),
+    ("180c49440", "ImageFormat_MipCount", TEX, "levels to 1x1, each side halved and floored at 1"),
+    ("180149d20", "HemiOctAnisoRoughness_Lambda", TEX, "x = 2 m10 - 1, y = 2 m11 - 1, z = sqrt(clamp(1 - (y y + x x))), inv = 1 / ((|y| + |x|) + z); plane 3 (x' + y') / 2 + 1/2, plane 1 (x' - y') / 2 + 1/2, plane 0 ch6 + ch4, plane 2 ch7 + ch5 (MinRoughness clamps unset) (ledger 231)"),
+    ("18013f300", "CTextureFrame_ApplyImageProcessor", TEX, "by name (V_stricmp_fast): Mod2XCenter 18013fee0, NormalizeNormals 180140120, FillToPowerOfTwo 180140550, FillToMultipleOfFour 180140ae0, ScaleToPowerOfTwo (inline), HeightToNormal 180141080, Inverse 180141590, ConvertToYCoCg 180141720, DilateColorInTransparentPixels 180141be0, EncodeRGBM 180142040, UniformRandom<w>x<h>x<d> 180140320 (ledger 232)"),
+    ("18013fee0", "CTextureFrame_ImageProcessor_Mod2X", TEX, "dep Image Mod2X 1; per masked channel the row-order sum, then each pixel (0.5 - sum / (w h)) + v (ledger 232)"),
+    ("18016dd80", "Red2_FinalizeAndSort", RES, "MSVC std::sort of each RED2 list (18017a780, 18017a9c0, 18017abe0, 18017ae90, 18017b0a0, 18017a5a0) and of the three searchable tables' members (181ebae60), then Red2_WriteBlock 181c24a70; every comparator V_stricmp_fast (ledger 235)"),
+    ("181ebae60", "KV3_SortTableMembers", RES, "a table (type 9) only: 181ea5d30 sorts its member index by std::sort 181ea6ae0 with V_stricmp_fast on the names (ledger 235)"),
+    ("18015e2d0", "CResourceCompilerVectorGraphic_Compile", RES, "dep Vector Graphic Version 2; the source file's bytes into a CUtlBuffer, then the Panorama writer 1800f6960 (ledger 236)"),
+    ("180c3ea20", "HelperLoadFbmByFileExtension", TEX, "by extension: exr, psd, tga (180c70980 then RGBA8888 into the bitmap), tif, png, jpg, webp"),
+    ("180c71290", "TGA_Decode", TEX, "types 1/3 (palette or grey), 2 (24 bits 180c70c20, 32 bits 180c70da0), 9 (palette refused), 10, 11; rows bottom-up unless descriptor & 0x20; no other descriptor bit read (ledger 238)"),
+    ("180c70da0", "TGA_Row32", TEX, "BGRA to RGBA per pixel, the fourth byte as alpha as it is (ledger 238)"),
+    ("18010c660", "Material_RepresentativeTextureSize", RES, "over the attributes: at the one named RepresentativeTexture, its bound texture's size as RepresentativeTextureWidth / Height int attributes (ledger 239)"),
+    ("18010f480", "CResourceCompilerMaterial::CompileResourceInternal", RES, "compilematerial.cpp: shader removed from the KV3 root; each member: int -> int param (18010e280), double -> float param (18010e430), ''/'['-string -> vector param (18010e550), else by name attributes/DecalAttributes/SystemAttributes (ints, + float lanes outside SystemAttributes, doubles, vectors, strings), ToolAttributes, dynamicparams; all else skipped (legacy_import); lists sorted by 1801156e0; searchable: nonzero feature combos (181fac660 decode, ctx vf18), shader, then int / float / string attributes; PhysicsSurfaceProperties -> surface_prop subasset ref (ctx vf3) (ledger 264)"),
+    ("18010e280", "Material_TryIntParam", RES, "KV3 type 3 only: a param stored as (float)(int)value (ledger 264)"),
+    ("18010e430", "Material_TryFloatParam", RES, "KV3 type 5 only: four lanes the float value (ledger 264)"),
+    ("18010e550", "Material_TryVectorParam", RES, "type 6 string empty or starting '[' (V_sscanf '[%f %f %f %f]' into zeros) or type 8 array (ledger 264)"),
+    ("18010f200", "Material_ValidateBlocks", RES, "schema check (181f15c80) of the root, dynamicparams and attributes (ledger 264)"),
+    ("1801156e0", "std_sort_MaterialParams", RES, "MSVC std::sort of a material param / attribute list; insertion step 180115f60 compares names with V_stricmp_fast (ledger 264)"),
+    ("18010edf0", "LoadVfxAndFeatureCombo", RES, "opens the shader (181f90140), builds the feature combo record (181fa2f30) (ledger 264)"),
+    ("181fa2f30", "Vfx_BuildFeatureComboRecord", RES, "per program: fixed combos from the feature combo (181fa9b30) and Tool modes (181faa3b0), walks the free static combos (181fa99b0 / 181faa690 / 181faa4b0) checking rules; the walk is not ported (ledger 264)"),
+    ("181faa3b0", "Vfx_PinToolModeCombos", RES, "each mode whose name contains 'Tool' (strstr 18200efc8, string 18274ef4c): its static combo settings are pinned, never walked (ledger 264)"),
+    ("181fac660", "Vfx_DecodeFeatureCombo", RES, "a feature combo id to its per-combo values (ledger 264)"),
+    ("18010aa00", "CResourceCompilerMaterial::ProcessTexture", RES, "child name: the first input, a materials/default/ pick replaced by the next non-default one, a '[' constant by the next image; '%s_%x.%s'; a constant left names it <material>_<variable> (ledger 264)"),
+    ("18012e470", "CResourceCompilerSurfaceProperties_Compile", RES, "vf11: SurfacePropertiesList; 'default' must exist; per entry a new table: base chain merged (18012eb80), the entry merged on top (18012e360, nothing skipped), m_nameHash = token of surfacePropertyName (uint32, 181eb98c0 subtype 0x17) + surface_prop definition (ctx vf2), duplicate names refused, m_baseNameHash; the table replaces the entry; audiosounds values -> soundevent references (ctx vf3) (ledger 260)"),
+    ("18012eb80", "SurfaceProperties_MergeBase", RES, "first list entry named base (V_stricmp_fast), visited set (this+8) refuses a loop, recurses into its own base, then copies its members but 'hidden' (hash 0x244342da) (ledger 260)"),
+    ("18012e360", "SurfaceProperties_MergeTable", RES, "member by member: a table merged (FindOrAdd 181eac8c0, to-table 181eac2d0), anything else set (181eb93b0 find-or-add + copy 181eaaec0); param 3 skips 'hidden' (ledger 260)"),
+    ("18015aa40", "CResourceCompilerVCompMat_Compile", RES, "vf11: refuses no m_Points, then 180159960 and 18015a270 (ledger 261)"),
+    ("180159960", "VCompMat_StripAndCheck", RES, "root m_KVthumbnail removed (181eb7070); per point the 7 preview members (181eb70f0); per procedure: includes and specific container materials must exist in CONTENT, disabled (181eae3f0 default true) input containers and property mutators removed, back to front (ledger 261)"),
+    ("18015a270", "VCompMat_CompileTextureInputs", RES, "per enabled container's loose variable with m_strTextureContentAssetPath: the vtex template with $TEXTURE_REPLACEMENT_TOKEN, child texture '%s_%s_%x.vtex', m_strTextureRuntimeResourcePath; not ported (ledger 261)"),
+    ("1800f9db0", "CResourceCompilerKV3_CompileResource", RES, "LoadKV3, the type's vf11, then 1800f8950, 1800f8b70, 1800f8d90, save DATA, FLCI when vf12 (ledger 262)"),
+    ("1800f8950", "KV3Compile_FixupResourceNames", RES, "every resource / resource_name string through 181c1e960 (FixupResourceName_NoExtension), flag kept; a refused name is 'Bad resource reference' (ledger 262)"),
+    ("1800f8b70", "KV3Compile_RegisterReferences", RES, "flag 4 soundevent -> AddSubassetReference(soundevent, 1); flag 1 resource -> ctx vf0 (strong set +0xd8); flag 2 resource_name -> ctx vf1 (weak set +0xf8) (ledger 262)"),
+    ("1800f8d90", "KV3Compile_PanoramaImageReferences", RES, "flag 3 panorama strings naming images become references; not ported (ledger 262)"),
+    ("180166b40", "CResourceCompilerContext_AddStrongReference", RES, "vf0: hash set keyed by the resource id (ledger 262)"),
+    ("180166c10", "CResourceCompilerContext_AddWeakReference", RES, "vf1: hash set keyed by the resource id; the edit info finalize (18016c650) copies it to m_WeakReferenceList and sorts it with std_sort_ResourceRefs 18017a5a0 (ledger 262)"),
+    ("180175570", "CResourceCompilerContext_AddSubassetDefinition", RES, "vf2: type and name keyed by A-Z folded token; a name listed once, first spelling (ledger 260)"),
+]
+
+# resourcecompiler 20261103 (the installed 1.41.9.5 build; capstone on tools/re/binaries).
+RESOURCES_AGENT_1103 = [
+    ("182fecf08", "ImageFormat_NameTable", TEX, "24-byte entries from RGBA8888 (0): 20 DXT1, 23 DXT5, 24 ATI1N, 25 ATI2N, 26 BC6H, 27 BC7, 15 RGBA16161616F, 67 R8_UNORM (new after IMAGE_FORMAT_NV12); a shader's m_outputTextureFormat indexes it (ledger 239)"),
+    ("18304f840", "Schema_CVoiceContainerBase_Fields", RES, "m_bRegisteredVMix (+0x10), m_nResourceName (+0x14), m_vSound (+0x30), m_pEnvelopeAnalyzer (+0x70); the first two since the 20261023 build (ledger 237)"),
+    ("18010bc5c", "MaterialChild_LogicalCrcSpew_Skip1", TEX, "cmovz r9, rsi (file offset 0x10b05c, 4 bytes); NOP it and the je at 18010bd48 (file offset 0x10b148, 6 bytes) and the child-naming function logs its logical-CRC text (tools/re/texture/rc_spew.py; 20261009's file offsets 0x10afbc / 0x10b0a8, moved 0xa0)"),
+    ("18012e640", "CResourceCompilerSurfaceProperties_Compile", RES, "0923 18012e470, the same 452 instructions with relocations masked (ledger 260)"),
+    ("18012ed50", "SurfaceProperties_MergeBase", RES, "0923 18012eb80, the same 537 instructions (ledger 260)"),
+    ("18012e530", "SurfaceProperties_MergeTable", RES, "0923 18012e360, the same 453 instructions (ledger 260)"),
+    ("18015acf0", "CResourceCompilerVCompMat_Compile", RES, "vf11 of the vtable at 1827847b8 (0923 18015aa40) (ledger 261)"),
 ]
 
 
@@ -3197,6 +3494,9 @@ def write(name, rows):
 
 # client.dll 20261015 (tools/re/binaries/client_20261015.dll): the game half of buildcubemaps (docs/CUBEMAPS.md).
 CLIENT_1015 = [
+    ("1811fef80", "CreatePerViewConstantBufferCsgo", BAKE, "renderingpipeline_csgo.cpp: words 0 .. 12 of PerViewConstantBufferCsgo_t from convars, the pass flags (param 10 >> 1, >> 3, >> 4, >> 5) and the fog fills: word 1 = 181218920's result, word 2 = 181217e20's (the cube fog); ledger 192; CubemapFaceConstants.Csgo"),
+    ("181217e20", "CubeFog_Fill", BAKE, "with the convar on and the view attribute 0x765c7d3c: the cube fog terms from attribute 0x74a6158f (and the height vector), returns 1; else +0x210 = +inf, +0x214 = -inf, +0x218 = (1, 0) and returns 0 (ledger 192)"),
+    ("181218920", "GradientFog_Fill", BAKE, "the gradient fog terms for CreatePerViewConstantBufferCsgo's word 1 (not read)"),
     ("180282390", "C_EnvSky_UpdateSceneObject", BAKE, "copies m_nFogType (+0x10b8) to the sky object's +0xf4 and the fog min / max start / end (+0x10bc..+0x10c8) to +0xf8..+0x104 (ledger 163)"),
     ("181747070", "Matrix4_Invert", BAKE, "4 x 4 inverse by Gauss-Jordan on [M | I]: per column the permuted row with the largest magnitude above 1e-6 (strictly), scaled by 1 / pivot, others r = (-r_k) pivot + r; the view's +0x2c8 from +0x288; AggregateCulling.Invert4"),
     ("1817465f0", "Frustum_PlanesFromMatrix", BAKE, "six planes from a row-major world-to-projection: r3 - r0, r3 + r0, r3 - r1, r3 + r1, r3 + r2 (r2 with the flag), r3 - r2 (the near plane when degenerate); (n, -w) normalised by 1 / sqrt((x x + y y) + z z) when >= 1e-20; AggregateCulling.ExtractPlanes"),
@@ -3205,6 +3505,7 @@ CLIENT_1015 = [
     ("181201670", "GamePipeline_DepthPrepassLayers", BAKE, "the game view's prepass layers: Large +0x6d0 = r_csgo_depth_prepass_cull_threshold (1825f6150, 60) / 100, Small = -that; AggregateCulling.PrepassSplit"),
     ("1811d5ae0", "Pipeline_DepthPrepassLayers", BAKE, "creates Depth Prepass Large / Small / AlphaTested with +0x6d0 = threshold / 100 and its negation (the 3D skybox passes r_csgo_depth_prepass_skybox_small_cull_threshold)"),
     ("18020e130", "BuildCubemaps_FaceToStrip", BAKE, "a face's RGBA16F readback to a float bitmap (1813db210), QuarterSize (1813ddd00) down to EnvironmentMapFaceSize, flipped (1813dc290), copied into the 6x1 strip at x = face * size (181756620); Cubemaps/CubemapFaceExr.cs"),
+    ("181ad10d0", "BuildCubemaps_FaceTable", BAKE, "data: six 0x28-byte face records (pitch, yaw, roll, a pointer, FOV 90, then three ints) for +X, -X, +Y, -Y, +Z, -Z; Cubemaps/CubemapFaceViews.cs (181ad3c80 in 20261023, 181ad5c70 in 20261029, bytes equal)"),
     ("1802091d0", "BuildCubemaps_WriteExr", BAKE, "the strip as an uncompressed half EXR through tinyexr's fast writer (1813dede0), channels B, G, R; Cubemaps/CubemapFaceExr.cs"),
     ("1800538d8", "Convar_buildcubemaps_renderdoc_capture", BAKE, "registration of buildcubemaps_renderdoc_capture (\"Capture a specific cubemap with RenderDoc during buildcubemaps.\") with flags 2, development-only: a release build hides it from the console and the command line; its data pointer is the global 18237eab0"),
     ("18237eab0", "g_buildcubemaps_renderdoc_capture", BAKE, "the convar's data pointer (name at +0, int value at +0x58); BuildCubemaps compares the value with the cube counter (from 0) and calls the render device's StartCapture (vfunc 0x638) and EndCapture (0x640) around that cube; read at 18020e5cc and 18020f5b2. cubehost --renderdoc-capture writes it in its own process"),
@@ -3232,6 +3533,29 @@ SCENESYSTEM_CASCADES = [
     ("180047530", "AggregateDesc_OnBeginRenderingFrame", BAKE, "per aggregate: fragment draw slots +0x34/+0x38 to -1, +0x210/+0x214 from +0x1fc/+0x200, the transform block +500 to -1"),
     ("18003c2a0", "AggregateDesc_UploadDraws", BAKE, "vfunc 0x50: uploads the frame's indirect commands (desc +0x68, count +0x60, 20 bytes each) to the buffer at +0x80"),
     ("180498520", "Frustum_PlanesFromMatrix", BAKE, "scenesystem's copy of client 1817465f0; the cascade fit calls it with the zero-to-one flag"),
+    ("180079700", "BaseObject_WriteInstanceRecords", BAKE, "the base scene object draw's g_instanceBuffer records (0x20 each), all eight words: w0 = element +4, w1 / w2 / w6 kept from 18007a540's loop, w3 = w4 = -1, w5 = (u16 element +0 << 20) | (u16 element +2 below 0x8000, else 0), w7 = element +8; the 12-byte elements filled at 18007ad74 / 18007af6d from the draw primitive (+0x64, +0x5c, +0x50, +0x54); found by a cubehost watchpoint (base_records.js), CUBEMAPS.md A.4"),
+    ("1800ed2d0", "InstanceBuffer_Allocate", BAKE, "(pool, count, out): an atomic counter at +0x2010 hands out count 0x20-byte records (capacity +0x2a54), stores the first's address in *out and returns its index, or -1 and NULL when full"),
+    ("18019fe30", "LightBinnerGPU_GatherBarnLight", BAKE, "per barn light and view (from CBarnLightObjectDescGPU vfunc 0x30, 1801c1e50, on job threads): skipped when +0x1a8 / +0x1ac are 0, the +0x78 flags fail the view's layer masks (+0x490 all, +0x498 none), byte table 180921fc8[+0x9b] & 8, or its world (+0xb8) is not in the view's list; distance fades from +0x260 / +0x264 and +0x268 / +0x26c against view +0x1c; the transform (+0x30) and oriented box (+0xf0) into a 0x640-byte CPU light entry appended to one of four hash-bucketed lists (1801c9a40); found by a cubehost watchpoint (barn_records.js), CUBEMAPS.md A.6"),
+    ("1800cdae0", "BarnLightDesc_Destroy", BAKE, "desc vfunc 0x28: 1800d06f0 then the object's deleting destructor (vfunc 0, flag 1)"),
+    ("1801a9410", "LightBinnerGPU_MergeBarnLights", BAKE, "CLightBinnerGPU vfunc 0x8 (vtable 1805fe688), per view: the four bucket lists into one (count +0xe3a8, 0x640-byte entries +0xe3b0), sorted (1801cc930), trimmed to min(convar 180923b68 when >= 0, 315); then 1801a3980 (shadows) and 1801a7fd0; CUBEMAPS.md A.6"),
+    ("1801cc930", "LightEntries_Sort", BAKE, "MSVC std::sort of the 0x640-byte entries (insertion below 33, heap fallback), comparator 1801a9e70 with the view's camera (+0x10) and direction (+0x194 .. +0x19c); ledger 193"),
+    ("1801a9e70", "LightEntry_Less", BAKE, "a before b: +0x1bc (the screen size) descending, then ((dy dy + dx dx) + dz dz) from the camera to +0x150 / +0x160 / +0x170 ascending, then colour luminance (+0xcc .. +0xd4, 0.2126 / 0.7152 / 0.0722) descending, then the view direction against +0x144 / +0x154 / +0x164 ascending, then 1804a2230 on the descriptions; ledger 193"),
+    ("1801aa3f0", "LightEntry_BinnerFootprints", BAKE, "the light's binner item: the 8 clip-box corners (1805fe3a0) through the description's +0x40 with a divide, 6 planes (corner triples 1805fe340, VectorNormalize), 1801abf30 into +0x370; with the illumination box (+0x214 bit 8 and a convar) a second footprint of the box (+0x340 quaternion, +0x350 position, +0x35c half extents) into +0x474; false (the light dropped) when either is rejected; ledger 193"),
+    ("1801a1030", "LightEntry_ShadowSizeRequest", BAKE, "the shadow map size (+0x1d0, capped by binner +0xef98) smoothed over time per light object (+0xe0 block, the binner clock +0xef48): runtime state; ledger 193"),
+    ("1801a2720", "LightEntry_ShadowTexel", BAKE, "+0x1dc: 1 / size without the convar, else sqrt(max(1, sqrt(luminaire area + 0.01))) / 512 corrected by the frustum's corner directions, ceil(size x) clamped to 6 into +0x1cc; ledger 193"),
+    ("1800ce950", "BarnLightDesc_Bounds", BAKE, "desc vfunc 0x10: 1804a2480's world box of the light, clipped by the illumination box (18049e080 on object +0x220) when +0x251 is set (the clip's empty result keeps the box's own), then CSceneSystem vf 0xe0 (1800d5410); ledger 193"),
+    ("1804a2480", "LightShape_WorldBounds", BAKE, "the light's world box: (transform x description +0x40) on the 8 clip-box corners with a divide each, min and max"),
+    ("1800d5410", "SceneObject_SetBoundsSnapped", BAKE, "CSceneSystem vf 0xe0: mins rounded by +-2^23 then down 1 where above, maxs up; stored at object +0x20's block (min +0, max +0x10; +0x1c the cull radius, written elsewhere) when changed"),
+    ("1801b2450", "LightBinnerGPU_UploadBarnLights", BAKE, "one 0x1e0-byte g_BarnLights record per merged entry through the binner's vfunc 0x70 (1801b14a0 -> 1801b14b0), then count x 0x1e0 bytes to the buffer at +0xe558 (render context vfunc 0x380); called from vfunc 0x28 (1801b4530)"),
+    ("1801b14b0", "LightBinnerGPU_WriteBarnLightRecord", BAKE, "(binner, 0x640-byte entry, 0x1e0-byte record): the g_BarnLights record; transforms at +0 .. +0x7f, colour x intensity +0xa0 .. +0xa8, flags +0x108 (entry +0x1fc << 16 | type bits), falloff block +0x140 .. +0x18c (1 / +0x14c at +0x18c); Cubemaps/BarnLightRecords.Record (types 0 to 2, bit for bit on 64 captured pairs)"),
+    ("1804a65f0", "LightDesc_ToCameraSpace", BAKE, "(desc, out, camera-relative 3 x 4): out = a copy of desc (18008beb0) with +0x00 = desc 4 x 4 x rigid inverse (18049b3b0, 180499080), +0x40 = transform x desc +0x40, +0x80 (1804a32f0), +0x90 a point (translation dropped when +0x9c is 0), the shape points / vectors by type (+0xec), +0xd0 the rotation; BarnLightRecords.Block"),
+    ("18049b3b0", "Matrix3x4_InvertRigid", BAKE, "rotation transposed, translation -((t2 r2 + t1 r1) + t0 r0); BarnLightRecords.InvertRigid"),
+    ("180499080", "Matrix4_Mul", BAKE, "a b, each element ((a0 b0 + a1 b1) + a2 b2) + a3 b3; BarnLightRecords.Mul4"),
+    ("180499f90", "Matrix3x4_Concat", BAKE, "a b, row ((a2 b2 + a1 b1) + a0 b0) + (0, 0, 0, a3); BarnLightRecords.Concat"),
+    ("18049c360", "Matrix3x4_RotateVector", BAKE, "z r2 + (y r1 + x r0) per row; BarnLightRecords.Rotate"),
+    ("18049d420", "Matrix3x4_ToQuaternion", BAKE, "trace branch (trace >= 0) else the largest diagonal; s = sqrt(... + 1), f = 0.5 / s; BarnLightRecords.Quaternion"),
+    ("1804a6570", "Light_Falloff", BAKE, "(point, k): (sqrt(w) + k)^2 / w as 1 / (w / (s s)), 1 unless w > 0; k = 100 from 1801b14b0; BarnLightRecords.Falloff"),
+    ("1801c9a40", "LightEntry_CopyConstruct", BAKE, "(dest, src) copy of a 0x640-byte CPU light entry; 17 call sites (the gather 1801a0f1c, the merge 1801a95cf, the sort 1801cc930)"),
     ("1801a5c28", "CSM_SetupForView", BAKE, "calls 180496ef0 with the frustum at view +0x10 (or vfunc 0x240's +0x10 under view flag bit 0xc), copied with +0x18 replaced by a view attribute when non-zero"),
 ]
 
@@ -3267,6 +3591,21 @@ CLIENT_1023 = [
     ("1823806d8", "g_buildcubemaps_renderdoc_capture", BAKE, "the convar's data pointer (name at +0, int value at +0x58), 18237eab0 in the 10-15 and 10-21 builds; cubehost --renderdoc-capture picks it by client.dll's PE time stamp 6ada7340"),
 ]
 
+# scenesystem 20261023 (tools/re/binaries/scenesystem_20261023.dll): data the cubemap face render reads, at
+# the addresses of the installed 1.41.9.2 build (the 10-15 build had them elsewhere); 20261029 keeps them in place.
+SCENESYSTEM_1023 = [
+    ("1805ec900", "SkyCube_Vertices", BAKE, "data: the sky's unit cube, eight corners at +-0.5; CubemapFaceMeshes.SkyCubeVertices"),
+    ("1805ec960", "SkyCube_Triangles", BAKE, "data: its twelve triangles as one-based ints (1 3 2, 1 4 3, ...); CubemapFaceMeshes.SkyCubeIndices"),
+    ("1805fe430", "LightBinner_SilhouetteTable", BAKE, "data (20261023; 1805fe400 in 20261015): per eye-outside plane mask, a count and up to 8 box corner indices of the outline"),
+    ("1806006e0", "Shadow3x3PCF_KernelWeights", BAKE, "data: g_vShadow3x3PCFTermC0..C3's kernel weights; CubemapFaceConstants"),
+]
+
+# client.dll 20261029, 1.41.9.3 (installed; tools/re/binaries/client_20261029.dll).
+CLIENT_1029 = [
+    ("1800538d8", "Convar_buildcubemaps_renderdoc_capture", BAKE, "registration as in 10-15 (flags 2, development-only); the handle it passes at 1800538ed is 182382850, so the data pointer is the global 182382858"),
+    ("182382858", "g_buildcubemaps_renderdoc_capture", BAKE, "the convar's data pointer (name at +0, int value at +0x58), 1823806d8 in 10-23; cubehost --renderdoc-capture picks it by client.dll's PE time stamp 6ae217a2"),
+]
+
 # server.dll 20261021 (installed; tools/re/binaries/server_20261021.dll).
 SERVER_1021 = [
     ("18017c8d0", "CLightComponent_Construct", BAKE, "every cascade field zeroed (+0xe4 .. +0xf8 through the network-var initialisers 18017c390 .. 18017c3e0): with csgo.fgd's remove_key the light gives no cascade distances"),
@@ -3283,6 +3622,28 @@ RESOURCECOMPILER_1015 = [
 ]
 
 # resourcecompiler.dll as installed since the 10-23 update, 1.41.9.2 (tools/re/binaries/resourcecompiler_20261023.dll).
+RESOURCECOMPILER_1029 = [
+    # Read from the disassembly (resourcecompiler 20261029) beside the Ghidra project's resourcecompiler.dll decompile
+    # (18013b060, 18013af00 there): ledger 198.
+    ("180100aa0", "CleanupBakedDataIfNeeded", SA, "(probe type 0 reverb / 1 pathing / 2 custom data, custom data type, context): the rebake option from steamaudio vf 0x138 / 0x140 / 0x148; Manual (1) logged as deprecated and taken as Cleanup; Cleanup drops the baked file from the outputs (context vf 0x1a0 with 180107ca0) and returns true (no bake); Auto (2) returns false. Inlined in the four other builders that hold its lambda"),
+    ("180107ca0", "CleanupBakedDataIfNeeded_lambda", SA, "the predicate: an output path with its slashes made '\\', strstr for the baked file's name; true when it is not that file"),
+]
+
+# resourcecompiler.dll as installed since the 11-03 update, 1.41.9.5 (tools/re/binaries/resourcecompiler_20261103.dll).
+RESOURCECOMPILER_1103 = [
+    # Read from the disassembly (resourcecompiler 20261103; the Ghidra project's build has the code elsewhere): ledger 201.
+    ("1802ed210", "CResourceCompilerMesh_WriteVertexBuffer", WN, "count +4, stride +8, layout +0x18; unless the mesh's vf 0x28, gameinfo ResourceCompiler/MeshCompiler/EncodeVertexBuffer (default 0) with vertices: meshopt_encodeVertexVersion(EncodeVertexBufferVersion, default 0), the bound, encodeVertexBufferLevel at EncodeVertexBufferLevel (default 3), version -1; the encoding is kept (+0xc m_bMeshoptCompressed 1) only when smaller than count x stride, then with its byte argument Zstd'd and kept (+0xf 1) when that is smaller; else the raw buffer; an MVTX block, its index at +0"),
+    ("1802ed5a0", "CResourceCompilerMesh_PackVertexBuffer", WN, "CMesh::CreatePackedVB (181366df0) into count x stride bytes ('Unexpected packed VB size' when the sizes differ), then 1802ed210"),
+    ("1802ed800", "CResourceCompilerMesh_WriteIndexBuffer", WN, "element size 4 once any index passes 0xffff, else 2; with gameinfo ResourceCompiler/MeshCompiler/EncodeIndexBuffer (default 0): a triangle list (count % 3 == 0, its byte argument 0) through encodeIndexBuffer, anything else encodeIndexSequence (+0xd m_bMeshoptIndexSequence 1); the encoding kept (+0xc 1) only when smaller than count x element size, then the same Zstd step (+0xf); else the raw indices (16-bit packed); an MIDX block"),
+    ("1812bc1c0", "meshopt_encodeVertexBufferBound", WN, ""),
+    ("1812bc230", "meshopt_encodeVertexBufferLevel", WN, "header 0xa0 | version"),
+    ("1812bc700", "meshopt_encodeVertexVersion", WN, ""),
+    ("1812bc710", "meshopt_encodeIndexBuffer", WN, "header 0xe0 | version"),
+    ("1812bcd80", "meshopt_encodeIndexBufferBound", WN, ""),
+    ("1812bcde0", "meshopt_encodeIndexSequence", WN, ""),
+    ("1812bcee0", "meshopt_encodeIndexSequenceBound", WN, ""),
+]
+
 RESOURCECOMPILER_1023 = [
     ("18015adb0", "CompileVData_SpecialDependencyFingerprint", CT, "\"VData Compiler Version\" 2 (1 before 10-23), \"VData ModTools Stripping Version\" 18015bc50 over the strip rules the game's ModTools (183b64970, vfn 0x80) returns ({0, 0} without one), \"KV3 Compiler Version\" 2; Source2ContainerAuthor.SpecByExtension"),
     ("18015ae70", "CompileVData_ModToolsStrippingVersion", CT, "2 for the named identity, else 1: a dependency's own version check"),
@@ -3291,7 +3652,7 @@ RESOURCECOMPILER_1023 = [
 
 # csgo's modtools.dll 20261023 (tools/re/binaries/modtools_20261023.dll).
 MODTOOLS_1023 = [
-    ("18002e190", "CModTools_VDataStripRules", CT, "Source2ModTools001 (object 180ef5be0) vfn 0x80: a thread-safe static list of one rule, {\"scripts/weapons.vdata\", 1, \"weapon_m14\"} (built at 18002e1ef); its fingerprint is 2278732723"),
+    ("18002e190", "CModTools_VDataStripRules", CT, "Source2ModTools001 (object 180ef5be0) vfn 0x80: a thread-safe static list of one rule, {\"scripts/weapons.vdata\", 1, \"weapon_m14\"} (built at 18002e1ef); its fingerprint is 2278732723; 1.41.9.3 (20261029) keeps the code at this address with weapon_lar instead (55841844)"),
 ]
 
 # animationsystem.dll 20261023 (installed; tools/re/binaries/animationsystem_20261023.dll): the map entity's animation helper (ledger 166).
@@ -3305,6 +3666,58 @@ ANIMATIONSYSTEM_1023 = [
     ("1804acdd0", "Skeleton_ReferencePose", ST, "per bone {position +0x98 (12 bytes), scale +0xc8, rotation +0xb0} into 0x20-byte transforms; SettleWorld.ReferencePose"),
     ("1804ab9d0", "CAnimationDecodeContext::AddAnimationDecodeDesc", ST, "0x50-byte desc from the scratch pool"),
     ("1804b5690", "AnimObjectList_Vfn38", ST, "each object at +0x368 (count +0x360) through its vfn 0x38, results ORed; called once in ctm_sas's update"),
+]
+
+# steamaudio.dll (20261023): the bake's scene, probes and files (SteamAudio/, docs/STEAM_AUDIO.md, ledger 170).
+STEAMAUDIO_1023 = [
+    ("1800635d0", "SteamAudio_ToSteamAudioAxes", SA, "Source (x, y, z) to (-y, z, -x)"),
+    ("180063600", "SteamAudio_SourceToMeters", SA, "x 0.0254, then the axes"),
+    ("1800636b0", "SteamAudio_ToSourceAxes", SA, "(-z, -x, y)"),
+    ("180067dc0", "CSteamAudioScene_Create", SA, "a 0x78-byte scene, then its build (180084d90)"),
+    ("18006b260", "SteamAudio_MetersToSource", SA, "the axes, then x 39.37008"),
+    ("18006b2d0", "SteamAudio_BoxMatrix", SA, "a box (quaternion, centre, size in inches) as phonon's row-major 4x4"),
+    ("18006bc60", "SteamAudio_ReadReverbSettings", SA, "code defaults, gameinfo ReverbDefaults, then worldspawn"),
+    ("18006c1b0", "SteamAudio_ReadPathingSettings", SA, ""),
+    ("180071240", "SteamAudio_WriteProbeBatchBlob", SA, "the serialized batch into m_pProbeBatch"),
+    ("18007d0b0", "SteamAudio_SumBands", SA, "a band array summed in order from 0"),
+    ("180084720", "CSteamAudioMaterial_ReadEntry", SA, "a surfaceproperties_steamaudio.txt entry's coefficients; missing arrays keep theirs"),
+    ("180084910", "CSteamAudioMaterial_CopyBase", SA, ""),
+    ("180084a40", "CSteamAudioMaterial_Default", SA, "absorption 0.3, scattering 0.5, transmission 0, 11 bands"),
+    ("180084d90", "CSteamAudioScene_Build", SA, "vertices as given through 180063600, each triangle reversed, materials reduced to bands 0, 7, 9 (scattering: 11 bands summed / 11); iplSceneCreate type 1, one static mesh"),
+    ("180087940", "CSteamAudioScene_GenerateProbes", SA, ""),
+    ("180087e90", "CSteamAudioScene_BakeReverb", SA, "iplReflectionsBakerBake with the 0x80-byte block"),
+    ("180128710", "CSurfacePropDataTable_CSteamAudioMaterial_Parse", SA, "defaults, a base's entry copied in list order, then the txt entry by name"),
+]
+
+# phonon.dll (20260923, Steam Audio 4.9.0): the simulator the bake runs (SteamAudio/, ledger 170).
+PHONON_0923 = [
+    ("1801f50a0", "ispc_simulateEnergyField_Dispatch", SA, "ISA level 4 picks the AVX2 kernel"),
+    ("180201a50", "ispc_simulateEnergyField_avx2", SA, "8-lane gangs, gang-uniform RandomSampler seeded from rdtsc"),
+    ("180a58220", "generateSphereSamples", SA, "Math::kPi 3.141592f, CRT cosf / sinf"),
+    ("180a71a30", "Matrix4x4_TransformColumnMajor", SA, ""),
+    ("180a84df0", "ReverbEstimator_reverbTime", SA, "no FMA"),
+    ("180a86090", "generateUniformFloorProbes", SA, "inlined into the API"),
+    ("180ab3a20", "iplMatrix_Transpose", SA, ""),
+    ("180afba80", "EmbreeScene_ClosestHitSingle", SA, ""),
+    ("180afeff0", "ReflectionsBaker_JobLambda", SA, "sums the threads' energy fields after the last job"),
+    ("182683c40", "crt_cosf", SA, "FMA path"),
+    ("182685260", "crt_sinf", SA, "FMA path; the cosine branch fuses 1 - x^2/2"),
+    ("1827a2450", "crt_expf", SA, "FMA path, table driven"),
+    ("1827a2700", "crt_log10f", SA, "FMA path, table driven"),
+    ("182683840", "crt_atan2f", SA, "one path, in double: table atan(c / 256) above u = 1/16, a polynomial below, u below 1e-4 as is; exponent gaps 26 / 13 / 126; table 182b64e60"),
+    ("180acb910", "iplPathBakerBake_Validated", SA, "the validation layer's bakePaths, then 180ab5650"),
+    ("180ab5650", "CContext_bakePaths", SA, "params: identifier +0x10, numSamples +0x28, radius +0x2c, threshold +0x30, visRange +0x34, pathRange +0x38, threads +0x3c, a 4.9 flag +0x40 (== 1 skips the path search); asymmetric vis range, down (0, -1, 0), visRangeRealTime = visRange, no pruning"),
+    ("180a978e0", "BakedPathData_ctor", SA, "visibility graph, the per-probe Dijkstra jobs, j > i cleared, std::sort (180a9a8b0), unique SoundPaths (180a96a30), refs, then the optional prune (180a944d0)"),
+    ("180a93db0", "ProbeVisibilityGraph_ctor", SA, "one job per probe row (180a93fe0)"),
+    ("180a93fe0", "ProbeVisibilityGraph_Job", SA, "row i: j < i not too far and visible gives (j, |p[i] - p[j]|, 0); the last job appends each edge's reverse to row j"),
+    ("180a93c70", "ProbeVisibilityTester_areProbesTooFar", SA, "offset less its part along down when asymmetric; length > visRange (no FMA)"),
+    ("180a939f0", "ProbeVisibilityTester_areProbesVisible", SA, "no samples or radius <= 0: one isOccluded(from, to)"),
+    ("180a71c40", "IScene_isOccluded_Points", SA, "direction (to - from) x (1 / length) above 1e-5 else kZero, then vfn 0x78 with (0, length)"),
+    ("180afbc20", "EmbreeScene_isOccluded", SA, "rtcOccluded1 (180b415c0): org, tnear, dir, time 0, tfar, mask -1"),
+    ("180a954f0", "PathFinder_findAllShortestPaths", SA, "Dijkstra on MSVC's heap of (index, cost); relaxes when cost[u] + c < cost[v] and |p[start] - p[v]| <= pathRange (4.9)"),
+    ("180a986a0", "BakedPathData_PathJob", SA, "row start's paths: parents back to the start, std::reverse"),
+    ("180a9a8b0", "Sort_ProbePaths", SA, "MSVC introsort of 0x28-byte ProbePaths; predicate: invalid before valid, else node lists lexicographically (180a9ae80)"),
+    ("180a96a30", "SoundPath_ctor", SA, "probes as shorts, direct for an empty valid path, summed segment lengths, summed atan2f turning angles"),
 ]
 
 # bc7e.dll as installed (PE time 2026-01-01; unchanged by the 10-15 update), copied as bc7e_20261015.dll.
@@ -3341,18 +3754,31 @@ if __name__ == "__main__":
     write("resourcecompiler_20261006.manual.json", RESOURCECOMPILER_1006)
     write("tier0_20261015.manual.json", TIER0_1015)
     write("scenesystem_20261015.manual.json", SCENESYSTEM + SCENESYSTEM_CASCADES)
+    write("scenesystem_20261023.manual.json", SCENESYSTEM_1023)
     write("materialsystem2_20261015.manual.json", MATERIALSYSTEM_1015)
     write("rendersystemvulkan_20261015.manual.json", RENDERSYSTEMVULKAN_1015)
+    write("rendersystemdx11_20261029.manual.json", RENDERSYSTEMDX11_1029)
+    write("rendersystemvulkan_20261029.manual.json", RENDERSYSTEMVULKAN_1029)
+    write("materialsystem2_20261029.manual.json", MATERIALSYSTEM_1029)
     write("server_20261015.manual.json", SERVER_1015 + SERVER_1015_CUBEHOST)
     write("resourcecompiler_20261015.manual.json", RESOURCECOMPILER_1015)
     write("resourcecompiler_20261023.manual.json", RESOURCECOMPILER_1023)
+    write("resourcecompiler_20261029.manual.json", RESOURCECOMPILER_1029)
+    write("resourcecompiler_20261103.manual.json", RESOURCECOMPILER_1103)
     write("modtools_20261023.manual.json", MODTOOLS_1023)
     write("bc7e_20261015.manual.json", BC7E)
+    write("steamaudio_20261023.manual.json", STEAMAUDIO_1023)
+    write("phonon_20260923.manual.json", PHONON_0923)
     write("animationsystem_20261023.manual.json", ANIMATIONSYSTEM_1023)
     write("client_20261015.manual.json", CLIENT_1015)
     write("client_20261021.manual.json", CLIENT_1021)
     write("client_20261023.manual.json", CLIENT_1023)
+    write("client_20261029.manual.json", CLIENT_1029)
     write("worldrenderer_20261023.manual.json", WORLDRENDERER_1023)
     write("server_20261021.manual.json", SERVER_1021)
     write("hammer_20261029.manual.json", HAMMER_1029)
+    write("resourcecompiler_20261103_geometry_agent.manual.json", GEOMETRY_AGENT_1103)
+    write("resourcecompiler_20260923_geometry_agent.manual.json", GEOMETRY_AGENT_0923)
+    write("resourcecompiler_20260923_resources_agent.manual.json", RESOURCES_AGENT_0923)
+    write("resourcecompiler_20261103_resources_agent.manual.json", RESOURCES_AGENT_1103)
     print(len(RESOURCECOMPILER), len(VPHYSICS2), len(PHYSICSBUILDER), len(VISBUILDER), len(SMARTPROPS), len(TIER0), len(HAMMER))

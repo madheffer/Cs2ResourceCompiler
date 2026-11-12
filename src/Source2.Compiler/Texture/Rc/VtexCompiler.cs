@@ -1,0 +1,404 @@
+using System.Buffers.Binary;
+using SkiaSharp;
+using Source2.Compiler.Compiling;
+using Source2.Compiler.Compression;
+using Source2.Compiler.Dmx;
+using ValveKeyValue;
+using Source2.Compiler.KeyValues;
+
+namespace Source2.Compiler.RcTexture;
+
+/// <summary>
+/// <c>.vtex</c> sources to <c>.vtex_c</c>, as resourcecompiler writes them (docs/TEXTURES.md):
+/// the float mip chain, the block encoders, reflectivity, the fallback, the extra data, the mip
+/// compression rule and the RED2 of a texture compile. Settings it has not been measured on are
+/// refused with an error rather than guessed.
+/// </summary>
+public sealed class VtexCompiler : IResourceCompiler
+{
+    /// <inheritdoc/>
+    public IReadOnlyCollection<string> SourceExtensions { get; } = [".vtex"];
+
+    /// <inheritdoc/>
+    public string OutputPathFor(string sourcePath) => sourcePath + "_c";
+
+    // The format byte of the vtex header, by m_outputFormat.
+    private static readonly Dictionary<string, byte> FormatCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["DXT1"] = 1, ["DXT5"] = 2, ["RGBA8888"] = 4, ["BC7"] = 20, ["ATI2N"] = 21, ["ATI1N"] = 27,
+    };
+
+    private const ushort NoLod = 0x8;
+    private const uint ExtraFallbackBits = 1, ExtraFillToPowerOfTwo = 3, ExtraCompressedMipSize = 4;
+
+    // gameinfo.gi ResourceCompiler/TextureCompiler: Compression "lz4", CompressMipsOnDisk 1,
+    // CompressMinRatio 95. RC as a console app compiles at encode quality 3, LZ4 HC level 10.
+    private const int CompressMinRatio = 95, Lz4Level = 10;
+
+    /// <inheritdoc/>
+    public CompileOutput Compile(CompileRequest request, ICollection<CompileDiagnostic> diagnostics)
+    {
+        var vtex = Keyvalues2Text.Parse(request.Source);
+        var settings = VtexSettings.Read(vtex, request.SourcePath);
+        var texture = settings.Texture;
+
+        // Every distinct image, read once; an image settings .txt beside one is not measured.
+        var files = texture.Inputs.Select(i => i.FileName).Distinct().ToList();
+        var content = request.Content ?? throw new InvalidOperationException(
+            $"{request.SourcePath} refers to {files[0]}; compile it with a content source to read that from.");
+        var images = new List<(string Path, byte[] Bytes)>();
+        var decoded = new Dictionary<string, (byte[] Rgba, int Width, int Height)>(StringComparer.Ordinal);
+        foreach (var file in files)
+        {
+            var bytes = content.Read(file)
+                ?? throw new InvalidOperationException($"{file} (named by {request.SourcePath}) was not found.");
+            if (content.Read(Path.ChangeExtension(file, ".txt")) is not null)
+                throw new InvalidOperationException(
+                    $"{Path.ChangeExtension(file, ".txt")} exists; RC reads it as image settings, which this compiler has not measured yet.");
+            images.Add((file, bytes));
+            decoded[file] = DecodeRgba(bytes, file);
+        }
+
+        var options = request.Settings as VtexCompileSettings ?? new VtexCompileSettings();
+        var first = decoded[texture.Inputs[0].FileName];
+        var format = settings.Format;
+        List<RcMipChain.Level> levels;
+        bool srgb;
+        int maxMips;
+        float[]? reflectivity = null;
+        if (options.MipChainBgra is { } given)
+        {
+            // A chain the caller made replaces the float chain RC would make from the image; the
+            // image's own alpha decides DXT5 as before.
+            if (!settings.IsSingleBox)
+                throw new InvalidOperationException($"{request.SourcePath}: a given mip chain stands in for one input's Box chain only.");
+            srgb = texture.Inputs[0].Srgb;
+            levels = GivenChain(given, first.Width, first.Height, srgb);
+            maxMips = int.MaxValue;
+            if (format == "DXT5" && AlphaIsSolid(first.Rgba))
+                format = "DXT1";
+        }
+        else
+        {
+            (levels, srgb, maxMips, reflectivity) = RcTextureChannels.Build(texture, decoded, options.Bc7Vendor, request.SourcePath);
+            // "Found DXT5 texture with solid 255 alpha! Saving as a DXT1!": the mips the texture
+            // stores (dxt5_7x5 keeps one level, whose odd-side filter children carry alpha 1.5).
+            if (format == "DXT5" && RcTextureChannels.AlphaIsSolid(levels.Take(StoredMips(levels, format, maxMips))))
+                format = "DXT1";
+        }
+        if (format == "BC7" && Bc7e.Unavailable(options.Bc7Vendor) is { } why)
+            throw new InvalidOperationException(why);
+
+        // The size FILL_TO_POWER_OF_TWO compares with is the first input's as its processor leaves it
+        // (scalepow2_rgba: a 48x40 scaled to 64x64 writes no fill record).
+        var nominal = RcImageProcessors.SizeAfter(texture.Inputs[0].ImageProcessor, first.Width, first.Height);
+        var (data, stored, _) = BuildTexture(levels, format, srgb, settings.NoLod, maxMips, options.Bc7Vendor, nominal, reflectivity);
+        var special = new Dictionary<string, Source2ContainerAuthor.SpecialDep>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dep in Source2ContainerAuthor.TextureBaseDeps.Concat(RcTextureChannels.Deps(texture, f => (decoded[f].Width, decoded[f].Height))))
+            special[dep.Name] = dep;
+        var red2 = PackageContainerAuthor.BuildTextureSourceEditInfo(request.SourcePath, request.Source,
+            images, [.. special.Values], request.SearchPath);
+        return new(WriteTexture(red2, data, stored));
+    }
+
+    /// <summary>The <c>.vtex_c</c>: RED2 and DATA, then the stored mips smallest first.</summary>
+    internal static byte[] WriteTexture(KVObject red2, byte[] data, byte[][] stored)
+    {
+        var container = new CompiledResource(new ResourceFile { Version = Source2ContainerAuthor.TextureResourceVersion });
+        container.SetKv3("RED2", red2, Kv3Formats.Get("generic"), insertAt: 0);
+        container.SetRaw("DATA", data);
+        var head = container.Write();
+
+        using var ms = new MemoryStream();
+        ms.Write(head);
+        for (int i = stored.Length - 1; i >= 0; i--)
+            ms.Write(stored[i]);
+        return ms.ToArray();
+    }
+
+    // A caller's 8-bit BGRA chain as float levels, each loaded as RC loads an image.
+    private static List<RcMipChain.Level> GivenChain(IReadOnlyList<byte[]> chain, int width, int height, bool srgb)
+    {
+        MipChainInput.Check(chain, width, height, nameof(VtexCompileSettings.MipChainBgra));
+        return [.. chain.Select((bgra, i) =>
+        {
+            var (w, h) = MipChainInput.LevelSize(width, height, i);
+            return RcMipChain.Load(SwapRedBlue(bgra), w, h, srgb);
+        })];
+    }
+
+    /// <summary>A texture from an image already loaded to float (a material child's packed inputs).
+    /// <paramref name="nominal"/> is the first input's size when the others made the image larger
+    /// (character's 1x1 default metal beside 16x16 masks); DATA records it as FILL_TO_POWER_OF_TWO.</summary>
+    internal static (byte[] Data, byte[][] Stored, bool AnyCompressed) BuildTexture(RcMipChain.Level top,
+        string format, bool srgb, bool noLod, int maxMips, Bc7Vendor vendor, (int Width, int Height)? nominal = null) =>
+        BuildTexture(RcMipChain.Chain(top), format, srgb, noLod, maxMips, vendor, nominal);
+
+    /// <summary>
+    /// A texture from a whole float chain (RC's box chain, or one a mip algorithm made: normal maps,
+    /// alpha weighting), as RC builds it: at most <paramref name="maxMips"/> levels, block formats
+    /// stopping before a side under 4, each level encoded, the flags, fallback and reflectivity, and
+    /// the mip compression rule. A block format image with a side under 4 is resized to 4 with the
+    /// wrap resampler in gamma space, one level.
+    /// </summary>
+    internal static (byte[] Data, byte[][] Stored, bool AnyCompressed) BuildTexture(List<RcMipChain.Level> levels,
+        string format, bool srgb, bool noLod, int maxMips, Bc7Vendor vendor, (int Width, int Height)? nominal = null,
+        float[]? reflectivity = null)
+    {
+        int width = levels[0].Width, height = levels[0].Height;
+        bool blockCompressed = format != "RGBA8888" && !RcFormats.Handles(format);
+        if (srgb && RcFormats.Handles(format))
+            throw new InvalidOperationException($"An sRGB texture in {format} is not measured.");
+        // A capped algorithm (Box3) makes only that many levels; reflectivity and the fallback
+        // then come from the shorter chain (ao_png: 64, 32, 16).
+        if (levels.Count > maxMips)
+            levels = levels.Take(maxMips).ToList();
+        byte[][] mipData;
+        int outWidth = width, outHeight = height;
+        RcMipChain.Level? upsized = null;
+        if (blockCompressed && (width < 4 || height < 4))
+        {
+            // cx_tiny (2x2 to 4x4) and the 1x1 shader defaults.
+            outWidth = Math.Max(4, width);
+            outHeight = Math.Max(4, height);
+            var gamma = srgb ? levels[0].Rgba.Select((v, i) => i % 4 < 3 ? RcMipChain.Encode(v) : v).ToArray() : levels[0].Rgba;
+            upsized = RcMipChain.Resize(new RcMipChain.Level(width, height, gamma), outWidth, outHeight, clamp: false);
+            mipData = [EncodeLevel(upsized, format, encodeSrgb: false, perceptual: srgb, vendor)];
+        }
+        else
+        {
+            int mips = StoredMips(levels, format, maxMips);
+            mipData = new byte[mips][];
+            for (int i = 0; i < mips; i++)
+                mipData[i] = EncodeLevel(levels[i], format, srgb, srgb, vendor);
+        }
+
+        ushort flags = 0;
+        bool pow2 = (width & (width - 1)) == 0 && (height & (height - 1)) == 0;
+        if (noLod || (blockCompressed && !pow2))
+            flags |= NoLod;
+
+        // The fallback comes from the image RC holds: the upsized one when it was upsized (cx_tiny).
+        var fallbackRgba = upsized is null
+            ? RcMipChain.FallbackRgba8(levels, srgb, clamp: false)
+            : RcMipChain.WriteRgba8(RcMipChain.Resize(upsized, 32, 32, clamp: false), srgb: false);
+        var fallback = AtiCompress.Compress(SwapRedBlue(fallbackRgba), 32, 32, AtiCompress.Format.Dxt5, perceptual: srgb);
+
+        // COMPRESSED_MIP_SIZE when the largest side is at least 33. Each mip, smallest first, is
+        // LZ4 HC'd and kept compressed only below 95% of its size and more than 32 KB smaller.
+        bool mipSizes = Math.Max(outWidth, outHeight) >= 33;
+        var stored = new byte[mipData.Length][];
+        bool anyCompressed = false;
+        for (int i = mipData.Length - 1; i >= 0; i--)
+        {
+            stored[i] = mipData[i];
+            if (!mipSizes)
+                continue;
+            var raw = mipData[i];
+            var packed = new byte[Lz4HcStream.CompressBound(raw.Length)];
+            int c = Lz4HcStream.Compress(raw, packed, Lz4Level);
+            bool keepRaw = c == 0 || (long)raw.Length * CompressMinRatio <= (long)c * 100 || raw.Length - 0x8000 <= c;
+            if (!keepRaw)
+            {
+                stored[i] = packed[..c];
+                anyCompressed = true;
+            }
+        }
+
+        reflectivity ??= Average(levels[^1]);
+        // FILL_TO_POWER_OF_TWO when the image was resized up: u16 0, the original width and
+        // height, zeros to 128 bytes (default_ao 1x1, cx_tiny 2x2; width before height assumed).
+        var (fillWidth, fillHeight) = nominal ?? (width, height);
+        byte[]? fill = null;
+        if (outWidth != fillWidth || outHeight != fillHeight)
+        {
+            fill = new byte[128];
+            BinaryPrimitives.WriteUInt16LittleEndian(fill.AsSpan(2), (ushort)fillWidth);
+            BinaryPrimitives.WriteUInt16LittleEndian(fill.AsSpan(4), (ushort)fillHeight);
+        }
+        var data = BuildData(outWidth, outHeight, FormatCodes.TryGetValue(format, out var code) ? code : RcFormats.VtexCodes[format], mipData.Length, flags, reflectivity, fallback, fill,
+            mipSizes ? stored.Select(x => x.Length).ToArray() : null, anyCompressed ? 1u : 0u);
+        return (data, stored, anyCompressed);
+    }
+
+    /// <summary>How many levels the texture stores: every one for RGBA8888; for a block format
+    /// the chain stops before a side would go under 4 (one level when level 0 already has such a
+    /// side); never more than <paramref name="maxMips"/>.</summary>
+    internal static int StoredMips(IReadOnlyList<RcMipChain.Level> levels, string format, int maxMips)
+    {
+        int mips = 1;
+        if (format != "RGBA8888" && !RcFormats.Handles(format))
+            while (mips < levels.Count && Math.Min(levels[mips].Width, levels[mips].Height) >= 4)
+                mips++;
+        else
+            mips = levels.Count;
+        return Math.Min(mips, maxMips);
+    }
+
+    // Reflectivity: the mean of the chain's smallest level, summed in four SIMD lanes by pixel
+    // index and the lanes added pairwise (ao_png's 16x16 Box3 level; the 1x1 of a full chain is
+    // its pixel).
+    internal static float[] Average(RcMipChain.Level level)
+    {
+        int n = level.Width * level.Height;
+        var result = new float[4];
+        Span<float> lanes = stackalloc float[4];
+        for (int c = 0; c < 4; c++)
+        {
+            lanes.Clear();
+            for (int i = 0; i < n; i++)
+                lanes[i & 3] += level.Rgba[i * 4 + c];
+            result[c] = ((lanes[0] + lanes[1]) + (lanes[2] + lanes[3])) / n;
+        }
+        return result;
+    }
+
+    // encodeSrgb: the level holds linear colour to gamma-encode as it is written; perceptual:
+    // the encoders weigh channels for an sRGB texture.
+    private static byte[] EncodeLevel(RcMipChain.Level level, string format, bool encodeSrgb, bool perceptual, Bc7Vendor vendor)
+    {
+        if (format == "BC7")
+            return Bc7e.EncodeBlocks(Bc7Blocks(level, encodeSrgb), perceptual, vendor);
+        if (RcFormats.Handles(format))
+            return RcFormats.Write(level, format);
+        var rgba8 = RcMipChain.WriteRgba8(level, encodeSrgb);
+        return format switch
+        {
+            "RGBA8888" => rgba8,
+            "DXT1" => AtiCompress.Compress(SwapRedBlue(rgba8), level.Width, level.Height, AtiCompress.Format.Dxt1, perceptual),
+            "DXT5" => AtiCompress.Compress(SwapRedBlue(rgba8), level.Width, level.Height, AtiCompress.Format.Dxt5, perceptual),
+            "ATI1N" => AtiCompress.Compress(SwapRedBlue(rgba8), level.Width, level.Height, AtiCompress.Format.Ati1n, false),
+            "ATI2N" => AtiCompress.Compress(SwapRedBlue(rgba8), level.Width, level.Height, AtiCompress.Format.Ati2n, false),
+            _ => throw new InvalidOperationException($"Output format {format} is not compiled here yet."),
+        };
+    }
+
+    // bc7e's input: 4x4 blocks in block order, each channel ROUND(clamp(x)*255) to nearest even
+    // (sRGB channels encoded first), a block past the edge repeating the last row and column.
+    private static byte[] Bc7Blocks(RcMipChain.Level level, bool srgb)
+    {
+        int bw = (level.Width + 3) / 4, bh = (level.Height + 3) / 4;
+        var o = new byte[bw * bh * 64];
+        int k = 0;
+        for (int by = 0; by < bh; by++)
+            for (int bx = 0; bx < bw; bx++)
+                for (int y = 0; y < 4; y++)
+                    for (int x = 0; x < 4; x++)
+                    {
+                        int px = Math.Min(bx * 4 + x, level.Width - 1), py = Math.Min(by * 4 + y, level.Height - 1);
+                        int src = (py * level.Width + px) * 4;
+                        for (int c = 0; c < 4; c++)
+                        {
+                            float v = level.Rgba[src + c];
+                            if (srgb && c < 3) v = RcMipChain.Encode(v);
+                            o[k++] = (byte)MathF.Round(MathF.Min(1f, MathF.Max(0f, v)) * 255f, MidpointRounding.ToEven);
+                        }
+                    }
+        return o;
+    }
+
+    // DATA: the 40-byte header, the extra-data table, the payloads, then the per-mip sizes that
+    // COMPRESSED_MIP_SIZE points at. Offsets in the table count from the field that holds them.
+    private static byte[] BuildData(int width, int height, byte format, int mips, ushort flags, float[] reflectivity,
+        byte[] fallback, byte[]? fill, int[]? mipSizes, uint method)
+    {
+        var extras = new List<(uint Type, byte[] Payload)> { (ExtraFallbackBits, fallback) };
+        if (fill is not null)
+            extras.Add((ExtraFillToPowerOfTwo, fill));
+        if (mipSizes is not null)
+            extras.Add((ExtraCompressedMipSize, new byte[12]));
+        const int header = 40;
+        var positions = new int[extras.Count];
+        int cursor = header + extras.Count * 12;
+        for (int i = 0; i < extras.Count; i++) { positions[i] = cursor; cursor += extras[i].Payload.Length; }
+        int sizesPos = cursor;
+        int total = sizesPos + (mipSizes?.Length ?? 0) * 4;
+        if (mipSizes is not null)
+        {
+            var cms = extras[^1].Payload;
+            BinaryPrimitives.WriteUInt32LittleEndian(cms, method);
+            BinaryPrimitives.WriteUInt32LittleEndian(cms.AsSpan(4), (uint)(sizesPos - (positions[^1] + 4)));
+            BinaryPrimitives.WriteUInt32LittleEndian(cms.AsSpan(8), (uint)mipSizes.Length);
+        }
+
+        var d = new byte[total];
+        var s = d.AsSpan();
+        BinaryPrimitives.WriteUInt16LittleEndian(s, 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(s[2..], flags);
+        for (int c = 0; c < 4; c++)
+            BinaryPrimitives.WriteSingleLittleEndian(s[(4 + 4 * c)..], reflectivity[c]);
+        BinaryPrimitives.WriteUInt16LittleEndian(s[20..], (ushort)width);
+        BinaryPrimitives.WriteUInt16LittleEndian(s[22..], (ushort)height);
+        BinaryPrimitives.WriteUInt16LittleEndian(s[24..], 1);
+        d[26] = format;
+        d[27] = (byte)mips;
+        BinaryPrimitives.WriteUInt32LittleEndian(s[28..], 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(s[32..], 8);
+        BinaryPrimitives.WriteUInt32LittleEndian(s[36..], (uint)extras.Count);
+        for (int i = 0; i < extras.Count; i++)
+        {
+            int field = header + i * 12 + 4;
+            BinaryPrimitives.WriteUInt32LittleEndian(s[(header + i * 12)..], extras[i].Type);
+            BinaryPrimitives.WriteUInt32LittleEndian(s[field..], (uint)(positions[i] - field));
+            BinaryPrimitives.WriteUInt32LittleEndian(s[(field + 4)..], (uint)extras[i].Payload.Length);
+            extras[i].Payload.CopyTo(s[positions[i]..]);
+        }
+        if (mipSizes is not null)
+            for (int i = 0; i < mipSizes.Length; i++)
+                BinaryPrimitives.WriteUInt32LittleEndian(s[(sizesPos + 4 * i)..], (uint)mipSizes[i]);
+        return d;
+    }
+
+    private static bool AlphaIsSolid(byte[] rgba)
+    {
+        for (int i = 3; i < rgba.Length; i += 4)
+            if (rgba[i] != 255)
+                return false;
+        return true;
+    }
+
+    /// <summary>RGBA to BGRA, or BGRA to RGBA: red and blue swapped.</summary>
+    internal static byte[] SwapRedBlue(byte[] pixels)
+    {
+        var swapped = new byte[pixels.Length];
+        for (int i = 0; i < pixels.Length; i += 4)
+        {
+            swapped[i] = pixels[i + 2];
+            swapped[i + 1] = pixels[i + 1];
+            swapped[i + 2] = pixels[i];
+            swapped[i + 3] = pixels[i + 3];
+        }
+        return swapped;
+    }
+
+    internal static (byte[] Rgba, int Width, int Height) DecodeRgba(byte[] bytes, string path)
+    {
+        if (path.EndsWith(".tga", StringComparison.OrdinalIgnoreCase) && Imaging.TgaReader.CanRead(bytes))
+            return Imaging.TgaReader.Read(bytes);
+        using var data = SKData.CreateCopy(bytes);
+        using var codec = SKCodec.Create(data) ?? throw new InvalidDataException($"{path} is not an image this compiler reads.");
+        var info = new SKImageInfo(codec.Info.Width, codec.Info.Height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
+        if ((long)info.Width * info.Height > Imaging.SafeImageDecode.DefaultMaxPixels)
+            throw new InvalidDataException($"{path} is {info.Width}x{info.Height}, over the decode limit.");
+        var result = codec.GetPixels(info, out var pixels);
+        if (result is not (SKCodecResult.Success or SKCodecResult.IncompleteInput))
+            throw new InvalidDataException($"{path} did not decode ({result}).");
+        return (pixels, info.Width, info.Height);
+    }
+}
+
+/// <summary>Options for <see cref="VtexCompiler"/> beyond the <c>.vtex</c> itself.</summary>
+/// <param name="Bc7Vendor">Whose <c>rcpps</c> BC7 reproduces: resourcecompiler's BC7 differs
+/// between AMD and Intel CPUs, and this picks which one the output matches on any machine.</param>
+public sealed record VtexCompileSettings(Bc7Vendor Bc7Vendor = Bc7Vendor.Amd)
+{
+    /// <summary>
+    /// A finished mip chain to encode instead of the box chain RC makes from the image: 8-bit BGRA,
+    /// level 0 at the image's own size, each level half the one before (a side never below 1), used
+    /// as given (no resampling). The output is then this chain's texture, not resourcecompiler's:
+    /// a host that makes mips the way CS2 makes a composite's sets it. The image still names the
+    /// texture's size and is recorded in RED2.
+    /// </summary>
+    public IReadOnlyList<byte[]>? MipChainBgra { get; init; }
+}
+

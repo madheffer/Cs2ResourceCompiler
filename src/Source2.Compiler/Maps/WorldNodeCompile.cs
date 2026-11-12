@@ -52,12 +52,22 @@ internal static class WorldNodeCompile
 
         /// <summary>
         /// +0x38, +0x3c and +0x68: the fades and lighting origin. The vis merger's
-        /// object (18026e9c0) copies its entry's +0xb0, +0xb4 and +0x80 (the node's
-        /// fades and origin); the cluster compile leaves 0, 0 and FLT_MAX.
+        /// object (18026e9c0) and CompileInstanced's (18026ed20) copy their (first)
+        /// entry's +0xb0, +0xb4 and +0x80 (the node's fades and origin); the cluster
+        /// compile leaves 0, 0 and FLT_MAX.
         /// </summary>
         public float FadeStart { get; init; }
         public float FadeEnd { get; init; }
         public Vector3 LightingOrigin { get; init; } = new(float.MaxValue);
+
+        /// <summary>
+        /// +0x7c, +0x80 and +0x84: the cubemap and light probe handshakes and the emissive boost. The cluster
+        /// compile (18026c150), the vis merger's object (18026e9c0) and CompileInstanced (18026ed20) copy their
+        /// entry's +0xa0, +0xa4 and boost after CreateRenderObject (18026bab0); the block light split
+        /// (180270a20), CSkyboxMeshList (180272480) and CSkyboxMaterialMeshList (180272620) copy nothing, so
+        /// those objects keep the record's 0, 0 and 1 (atixref's blocklight _shadow objects: probe 0, ledger 254).
+        /// </summary>
+        public bool EntryHandshakes { get; init; } = true;
     }
 
     /// <summary>An aggregate scene object: its name, layer and meshes in draw order.</summary>
@@ -283,7 +293,7 @@ internal static class WorldNodeCompile
                 ShadowSplit($"mesh_blocklight_skybox{counters.BlockLightSkybox++}", entries, layer, cluster, settings, objects);
                 break;
             case MeshLists.Kind.Skybox:
-                objects.Add(CreateRenderObject(settings.NodePrefix, "mesh_skybox", layer, cluster, 0x400, 0, false, entries));
+                objects.Add(CreateRenderObject(settings.NodePrefix, "mesh_skybox", layer, cluster, 0x400, 0, false, entries) with { EntryHandshakes = false });
                 break;
             case MeshLists.Kind.Aggregate:
                 // 180272ae0: std::sort by material name, then grouped as "mesh".
@@ -310,7 +320,7 @@ internal static class WorldNodeCompile
                 // 180272620: the entries grouped by their skyboxslot name (CUtlString ==, in
                 // first-seen order), each group one object "mesh_skyboxslot_<slot>", flags 0x400.
                 foreach (var slot in entries.GroupBy(e => e.Facts.SkyboxSlot, StringComparer.Ordinal))
-                    objects.Add(CreateRenderObject(settings.NodePrefix, $"mesh_skyboxslot_{slot.Key}", layer, cluster, 0x400, 0, false, [.. slot]));
+                    objects.Add(CreateRenderObject(settings.NodePrefix, $"mesh_skyboxslot_{slot.Key}", layer, cluster, 0x400, 0, false, [.. slot]) with { EntryHandshakes = false });
                 break;
             case MeshLists.Kind.WorldSpaceTexture:
                 // 1802723d0: grouped, each object gaining flag 0x40.
@@ -329,9 +339,9 @@ internal static class WorldNodeCompile
         var shadow = entries.Where(e => (e.Facts.Attributes & 0x20000) == 0).ToList();
         var noShadow = entries.Where(e => (e.Facts.Attributes & 0x20000) != 0).ToList();
         if (shadow.Count > 0)
-            objects.Add(CreateRenderObject(settings.NodePrefix, name + "_shadow", layer, cluster, 0x410, 0, false, shadow));
+            objects.Add(CreateRenderObject(settings.NodePrefix, name + "_shadow", layer, cluster, 0x410, 0, false, shadow) with { EntryHandshakes = false });
         if (noShadow.Count > 0)
-            objects.Add(CreateRenderObject(settings.NodePrefix, name + "_noshadow", layer, cluster, 0x410, 0x20000, false, noShadow));
+            objects.Add(CreateRenderObject(settings.NodePrefix, name + "_noshadow", layer, cluster, 0x410, 0x20000, false, noShadow) with { EntryHandshakes = false });
     }
 
     /// <summary>
@@ -484,9 +494,15 @@ internal static class WorldNodeCompile
                 list.Stash.AddRange(g);
                 continue;
             }
+            // The instanced list's OnAdd (180272c80) marked each mesh NoCollapse (CMesh +0x14c).
+            if (list.Kind == MeshLists.Kind.Instanced)
+                g = [.. g.Select(e => e with { Facts = e.Facts with { NoCollapse = true } })];
             var f = g[0].Facts;
+            // 18026ed20 copies the group's first entry's +0xb0, +0xb4 and +0x80 (fades, origin) into the
+            // object's +0x38, +0x3c and +0x68, as the vis merger's object does.
             objects.Add(CreateRenderObject(settings.NodePrefix, $"{prefix}{counters.Instanced++}_{FileBase(g[0].Material, 0x18)}", layer, 0,
-                                           f.ObjectFlags, f.Attributes, f.Field1a6 != 0, g));
+                                           f.ObjectFlags, f.Attributes, f.Field1a6 != 0, g)
+                        with { FadeStart = f.Field_b0, FadeEnd = f.FadeMax, LightingOrigin = f.Origin });
         }
     }
 

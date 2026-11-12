@@ -120,16 +120,20 @@ command line and run the ported steps on an existing package, as a
 s2c compile-map -i <content/csgo_addons/<addon>/maps/<map>.vmap> -outroot <dir> (-world [-vis] | -entities) [-phys] [-nosettle] [--accept-gaps] [--skip-unported] [--gpu]
 ```
 
-- **The package** must already be at
-  `<outroot>/csgo_addons/<addon>/maps/<map>.vpk`.
+- **The package** is kept from
+  `<outroot>/csgo_addons/<addon>/maps/<map>.vpk`. A full build (no builder named) starts from an empty
+  package with `-f` or `-fshallow2`, or when there is none yet; a partial build that would start empty is
+  refused, as RC refuses it.
 - **The steps:** the world step without a bake (vis only with `-vis`;
   CompileNode clusters by the node's box grid otherwise), the entities-only
   world step (settled lumps) and the physics step, each replacing its files
   in the package (GROUND_TRUTH 55).
-- **Refused, by name:** the lighting bake (a build naming no builder, or
-  `-bakelighting`), nav, Steam Audio, `-f` and `-fshallow2`, and lumps with
-  light or probe gaps unless `--accept-gaps`. `--skip-unported` runs the
-  rest and leaves the bake, nav and Steam Audio as the package has them.
+- **Steam Audio** (GROUND_TRUTH 198): at worldspawn's Cleanup (0) or Manual (1) rebake option the kind's
+  baked file is dropped and nothing baked, as CleanupBakedDataIfNeeded does; at Auto (2) the reverb and
+  pathing bake (SteamAudioBuild, ledger 199) and custom data is refused by name.
+- **Refused, by name:** the lighting bake with neither `-s2cbake` nor `-vrad3output`, Steam Audio's custom
+  data at Auto and the Steam Audio cases SteamAudioBuild does not port, and lumps with light or probe gaps unless `--accept-gaps`. `--skip-unported` runs the rest and
+  leaves those as the package has them.
 - **Parsing:** the line is read as RC reads it: its own switches first, then
   generic ones typed `%f`, then `%i`, then string. Builders are selected as
   `CompileMap` does.
@@ -146,9 +150,62 @@ Open (GROUND_TRUTH 24):
 - what an entities-only build clears;
 - `-entities` with no package in place;
 - the world step once geometry exists;
-- compiling the addon content a map references.
+- compiling the addon content a map references: not part of the map compile (GROUND_TRUTH 255); see
+  `s2c compile-addon` below.
 
 Every option is listed in [COVERAGE.md](COVERAGE.md).
+
+## Two container layers (main merged, 2026-11-05)
+
+Branch feat/addon-content merged main (the resource-compiler package line, ad2e29a) into the map
+compiler (research/map-authoring 5b02174) for 8.b1: compile-map compiling a map's addon materials and
+textures with main's exact compilers. main had rewritten the container layer off VRF onto its own
+`CompiledResource`; the map compiler writes every output through VRF's `Resource`. Same class names,
+different signatures, so both layers are kept side by side (the user's call):
+
+- **Map layer, unchanged:** `Source2ContainerAuthor`, `ResourceBuilder`, `MaterialAuthor`,
+  `Kv3V5Writer`, `Kv3SourceCompiler`, `ResourceDecompiler` and every map-side file main had edited
+  are this branch's own bytes. No map output changes from the merge.
+- **Package layer, from main under its own names:** `PackageContainerAuthor` (+ `.Vdata`),
+  `PackageResourceBuilder`, `PackageMaterialAuthor`, `PackageKv3SourceCompiler`, and main's KV3 writer
+  as `Kv3/Kv3BlockWriter`. main's added code (Materials/, Texture/Rc/, Kv3/, Compiling/, Anim/,
+  Meshes/, Shaders/, Gltf/) calls these, imports `Source2.Compiler.KeyValues` per file (the
+  project-wide using clashed with VRF's KVObject extensions), and shares `ContainerFacts`,
+  `SpecialDep` and `SavedSource` with the map layer. `GpuBc7Encoder` and `VmatParams` are main's
+  (additive: an install hook that is off by default, and `NamedArray`).
+- **Left out:** main's `Source2.Compiler.Vrf` adapter project (this branch keeps VRF in the core), and
+  what needs it: the CLI's fuzz, reserialize-parity and recompile-parity tools and the
+  HostileInput, Kv3Tree, RoundTripParity, TextureDecode and ResourceBlockCountGuard tests (the last needs main's VRF patch vrf-rerl-count-guard). They stay on main.
+- **RcReference:** the four KV3 probes are main's 11-03 recordings (today's RC). Main's
+  ResourceCompilerTests match them byte for byte. The map layer's Source2ContainerAuthorTests compare
+  trees and pass too, but whether the map layer's KV3 bytes still match today's RC (uint32 0 / 1 as
+  KV3 types 26 / 27) is not checked yet.
+
+Unifying the two layers means porting the map outputs onto `CompiledResource` and re-checking each
+one's byte parity.
+
+## `s2c compile-addon` (8.b1)
+
+RC's map compile never compiles the materials a map uses: with them only as sources it reports them missing,
+exits 0 and writes nothing (GROUND_TRUTH 255, measured on s2c_addonmat). In Valve's pipeline they are compiled
+before the map, by the tools or by RC run on each asset. `s2c compile-addon <addon>` is that step:
+
+```
+s2c compile-addon <addon> [--cs2 <dir>] [--only <content path>]... [--bc7 amd|intel] [-n]
+```
+
+- Every `.vmat` and `.vtex` under `content/csgo_addons/<addon>` (maps/ excluded), in ordinal order, through
+  main's `ResourceCompiler` with RC's search order (the addon, `csgo`, `core`) and RED2 search path
+  `csgo_addons/<addon>`. Outputs go to `game/csgo_addons/<addon>` at their content paths: the material, its
+  child textures beside their images, the default textures under `materials/default/`.
+- Checked: cx_full.vmat and cx_color.vmat in s2c_rc_probe give RC 1103's eight files byte for byte and no
+  others (%TEMP%/addon_ref/s2cmat_1105; AddonCompileTests against RcReference/materials/compiled). End to
+  end, s2c_addonmat (tools/coverage/addon_material_specimen.py) compiled after them: our compile-map -world
+  equals Valve's 13 files (the .vwrld with its stamp pinned).
+- Not ported: RC's up-to-date test (18016f170). Every source is compiled; a file whose bytes are already
+  right is left in place, so the result on disk is the same, but a stale-but-equal output is not "skipped"
+  the way RC's log would say. Other source types (models, particles, sounds, vdata) are not compiled here.
+- `--bc7` picks whose BC7 to reproduce (RC's blocks depend on the CPU vendor's rcpps; references are AMD's).
 
 ## Resourcecompiler recipes and traps
 

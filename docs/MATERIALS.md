@@ -1,0 +1,299 @@
+# Materials: `.vmat` to `.vmat_c`, as resourcecompiler does it
+
+Work in progress toward byte parity (API.md, order of work step 2). This file holds what is
+settled from the binaries; `RcReference/materials` holds the probes and RC's outputs.
+
+Build: `resourcecompiler.dll` 1.41.9.0 (sha256 `d1115f9f9b976db6...`, the 2026-10-09 build).
+
+## What one `.vmat` compile writes
+
+A `.vmat` (KV1 `Layer0 { shader ...; TextureColor "x.png"; F_...; g_... }`) compiles to the
+`.vmat_c` plus one child `.vtex_c` per texture the shader's static combo reads. RC writes the
+children beside the input they are named after, named
+`<that input file, '.' as '_'>_<logical CRC as %x>.vtex` (`'%s_%x.%s'`, 18010bc8b). The input
+(ProcessTexture 18010aa00, ledger 264): the first one, but a `materials/default/` pick gives way to
+the next input that is not a default, and a `[` constant to the next image (a normal + roughness
+child of a default normal is named after the material's roughness image).
+
+- DATA: `m_materialName`, `m_shaderName`, the params the `.vmat` sets (not the shader's
+  defaults), typed by their text the way tier0's KV1 load types it (ledger 264: an int is an int
+  param, a double a float param, an empty or `[` string a vector param, any other string is no
+  param), each list sorted with V_stricmp_fast; the `attributes`, `DecalAttributes` and
+  `SystemAttributes` tables as `m_int/float/vector/stringAttributes` (source1import's
+  `PhysicsSurfaceProperties` is a string attribute and a `surface_prop` subasset reference;
+  `legacy_import` and any other table are skipped), `m_textureParams` = every output texture the combo reads, pointing at
+  the child, and `RepresentativeTextureWidth/Height` from the colour texture.
+- RED2: input dependencies of every image (and its optional `.txt`), every argument and special
+  dependency of the texture compiles, `Material Compiler Version` 25, and the shader as
+  `vpk:<absolute path of shaders_pc.vpk>/<shader>.vfx` with the shader's `m_nVersion` as its
+  fingerprint (csgo_complex 5), plus each mode's fallback shader (`csgo_depth_only.vfx` 1). The
+  absolute path is the machine's install, so a compile must be told it to match RC.
+- `m_SearchableUserData`: the shader's attributes (modes named `*Tool*` never count), every feature
+  whose value is not 0 (set or not), the representative texture, then the int, float and string
+  attributes in that order, a later write replacing an earlier one (ledger 264).
+- INSG: the vertex input signature of the shader's static combo.
+
+## Which textures: the shader's program files
+
+CS2's shaders are VCS v72: Source 2 resources (`resver 72`, blocks `DATA RED2`) whose DATA is
+KV3, so `CompiledResource` reads them; `shaders_pc_dir.vpk` holds
+`shaders/vfx/<shader>_pc_50_{features,vs,ps}.vcs`. csgo_complex's 28 MB PS parses in 0.5 s.
+
+- `features.vcs`: `m_nVersion` (RED2 fingerprint), modes and their fallback shaders, the
+  feature combos (`F_*`), `m_variableDescriptionArray`, `m_textureChannelProcessorArray`.
+- `ps.vcs`: its own variables and static combos (`S_*`, each with `m_iFeatureIndex` into the
+  features' combos and `m_nComboIndexValue` as its stride), `m_staticComboIDs`, and per static
+  combo `m_allVars.m_indexAndRegisterOffsetArray` (variable index in bits 16..27).
+
+An output texture such as `g_tColor` has several variable descriptions, one per packing. The
+material's F_ values give the static combo id (`sum value * m_nComboIndexValue`), and the
+`g_t*` variables in that combo's `m_allVars` are the ones compiled. csgo_complex, measured:
+
+| combo | id | g_tColor | packing |
+|---|---|---|---|
+| none | 0 | #79 | DXT1, colour rgb |
+| S_ALPHA_TEST | 40 | #81 | BC7, colour rgb + translucency a (PreserveCoverage) |
+| S_TRANSLUCENT | 80 | #82 | BC7, colour rgb (ArtistDefinedOrAlphaWeighted) + translucency a (Box) |
+| S_METALNESS_TEXTURE | 1280 | #80 | BC7, colour rgb + metalness a |
+
+### From a variable to a generated `.vtex`
+
+An output variable has `m_outputTextureFormat` (20 DXT1, 24 ATI1N, 25 ATI2N, 27 BC7) and up to
+four `m_nChannelInfoIndex` into the channel processors. A channel processor has
+`m_nChannelDesc` (one byte per channel: dst in the high nibble, src in the low, 0..3 = r..a,
+FF unused), up to four `m_nInputTextures` (input variable indices), `m_outputColorSpace`
+(1 srgb) and `m_mipProcessingCommand`. An input variable has `m_inputColorSpace`,
+`m_nMinPrecisionBits`, `m_szTextureFileEnding`, `m_inputProcessingCommand` and
+`m_defaultInputTexture`.
+
+The generated `.vtex` lists the channels' inputs in order, without merging repeats (a
+translucent colour lists the translucency image twice), but a channel refers to an input by
+name and so reads the first one with that name (the translucent alpha reads input 1, not 2;
+whether the name is the input variable or the file is not separated by the probes). An input the `.vmat` does not set is
+`m_defaultInputTexture`, else `materials/default/default_<ending>.<ext>` for the first of
+`psd tga tif pfm exr` that exists in the CONTENT search path, else
+`materials/default/default.tga` (181f18f9f). An input naming a `.vtex` is the output texture
+itself (cx_vtex: `g_tColor` = `materials/s2ctex/dxt1.vtex`, no child).
+
+Code: `Shaders.ShaderProgram` reads the programs, `Materials.MaterialTextures` resolves the
+outputs, `Materials.GeneratedTexture` writes the logical text and the child path.
+`MaterialTextureTests` checks all seven probes: DATA texture params, RED2 child list and every
+child's logical text equal RC's.
+
+## The logical CRC (the child's name and its `___OverrideInputData___` fingerprint)
+
+`181e91070` prints the `.vtex` into a text `CUtlBuffer` and hashes it with MurmurHash2, seed
+`0x24871466`. The text starts `VTEX_LOGICAL_CRC_VERSION = 1`; the dumper is `181e8fcf0`, the
+input texture `181e8f660`, the output channel `181e8f9c0`, floats and ints `181e90870` and
+`181e909b0` (printed only when not their default). Strings are lowercased (`ToLowerFast`). Its
+`'m_textureOutputChannelArray[%d]:'` line prints the input count, not the channel count (RC's
+bug, kept). Example, the default AO:
+
+```
+VTEX_LOGICAL_CRC_VERSION = 1
+m_inputTextureArray[1]:
+m_inputTextureArray[0] =
+{
+m_texture_index = 0
+m_fileName = "materials/default/default_ao.tga"
+m_colorSpace = "linear"
+m_fileExt = "ao"
+m_nMinBitsPerChannel = 8
+m_typeString = "2d"
+m_imageProcessorArray[1]:
+m_imageProcessorArray[0] =
+{
+}
+}
+m_outputTypeString = "2d"
+m_outputFormat = "ati1n"
+m_textureOutputChannelArray[1]:
+...
+```
+
+`RcReference/materials/spew/*.txt` are RC's own texts for every probe child, hashing to the
+names. They were logged by RC itself: the naming function (`18010ae53`) logs the text under
+`logicalCRCDebugSpew` when a static flag (`183bb83a4`) is set, which nothing sets. A copy of
+`game/bin/win64` (hard links) with `resourcecompiler.dll` patched at file offsets `0x10afbc`
+(`cmove r9, rsi`, 4 bytes) and `0x10b0a8` (`je`, 6 bytes) to NOPs logs it on every compile and
+writes the same bytes as the stock DLL (checked on 5 outputs).
+
+## The `.vmat_c`: `Materials.MaterialCompiler`
+
+`ResourceCompiler` compiles a `.vmat` with `MaterialCompileSettings` (the game's
+`shaders_pc_dir.vpk`, and content mounts after the request's own: RC searches the addon, then
+`csgo`, then `core`). All seven probes are byte-identical to RC (`MaterialCompilerTests`).
+
+- DATA: the params the `.vmat` sets, in its order (F_ combos and int params as `m_intParams`,
+  type 1 as floats, types 3/4 as vectors), texture params by name, then
+  `RepresentativeTextureHeight/Width`: the colour texture's first image size, 1x1 when the
+  colour is a `.vtex` named directly.
+- RED2 input dependencies: the `.vmat`, every image (found in the first mount that has it) and
+  its optional `.txt` (recorded in the addon when absent, with its own mount and CRC when there:
+  core's `default_normal.txt`), sorted by path. Argument dependencies: RC's texture switches,
+  each image as `ImageArg` and `BinaryBlobArg`, a named `.vtex` as `ImageArg` only, sorted by
+  name. Special dependencies: `Material Compiler Version` 25, the texture compiler's (11, encode
+  quality user data 3, one entry per mip algorithm and image processor the children run:
+  `Box`/`Box3`/`ArtistDefined` add `Mip Box` 1, `ArtistDefinedOrAlphaWeighted` `Mip
+  AlphaWeighted` 1, `HemiOctIsoRoughness_RG_B` `Mip HemiOctAnisoRoughness` 3 and its own 1,
+  `NormalizeNormals` and `Inverse` `Image <name>` 1), the shader and the Depth mode's fallback
+  shader by their `m_nVersion`; sorted ignoring case.
+- `m_SearchableUserData`: the attributes of the VS, PS and PSRS programs for the material's
+  combo and for every mode the shader runs itself (a mode with no fallback, its static combo
+  settings applied: unlit's Depth mode, `S_MODE_DEPTH` 1, adds `DepthPassBatchID`), bools as
+  0/1, ints, floats, a texture attribute as the path of the texture its variable binds; vector
+  attributes (`LightSim_MaterialTint`) are not listed. Then the F_ values the `.vmat` sets,
+  `IsChildResource` 0, `shader`, and `RepresentativeTextureHeight/Width` beside
+  `RepresentativeTexture`. Sorted ignoring case. Expressions run in `Shaders.ShaderExpression`:
+  (Every one of these RED2 sorts is the RED2 finalize's, rc 18016dd80..18016df5d: MSVC std::sort
+  of each list and a member sort of each searchable table, 181ebae60 -> 181ea5d30, all comparing
+  with tier0's V_stricmp_fast, which folds A-Z to a-z. So '_' sorts before letters:
+  cx_alphatest's `_dummyReferenceAlphaTestReferenceInMainShader` comes first. `EditInfo.Red2Sorted`.)
+  a material parameter is `1D` + MurmurHash2 of its lowercased name, seed `0x31415926`, its
+  value the `.vmat`'s or the shader default; branch targets are absolute offsets.
+- INSG `m_elems`: the union of the VS static combo's input signatures (every dynamic combo),
+  sorted by D3D semantic name, index, then element name. `m_depth_elems`: the same from the
+  Depth mode's fallback shader, or from the shader's own VS with the Depth mode's settings.
+- RERL: every texture param's resource, sorted by path.
+
+## Child textures: `Materials.ChildTextureCompiler`
+
+A child is the shared texture build (`VtexCompiler.BuildTexture`) on one packed 8-bit image.
+Eight of the probe children are byte-identical (`ChildTextures_CompileToResourceCompilersBytes`),
+DXT1, ATI1N and BC7, one and two inputs.
+
+- Packing: unset channels are 0; each channel group copies its source channels of its input to
+  its destinations (colour.png rgb + metal.png r to a, BC7). sRGB covers RGB from sRGB inputs.
+- `ArtistDefined` with no `.txt` is the Box chain, float for float. `Box3` is the Box chain cut
+  to three levels: the float chain itself stops (ao256: 256, 128, 64), so the reflectivity is
+  the mean of its 64x64 level, summed in four SIMD lanes by pixel index and the lanes added
+  pairwise (`(l0 + l1) + (l2 + l3)`, then `/ n`); for a full chain that is the 1x1 pixel.
+- A side under 4 in a block format: the image is resized up to 4 with the wrap bilinear
+  resampler in gamma space (sRGB colour encoded first), one level, and the fallback is made
+  from that 4x4 image; the reflectivity still comes from the original chain. DATA then carries
+  extra data type 3 (FILL_TO_POWER_OF_TWO) after the fallback: 128 bytes, `u16 0`, the
+  original width and height, zeros (default_ao 1x1, cx_tiny 2x2).
+- Inputs of different sizes: each is loaded in its own colour space and brought to the largest
+  size with the wrap resampler, and FILL_TO_POWER_OF_TWO records the first input's size when
+  it differs from the output (character's default masks: 1x1 metal, 16x16 masks, output 16x16,
+  fill 1x1). Measured on constant images only; a varying smaller input is refused.
+- Images are PNG/JPG (SkiaSharp) or TGA (`Imaging.TgaReader`: Valve's defaults are TGA).
+- Child RED2: no input dependencies; each image and its `.txt` as additional ones; the
+  arguments with `___OverrideInputData___` fingerprint = the logical CRC, default 0;
+  `maxmipsize` fingerprint and default 1048576f; `IsChildResource` 1.
+
+## Normal maps and alpha weighting
+
+Read from the decompile of the 2026-09-23 build (`resourcecompiler_20260923.dll`, the Ghidra
+project's; the texture code is the same in later builds) and checked on RGBA8888 compiles of
+the same inputs, where every level is exact (`RcReference/textures/algorithms`,
+`RcMipAlgorithmTests`): every level and the reflectivity float for float.
+
+- `NormalizeNormals` (180140120 → 181273ec0), on channels 0..2 four pixels at a time:
+  `c = v*2 - 1`, `l2 = (z*z + y*y) + x*x`, `r = rsqrtps(l2)` refined once as
+  `(r*(3 - (r*r)*l2))*0.5`, `n = r*c`, the default (0, 0, 1) where `l2 < 2^-23` or all three
+  inputs are 0, then `n*0.5 + 0.5`. `rsqrtps` differs by CPU vendor: on AMD it depends on the
+  exponent's parity and the top 12 mantissa bits, on Intel the top 10, and it scales exactly
+  with the exponent (`tools/re/texture/rsqrtdump.c`); both tables ship
+  (`Texture/Rc/rsqrt_{amd,intel}.txt`) and follow `Bc7Vendor`, AMD by default.
+- `Inverse` (180141590): `1 - v` per channel.
+- `HemiOctIsoRoughness_RG_B` = `GenerateMips_HemiOctAnisoRoughness` (180148350) then a shuffle.
+  Per level, power-of-two only: channels 10/11 the mean normal X/Y (0..1 space), 8/9 their
+  squares, 6/7 the roughness (`1 - ` the inverted input, 0 without one); each level halves
+  10, 11, 8, 9, 6, 7 with the box; 4/5 = `(sqrt(max(0, m2 - m1*m1)) * 2)^1.5` (0 on mip 0, the
+  power as `sqrt(v) * v`). The lambda (180149d20): `x = 2*m10 - 1`, `y = 2*m11 - 1`,
+  `z = sqrt(clamp(1 - (y*y + x*x)))`, `inv = 1/((|y| + |x|) + z)`, `ch3 = (x*inv + y*inv)*0.5 + 0.5`,
+  `ch1 = (x*inv - y*inv)*0.5 + 0.5`, roughness `ch6 + ch4` and `ch7 + ch5` (gameinfo
+  `MinRoughness` / `MaxRoughnessAnisotropy` clamps, unset in CS2). Shuffle: R = ch3, G = ch1,
+  B = `(ch2 + ch0)*0.5`, A = 1.
+- `ArtistDefinedOrAlphaWeighted`, with no `<name>_mipN` images: `AlphaWeighted` (18014e680) on
+  colour RGB with the weighting input's channel 0 as alpha. Each 2x2 step, taps (x0,y0) (x1,y0)
+  (x0,y1) (x1,y1): `sum = ((a00 + a10) + a01) + a11`; above 0 the colour is
+  `(((c00*a00 + c10*a10) + c01*a01) + c11*a11) * (1/sum)` and alpha `sum*0.25`, else the plain
+  average and alpha 0. Then every level (mip 0 included) fills pixels whose alpha is not
+  positive with the alpha-weighted mean colour of the positive pixels within 2 (180c3c6b0).
+
+### Channel groups of different sizes
+
+Each channel group makes its chain at its own input's size (an algorithm with two inputs
+resamples the smaller to the larger, clamped: 180c43790 with clamp). The texture is the largest
+group's size, and each of its levels takes, from every group's chain, the smallest level at
+least that size (the first when none is) resampled to it with wrapping (18013ce60): a 64x64
+metalness beside a 128x64 colour uses metalness level k-1 for texture level k.
+FILL_TO_POWER_OF_TWO records the first input's size when it differs from the texture's.
+
+All 13 probe children and all 12 probe materials compile identical to RC, children included
+(`Vmat_WithChildren_CompilesToResourceCompilersFiles`).
+
+## Source1import vmats (porter addons, ledger 264, 2026-11-10)
+
+Valve's source1import (the map porter's input) writes each `.vmat` as KV1 text with CRLF line ends
+and every value quoted, plus two blocks the hand-written probes never had: `SystemAttributes`
+(`PhysicsSurfaceProperties`) and `legacy_import` (the whole S1 VMT nested under its shader name).
+`s2c compile-addon` refused all of them before; it now reads them the way RC does:
+
+- `VmatSource` reads the text with `Kv1Text`, a raw reader that keeps each value's text, because
+  tier0 types values by text (`"1.000"` is a float param, `"1"` an int param) and ValveKeyValue
+  retypes numbers itself. Syntax it is not ported for (`#base`, `=`, escapes, duplicate keys,
+  UTF-16, `ToolAttributes`, `dynamicparams`) is refused, not guessed.
+- Keys without a type prefix (`SkyTexture`, `g_bFogEnabled`) are typed by their value, as RC does.
+- `legacy_import` and every other unknown table are skipped; the three attribute tables become
+  `m_*Attributes`, and `PhysicsSurfaceProperties` also a `surface_prop` subasset reference.
+- Four rules the porter vmats showed were wrong before: lists sorted with V_stricmp_fast (was
+  ordinal), searchable data holds every nonzero feature combo, `*Tool*` modes add no searchable
+  attributes, and a child is named after the first input that is not a `materials/default/` image.
+
+Probes: `RcReference/materials/s1i_lmg.vmat` (csgo_lightmappedgeneric, source1import's exact form)
+and `s1i_attrs.vmat` (csgo_complex: both attribute tables, a nested table, edge typings such as
+`"1.000"`, empty and short vectors). Both equal RC byte for byte with their children
+(`MaterialCompilerTests`); `VmatSourceTests` covers typing, vector scanning and refusals.
+
+Checking a whole addon against RC (resourcecompiler alone touches no game process, so it may run
+with CS2 open; go through heavy.py):
+
+    python tools/re/rc_addon_materials.py <porter addon> <new probe addon>
+    s2c compile-addon <new probe addon> -n
+
+The first copies the addon's materials into a fresh probe addon and RC-compiles every `.vmat`
+there; the second reports which of our files are byte-identical. Delete the probe addon's content
+and game folders afterwards.
+
+Result on ze_el_salto_del_angel_v1 (200 vmats, RC references made 11-10): 107 compile, 105 of
+those `.vmat_c` are RC's bytes. The rest are texture features, not the vmat form:
+
+- differ: `sky_day01_01` (sky.vfx `g_tSkyTexture` is a cube texture), `blendproddirtgrass`
+  (csgo_lightmapped_4wayblend: RC's RED2 has two more default children);
+- 27 `_rough` child `.vtex_c` differ only in METADATA (140 bytes): we take the display size from
+  the first input, the 1x1 default normal, and RC does not; its rule is not read yet;
+- refused (97): constant `[r g b]` texture inputs (58, named `<material>_<variable>`), image
+  `.txt` settings (27), `dynamicparams` (8), the cube sky, one unsupported image.
+
+## Open
+
+- Source1import (above): constant texture inputs, cube textures, `dynamicparams`,
+  `ToolAttributes`, 4wayblend's extra default children, a default-normal child's display size, and
+  181fa2f30's walk over the remaining free static combos with its rule checks (we take each
+  non-Tool, no-fallback mode's settings).
+- Which mode wins when two modes give an attribute different values (first seen, here).
+- Intel's `rsqrtps` table is dumped and wired but has no Intel-machine RC reference to check against.
+- Done 11-03 (docs/TEXTURES.md "Mip algorithms", "Image processors"): `PreserveCoverage`
+  (cx_alphatest: csgo_complex with F_ALPHA_TEST, children included, equals RC), `None`,
+  `BoxInverse`, `MipNormal`, `HemiOctAnisoRoughness`, `AnisoRoughness_RG`, `Mod2XCenter`, and `None`
+  beside other algorithms in one texture (csgo_weapon's sticker normals).
+  Not yet: `AnisoNormal` (generic), `RGBM` and `ConvertToYCoCg` (sky), artist `<name>_mipN`
+  images, and the output formats RGBA16161616F (15), BC6H (26) and R8_UNORM (67; the 1103 build's
+  imageformat table at 0x182fecf08, 24-byte entries, adds it after IMAGE_FORMAT_NV12).
+- Done 11-03, cx_weapon (csgo_weapon with F_GLITTER and F_ENABLE_SFX_MASK, every child equal to
+  RC's): a shader's `m_outputTextureFormat` is that table's index, so 0 is RGBA8888 (the glitter
+  normal, two None groups) and 23 DXT5 (the sticker SFX masks; encoded as `.vtex` DXT5, with RC's
+  solid-alpha DXT1 rule, but no material probe yet); a variable's `m_nMaxRes` (512 on the glitter
+  normals) is the generated .vtex's `m_nOutputMaxDimension`, printed after `m_outputFormat` in the
+  logical text (RC's spew, `tools/re/texture/rc_spew.py`), and an input larger than it is refused
+  as unmeasured; a string attribute (type 41, `MaterialLayerType`) is searchable data as it is; and
+  DATA's `RepresentativeTextureWidth/Height` exist only when the shader has a `RepresentativeTexture`
+  attribute (18010c660 adds them when it meets one), which csgo_weapon has not. Default images are
+  sized with the TGA reader too.
+- Image `.txt` settings other than an empty `settings {}` (core's `default_normal.txt` is empty and is recorded with its CRC).
+- Channel references by variable or by file name (above).
+- The value RC uses for system combos (`S_SHADER_QUALITY`, source type 2).
+- Where a compile reads the default images when no Workshop Tools content is installed.

@@ -34,7 +34,13 @@ internal static class WorldNodeBuild
     {
         IReadOnlyCollection<string> Signature(string material) => content.Read(material + "_c") is { } b
             ? [.. Source2.Compiler.MaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
-        var entries = NodeMeshEntries.FromWorld(doc, signature: Signature, rendersAsWorld: rendersAsWorld);
+        // ConvertMeshForBuilder's shift test (rc 20261103 1810e11f0 .. 1810e126c) runs once per mesh for every
+        // builder, the world renderer's too: a material with HasTexcoordTransform 1 keeps the mesh's texcoords
+        // (captured 11-03 for italy_cobblestone_01, ledger 210).
+        var keeps = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        bool Keeps(string material) => keeps.TryGetValue(material, out var k) ? k
+            : keeps[material] = content.Material(material) is { } info && MapMeshCorners.KeepsTexcoords(info);
+        var entries = NodeMeshEntries.FromWorld(doc, Keeps, signature: Signature, rendersAsWorld: rendersAsWorld);
         var copyIds = NodePropEntries.CopyIds(doc, content);
         string NodeKey(NodeMeshEntries.Entry o) => NodePropEntries.Key(o.Source!, o.Instances);
         var bounds = new Dictionary<string, (Vector3 Min, Vector3 Max)>();
@@ -237,7 +243,8 @@ internal static class WorldNodeBuild
                 // parking stripes, 194 153 31, give Valve's draw tint bit for bit).
                 Field28 = new Vector4(Gamma(d.TintColor[0]), Gamma(d.TintColor[1]), Gamma(d.TintColor[2]), d.TintColor[3] / 255f),
                 Stride = stride, Streams = streams, Field1a3 = 1, Field_b8 = 1f, Field1a8 = 1f, Mesh184 = 1f, Field9c = 1f,
-                Field1a1 = 1, Field_b0 = -1f, Matrix = identity,
+                // +0x80 is the descriptor's +0x64, FLT_MAX from OverlayDesc's constructor (181360310).
+                Field1a1 = 1, Field_b0 = -1f, Matrix = identity, Origin = new Vector3(float.MaxValue),
                 MeshStreams = Describe(mesh.Streams, Enumerable.Range(0, mesh.Streams.Count), built[projection.Target].Source.Entry.PreciseTexcoords),
                 TexcoordsPast16 = WrbMeshEntry.TexcoordsPastSixteen(wv, mesh.Stride, mesh.Streams),
             }));

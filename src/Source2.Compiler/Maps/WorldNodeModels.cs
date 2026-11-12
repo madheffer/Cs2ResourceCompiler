@@ -1,4 +1,5 @@
 using System.Numerics;
+using Source2.Compiler.Io;
 using Source2.Compiler.Meshopt;
 using ValveResourceFormat;
 
@@ -30,6 +31,13 @@ namespace Source2.Compiler.Maps;
 /// </summary>
 internal static class WorldNodeModels
 {
+    /// <summary>Exploration hook (TangentFrameCaptureProbe): each packed NORMAL word with the frame it came from.</summary>
+    internal static Action<Vector3, Vector4, uint>? ObserveTangentFrame;
+
+    /// <summary>The model and draw being packed, for <see cref="ObserveTangentFrame"/>.</summary>
+    [ThreadStatic]
+    internal static string? ObservedDraw;
+
     /// <summary>
     /// What a material tells the model: its vertex input signature (INSG
     /// <c>m_elems</c>) and the depth pass's (<c>m_depth_elems</c>). With depth
@@ -45,6 +53,8 @@ internal static class WorldNodeModels
     {
         /// <summary>The vertex buffers before encoding, for comparison.</summary>
         public IReadOnlyList<byte[]> RawVertexBuffers { get; init; } = [];
+        /// <summary>Each draw's index in the draws handed to Assemble, in the model's draw order.</summary>
+        public IReadOnlyList<int> Order { get; init; } = [];
     }
 
     // DXGI formats the node models use.
@@ -65,10 +75,16 @@ internal static class WorldNodeModels
 
     /// <param name="mapMesh">embedded_map_mesh: the model compiler splits the depth stream (FUN_1802f9cc0: with SplitDepthStream, not pooled) and compresses texcoords (ModelCompile_BuildDrawSets) only for a map mesh; a brush entity's model keeps one buffer and float texcoords.</param>
     /// <param name="layout">The signature the layout follows, when not the first draw's material's.</param>
+    /// <param name="preserveTangents">The compile's preserve_tangents argument: 1 for a world node model (WRB_CompileNodeModel),
+    /// 0 for a .vmdl, whose meshes ModelCompile_WeldMesh (1803447d0) always hands CMesh_ComputeTangents.</param>
     public static Built Build(string name, IReadOnlyList<WorldNodeCompile.Entry> meshes, bool aggregate, Func<string, MaterialFacts> material, bool mapMesh = true,
-                              MaterialFacts? layout = null)
+                              MaterialFacts? layout = null, bool preserveTangents = true)
     {
-        var groups = aggregate ? FragmentOrder(meshes).Select(e => new List<WorldNodeCompile.Entry> { e }).ToList() : ByMaterial(meshes);
+        // A world node's meshes reach the model compile through WRB_MeshesToModelDoc's round trip (DmeCopy);
+        // a brush entity's do not: atixref's 144 entity models are Valve's without it, 15 of them differ with it.
+        WorldNodeCompile.Entry Copy(WorldNodeCompile.Entry e) => mapMesh ? DmeCopy(e) : e;
+        var groups = aggregate ? FragmentOrder(meshes).Select(e => new List<WorldNodeCompile.Entry> { ModelTangents(Copy(e), preserveTangents) }).ToList()
+                               : ByMaterial([.. meshes.Select(e => ModelTangents(Copy(e), preserveTangents))]);
         var draws = new List<DrawInput>();
         foreach (var g in groups)
         {
@@ -81,7 +97,8 @@ internal static class WorldNodeModels
                                     first.Stride, first.Facts.Streams, first.Facts));
         }
 
-        return Assemble(name, draws, aggregate, layout ?? material(draws[0].Material), mapMesh, null, Warnings(draws, material)) with { DrawSources = [.. groups.Select(g => g[0])] };
+        var built = Assemble(name, draws, aggregate, d => layout ?? material(d.Material), mapMesh, null, Warnings(draws, material));
+        return built with { DrawSources = [.. built.Order.Select(i => groups[i][0])] };
     }
 
     /// <summary>
@@ -94,24 +111,27 @@ internal static class WorldNodeModels
     {
         var draws = aggregate.Draws.Select(d =>
         {
-            var source = NodePropEntries.Streams(d.Color);
-            // PrepareForMerge's filter by the material's inputs, then the layout order.
+            var source = d.Streams;
+            // PrepareForMerge's filter by the material's inputs, then the layout order: the six
+            // standard streams, then WRB_LoadPropMeshes' extra ones in their order.
             var kept = MaterialStreams.Kept(source, MaterialStreams.Inputs(material(d.Material).Signature.Select(x => x.Semantic)), false).ToHashSet();
-            var order = new[] { 0, 3, 5, 1, 2, 4 }.Where(kept.Contains).Select(i => source[i]).ToList();
+            var order = new[] { 0, 3, 5, 1, 2, 4 }.Concat(Enumerable.Range(6, source.Count - 6)).Where(kept.Contains).Select(i => source[i]).ToList();
             var streams = order.Select(x => new WrbMeshEntry.Stream(x.Name, x.Name == "texcoord" && x.First == 16 ? 1 : 0, x.Count, 0, x.Type)).ToList();
             var offsets = order.Zip(streams).ToDictionary(z => $"{z.Second.Name}:{z.Second.Index}", z => z.First.First, StringComparer.OrdinalIgnoreCase);
-            return new DrawInput(d.Material, d.Geometry, NodePropEntries.Stride, streams,
+            return new DrawInput(d.Material, d.Geometry, d.Stride, streams,
                                  new WrbMeshEntry { Material = d.Material, Attributes = d.Attributes, Field28 = Vector4.One, Streams = streams }) { Offsets = offsets, RenormaliseFrame = true };
         }).ToList();
         uint Format(string f) => f switch { "R32G32_FLOAT" => R32G32Float, "R16G16_SNORM" => R16G16Snorm, _ => R16G16Float };
-        return Assemble(name, draws, true, material(draws[0].Material), true, index => Format(aggregate.TexcoordFormats[index]), Warnings(draws, material));
+        return Assemble(name, draws, true, d => material(d.Material), true, index => Format(aggregate.TexcoordFormats[index]), Warnings(draws, material));
     }
 
     // A draw whose material the game lacks is a compile warning (cardtest's teleport02 models: 1).
     private static int Warnings(List<DrawInput> draws, Func<string, MaterialFacts> material)
         => draws.Select(d => d.Material).Distinct(StringComparer.OrdinalIgnoreCase).Count(m => material(m).Signature.Count == 0);
 
-    private static Built Assemble(string name, List<DrawInput> draws, bool aggregate, MaterialFacts facts, bool mapMesh, Func<int, uint>? texcoordFormat,
+    // factsOf: each draw's own material (ModelCompile_MeshInputLayouts 1802f5680 lays out every mesh
+    // with its material's signature and depth list: atixref's glass beside window wood keeps one buffer).
+    private static Built Assemble(string name, List<DrawInput> draws, bool aggregate, Func<DrawInput, MaterialFacts> factsOf, bool mapMesh, Func<int, uint>? texcoordFormat,
                                   int warnings = 0)
     {
         // Draw sets: draws whose input layout matches share vertex buffers and an
@@ -120,13 +140,28 @@ internal static class WorldNodeModels
         var sets = new List<(List<Slot> Slots, List<DrawInput> Draws)>();
         foreach (var d in draws)
         {
+            var facts = factsOf(d);
             var slots = Layout([d], mapMesh ? facts : facts with { Depth = [] }, aggregate, mapMesh, texcoordFormat);
-            var set = sets.FindIndex(x => x.Slots.Select(l => (l.Field, l.Buffer)).SequenceEqual(slots.Select(l => (l.Field, l.Buffer))));
+            // A NoCollapse mesh (+0x14c) without PackToSharedVB (+0x14d) takes a set of its own in a
+            // second list (1802f69f0's else branch, 1802fcd90): atixref's nomerge objects, one vertex
+            // buffer per draw. That list's sets come first, the shared sets after (1802fcea0, 1802fde10).
+            // The sets match on the layouts before WRB_CompressTexcoordsToSnorm, which then runs once per
+            // set over all its meshes (1802f69f0: the match, then 1802f6840 per set): a draw whose texcoords
+            // fit [-1, 1] joins a set whose others do not, and the set keeps R16G16_FLOAT (atixref's
+            // agg_nomerge_hr_metal_grating_001_0, one buffer).
+            var set = d.Facts.NoCollapse ? -1 : sets.FindIndex(x => !x.Draws[0].Facts.NoCollapse
+                && Uncompressed(x.Slots).SequenceEqual(Uncompressed(slots)));
             if (set < 0)
                 sets.Add((slots, [d]));
             else
                 sets[set].Draws.Add(d);
         }
+        for (var k = 0; k < sets.Count; k++)
+            if (sets[k].Draws.Count > 1)
+            {
+                var facts = factsOf(sets[k].Draws[0]);
+                sets[k] = (Layout(sets[k].Draws, mapMesh ? facts : facts with { Depth = [] }, aggregate, mapMesh, texcoordFormat), sets[k].Draws);
+            }
         var vertexBuffers = new List<WorldNodeModel.VertexBuffer>();
         var indexBuffers = new List<WorldNodeModel.IndexBuffer>();
         var buffers = new List<(BlockType Type, byte[] Bytes)>();
@@ -135,6 +170,7 @@ internal static class WorldNodeModels
         var drawBounds = new Dictionary<DrawInput, (Vector3, Vector3)>(ReferenceEqualityComparer.Instance);
         var meshlets = new List<WorldNodeModel.Meshlet>();
         var (min, max) = (new Vector3(float.MaxValue), new Vector3(float.MinValue));
+        sets = [.. sets.Where(x => x.Draws[0].Facts.NoCollapse), .. sets.Where(x => !x.Draws[0].Facts.NoCollapse)];
         foreach (var (slots, setDraws) in sets)
         {
             // The depth pass reads buffer 0 whenever the material has a depth list, split
@@ -151,6 +187,8 @@ internal static class WorldNodeModels
             {
                 var g = d.Geometry;
                 var offsets = d.Offsets ?? StreamOffsets(d.Streams);
+                if (ObserveTangentFrame is not null)
+                    ObservedDraw = $"{name}|{d.Material}{(d.RenormaliseFrame ? "|renormalised" : "")}";
                 for (var b = 0; b < bufferCount; b++)
                     for (var v = 0; v < g.VertexCount; v++)
                         Pack(vbs[b].AsSpan((vertexBase + v) * strides[b], strides[b]), g.Vertices.AsSpan(v * d.Stride, d.Stride), offsets, slots.Where(l => l.Buffer == b), d.RenormaliseFrame);
@@ -195,9 +233,9 @@ internal static class WorldNodeModels
                     }
                 // An aggregate's draws are white (all 311 of atixref's list aggregate draws);
                 // the mesh's tint rides on its fragment in the .vwnod.
-                var tint = aggregate ? Vector4.One : d.Facts.Field28;
+                var tint = aggregate ? Vector4.One : DrawTint(d.Facts);
                 described[d] = new WorldNodeModel.Draw(d.Material, new Vector3(tint.X, tint.Y, tint.Z), density, firstMeshlet, meshlets.Count - firstMeshlet,
-                    vertexBase, bufferCount > 1 || (mapMesh && facts.Depth.Count > 0) ? 0 : 255, vertexBase + g.VertexCount, startIndex, g.Indices.Length, indexBuffers.Count, handles,
+                    vertexBase, bufferCount > 1 || (mapMesh && factsOf(d).Depth.Count > 0) ? 0 : 255, vertexBase + g.VertexCount, startIndex, g.Indices.Length, indexBuffers.Count, handles,
                     d.Streams.Any(s => s.Name.Equals("PerVertexLighting", StringComparison.OrdinalIgnoreCase)),
                     // A field the material has no input for (atixref's milwall001 object keeps
                     // VertexPaintTintColor and VertexPaintBlendParams) marks the draw unmatched;
@@ -210,35 +248,69 @@ internal static class WorldNodeModels
                 };
                 vertexBase += g.VertexCount;
             }
-            var elementSize = totalVertices > 0xffff ? 4 : 2;
-            // The index codec's output is kept only when smaller than the raw indices.
+            // The index buffer (1802ed800): 4-byte elements once any index passes 0xffff, and the codec's
+            // output (m_bMeshoptCompressed) kept only when smaller than the raw indices.
+            var elementSize = ib.Any(i => i > 0xffff) ? 4 : 2;
             var ibBytes = MeshoptEncoder.EncodeIndexBuffer(ib.ToArray());
             var ibMeshopt = ibBytes.Length < ib.Count * elementSize;
             if (!ibMeshopt)
                 ibBytes = elementSize == 2 ? [.. ib.SelectMany(i => BitConverter.GetBytes((ushort)i))] : [.. ib.SelectMany(i => BitConverter.GetBytes(i))];
             for (var b = 0; b < bufferCount; b++)
             {
-                vertexBuffers.Add(new WorldNodeModel.VertexBuffer(totalVertices, strides[b], true, [.. slots.Where(l => l.Buffer == b).Select(l => l.Field)]));
-                buffers.Add((BlockType.MVTX, MeshoptEncoder.EncodeVertexBuffer(vbs[b], totalVertices, strides[b])));
+                // The vertex buffer (1802ed210) likewise: encoded when there are vertices, and the encoding kept
+                // only when smaller than count x stride (cobblestone_ground_large_1's 1256-byte normal buffer
+                // encodes to 1256 and is stored raw).
+                var vbBytes = totalVertices > 0 ? MeshoptEncoder.EncodeVertexBuffer(vbs[b], totalVertices, strides[b]) : [];
+                var vbMeshopt = vbBytes.Length < totalVertices * strides[b];
+                vertexBuffers.Add(new WorldNodeModel.VertexBuffer(totalVertices, strides[b], vbMeshopt, [.. slots.Where(l => l.Buffer == b).Select(l => l.Field)]));
+                buffers.Add((BlockType.MVTX, vbMeshopt ? vbBytes : vbs[b]));
                 raw.Add(vbs[b]);
             }
             indexBuffers.Add(new WorldNodeModel.IndexBuffer(ib.Count, elementSize, ibMeshopt, aggregate));
             buffers.Add((BlockType.MIDX, ibBytes));
         }
+        // The draws set by set (ModelCompile_BuildDrawSets 1802f69f0 appends each mesh to the first
+        // 400-byte set whose layouts match, and the sets' meshes are compiled set by set): atixref's
+        // blocklight8 and 10 shadow objects end with their second vertex buffer's draw.
+        var ordered = sets.SelectMany(s => s.Draws).ToList();
         var model = new WorldNodeModel(name, vertexBuffers, indexBuffers,
-            [new WorldNodeModel.SceneObject(min, max, [.. draws.Select(d => described[d])], aggregate ? [.. draws.Select(d => drawBounds[d])] : [], meshlets)],
+            [new WorldNodeModel.SceneObject(min, max, [.. ordered.Select(d => described[d])], aggregate ? [.. ordered.Select(d => drawBounds[d])] : [], meshlets)],
             aggregate, warnings);
-        return new Built(model, buffers, [.. draws.Select(d => d.Material).Distinct(StringComparer.OrdinalIgnoreCase)], []) { RawVertexBuffers = [.. raw] };
+        return new Built(model, buffers, [.. draws.Select(d => d.Material).Distinct(StringComparer.OrdinalIgnoreCase)], [])
+        {
+            RawVertexBuffers = [.. raw], Order = [.. ordered.Select(d => draws.IndexOf(d))],
+        };
     }
 
-    // Step_SplittingMeshWith (180260710) welds each fragment's CMesh (CMesh_Weld with 0), then
-    // BuildAggregate sorts: +0x58 (0 for every map mesh), welded vertex count descending, then memcmp of the vertices.
+    /// <summary>
+    /// A render object draw's m_vTintColor: AddDrawDescriptors (1802ed7f0) writes
+    /// V_powf(c, 2.2) of each of the CMesh's tint (+0x154) when its UseTintColor
+    /// (+0x14f) is set, else white. CMesh_SetTint (1812e5580) sets both: the
+    /// overlay projector (181362050) with the overlay's tint, and GroupRenderObjects
+    /// (18026c150), the vis merger (18026e9c0) and CompileInstanced (18026ed20)
+    /// with the entry's +0x28 when it is not (1, 1, 1, 1).
+    /// </summary>
+    private static Vector4 DrawTint(WrbMeshEntry e)
+    {
+        static Vector4 Pow(Vector4 c) => new(MathF.Pow(c.X, 2.2f), MathF.Pow(c.Y, 2.2f), MathF.Pow(c.Z, 2.2f), c.W);
+        if (e.DebugColor)
+            return Pow(e.DebugColorValue);
+        return e.Field28 != Vector4.One ? Pow(e.Field28) : Vector4.One;
+    }
+
+    // Step_SplittingMeshWith (180260710, WRB_BuildAggregate's only call, 180268ef5) welds each fragment's CMesh
+    // (CMesh_Weld with 0; a tangent still joins within 0.001 per component, 1812d80c0), then runs the tangent check
+    // (1812e1450) on the welded mesh and, when it fails, CMesh_ComputeTangents (1812db920) with its split list, whose
+    // vertex copies go to the group's entries ("Computing tangents mesh %i, %i v -> %i"). A weld can leave a tangent
+    // off unit length (atixref: brick02's 243-vertex fragment, |t|^2 0.9927 at vertex 236; A.14 capture), so
+    // Valve recomputes it here, before the DmeMesh round trip renormalises (ledger 253).
+    // BuildAggregate then sorts: +0x58 (0 for every map mesh), welded vertex count descending, then memcmp of the vertices.
     private static List<WorldNodeCompile.Entry> FragmentOrder(IReadOnlyList<WorldNodeCompile.Entry> meshes)
     {
         var welded = meshes.Select(e =>
         {
             var (v, i) = Physics.MeshWeld.Weld(e.Vertices, e.Stride, e.Indices, WeldStreams(e.Facts.Streams), 0f, true);
-            return e with { Vertices = v, Indices = i };
+            return ModelTangents(e with { Vertices = v, Indices = i });
         }).ToArray();
         MsvcSort.Sort(welded, (a, b) =>
         {
@@ -252,24 +324,180 @@ internal static class WorldNodeModels
         return [.. welded];
     }
 
-    private static List<List<WorldNodeCompile.Entry>> ByMaterial(IReadOnlyList<WorldNodeCompile.Entry> meshes)
+    // The model compile's CMesh -> DmeMesh -> CMesh round trip: WRB_MeshesToModelDoc, then DmeMeshToCMeshes
+    // hands DmeMeshToCMesh (180d47b90, called at 180d478db) its matrix with scale 1. DmeMeshToCMesh flags a stream whose
+    // name contains (V_stristr, in this order) position, bentnormal or normal, else not speed, balance or
+    // wrinkle and contains tangentu, tangentv or tangent; 180d46590 copies a flagged stream that is not the
+    // position by Matrix3x4_Rotate, then a three-float one is renormalised unless its CMesh stream's byte
+    // +0x1c is set (0 on map meshes, WrbMeshEntry.Stream) and a four-float one always, w kept (ledger 251).
+    // atixref: the model compile's matrix is the identity (capture_aggstreams.py --dump tangent: our bits at
+    // WRB_MeshesToModelDoc, Valve's at DmeMeshToCMesh's exit; every zero +0 after it).
+    // The first position-named stream is the position (bVar53: its index is local_3a0) and takes the
+    // translate path; a later one is copied as a direction.
+    internal static bool DmeDirection(string name)
     {
-        var groups = new List<List<WorldNodeCompile.Entry>>();
-        foreach (var e in meshes)
-        {
-            // One draw per material and vertex layout: entries with and without a stream
-            // (PerVertexLighting) are separate draws (probe01's no-vis cb_mesh).
-            var g = groups.FirstOrDefault(x => string.Equals(x[0].Material, e.Material, StringComparison.OrdinalIgnoreCase)
-                                               && x[0].Stride == e.Stride && SameLayout(x[0].Facts.Streams, e.Facts.Streams));
-            if (g == null)
-                groups.Add(g = []);
-            g.Add(e);
-        }
-        return groups;
+        if (name.ContainsAscii("position") || name.ContainsAscii("bentnormal") || name.ContainsAscii("normal"))
+            return true;
+        if (name.ContainsAscii("speed") || name.ContainsAscii("balance") || name.ContainsAscii("wrinkle"))
+            return false;
+        return name.ContainsAscii("tangent");
     }
 
+    private static WorldNodeCompile.Entry DmeCopy(WorldNodeCompile.Entry e)
+    {
+        var at = 0;
+        var position = false;
+        var directions = new List<int>();
+        foreach (var x in e.Facts.Streams)
+        {
+            var first = !position && x.Name.ContainsAscii("position");
+            position |= first;
+            if (!first && (x.Count == 3 || x.Count == 4) && DmeDirection(x.Name))
+                directions.Add(at);
+            at += x.Count;
+        }
+        if (directions.Count == 0)
+            return e;
+        var v = (float[])e.Vertices.Clone();
+        for (var b = 0; b + e.Stride <= v.Length; b += e.Stride)
+            foreach (var first in directions)
+            {
+                var d = NodeMeshEntries.Copy(new Vector3(v[b + first], v[b + first + 1], v[b + first + 2]));
+                (v[b + first], v[b + first + 1], v[b + first + 2]) = (d.X, d.Y, d.Z);
+            }
+        return e with { Vertices = v };
+    }
+
+    // The mesh compile's tangents (180344980 -> ModelCompile_WeldMesh 1803447d0, before the merge). A
+    // world node model compiles with preserve_tangents 1 (WRB_CompileNodeModel's argument block, written
+    // by 18020be10), so a mesh keeps its tangents when 1812e1450 accepts them: its first "tangent" stream
+    // of four floats has w = +-1 and |t|^2 within 0.001 of 1, or 0, at every vertex. Otherwise
+    // CMesh_ComputeTangents (1812db920, UseMikkTSpace on): a missing tangent stream is appended after the
+    // others (type 0x2b), each corner gets the generator's tangent (MeshTangents), a vertex takes its first
+    // corner's, and a later corner whose tangent differs (|dx|, |dy| or |dz| >= 1e-4, or w) gets a copy of
+    // the vertex appended to the mesh. The 1e-7 weld that follows is NodeDraw's. atixref: a material that
+    // reads no tangent loses the stream to PrepareForMerge's filter, so Valve recomputes it here.
+    private static WorldNodeCompile.Entry ModelTangents(WorldNodeCompile.Entry e, bool preserve = true)
+    {
+        var streams = e.Facts.Streams;
+        int Offset(Func<WrbMeshEntry.Stream, bool> match)
+        {
+            var at = 0;
+            foreach (var x in streams)
+            {
+                if (match(x))
+                    return at;
+                at += x.Count;
+            }
+            return -1;
+        }
+        var stride = e.Stride;
+        var count = e.Vertices.Length / stride;
+        var tangentAt = Offset(x => x.Name.ContainsAscii("tangent") && x.Count == 4);
+        if (preserve && tangentAt >= 0 && Enumerable.Range(0, count).All(v =>
+            {
+                var at = (v * stride) + tangentAt;
+                var w = e.Vertices[at + 3];
+                var len = (e.Vertices[at] * e.Vertices[at]) + (e.Vertices[at + 1] * e.Vertices[at + 1]) + (e.Vertices[at + 2] * e.Vertices[at + 2]);
+                return (w == 1f || w == -1f) && (MathF.Abs(len - 1f) < 0.001f || len == 0f);
+            }))
+            return e;
+        var position = Offset(x => x.Name.ContainsAscii("position") && x.Count == 3);
+        var normal = Offset(x => x.Name.ContainsAscii("norm") && x.Count == 3);
+        var tex = Offset(x => x.Name.ContainsAscii("tex") && x.Count == 2);
+        if (tex < 0)
+            tex = Offset(x => x.Name.ContainsAscii("tex") && x.Count == 3);
+        if (position < 0 || tex < 0 || normal < 0)
+            return e;
+        var vertices = new List<float>();
+        if (tangentAt < 0)
+        {
+            tangentAt = stride;
+            for (var v = 0; v < count; v++)
+            {
+                vertices.AddRange(e.Vertices.AsSpan(v * stride, stride));
+                vertices.AddRange([0f, 0f, 0f, 0f]);
+            }
+            stride += 4;
+            streams = [.. streams, new WrbMeshEntry.Stream("tangent", 0, 4, 0, 0x2b)];
+        }
+        else
+            vertices.AddRange(e.Vertices);
+        Vector3 V3(int v, int at) => new(vertices[(v * stride) + at], vertices[(v * stride) + at + 1], vertices[(v * stride) + at + 2]);
+        var corners = MeshTangents.Corners([.. Enumerable.Range(0, count).Select(v => V3(v, position))], [.. Enumerable.Range(0, count).Select(v => V3(v, normal))],
+                                           [.. Enumerable.Range(0, count).Select(v => new Vector2(vertices[(v * stride) + tex], vertices[(v * stride) + tex + 1]))], e.Indices);
+        var indices = (int[])e.Indices.Clone();
+        var seen = new List<bool>(new bool[count]);
+        void Set(int v, Vector4 t) => (vertices[(v * stride) + tangentAt], vertices[(v * stride) + tangentAt + 1], vertices[(v * stride) + tangentAt + 2], vertices[(v * stride) + tangentAt + 3]) = (t.X, t.Y, t.Z, t.W);
+        for (var c = 0; c < indices.Length; c++)
+        {
+            var (v, t) = (indices[c], corners[c]);
+            if (!seen[v])
+            {
+                seen[v] = true;
+                Set(v, t);
+                continue;
+            }
+            var at = (v * stride) + tangentAt;
+            if (MathF.Abs(vertices[at] - t.X) < 0.0001f && MathF.Abs(vertices[at + 1] - t.Y) < 0.0001f && MathF.Abs(vertices[at + 2] - t.Z) < 0.0001f && vertices[at + 3] == t.W)
+                continue;
+            var copy = vertices.Count / stride;
+            vertices.AddRange(vertices.GetRange(v * stride, stride));
+            seen.Add(true);
+            Set(copy, t);
+            indices[c] = copy;
+        }
+        return e with { Stride = stride, Vertices = [.. vertices], Indices = indices, Facts = e.Facts with { Streams = streams, Stride = stride } };
+    }
+
+    // The model compiler's mesh merge (180344ae0, from ModelCompile_WeldMeshes 18033f200): each mesh i
+    // not yet taken (i up to the next to last) gathers the later untaken meshes j with its material
+    // (V_stricmp), +0x184, tint (both unset, or both set and equal) and stream layout (name, semantic,
+    // index, offset, count, +0x1c, +0x1d). A group of two or more is CMesh_Concatenate'd in that order
+    // into a new mesh appended to the list, and its members leave it; a mesh no group took keeps its
+    // place. So the draws are the unmerged meshes in order, then the merged groups in first-use order
+    // (atixref's blocklight shadow objects: a lone toolsblocklight or VertexPaintTintColor mesh first).
+    private static List<List<WorldNodeCompile.Entry>> ByMaterial(IReadOnlyList<WorldNodeCompile.Entry> meshes)
+    {
+        var taken = new bool[meshes.Count];
+        var merged = new List<List<WorldNodeCompile.Entry>>();
+        for (var i = 0; i < meshes.Count - 1; i++)
+        {
+            if (taken[i] || meshes[i].Facts.NoCollapse)
+                continue;
+            var group = new List<WorldNodeCompile.Entry> { meshes[i] };
+            for (var j = i + 1; j < meshes.Count; j++)
+            {
+                if (taken[j] || meshes[j].Facts.NoCollapse || !Merges(meshes[i], meshes[j]))
+                    continue;
+                group.Add(meshes[j]);
+                taken[i] = taken[j] = true;
+            }
+            if (group.Count > 1)
+                merged.Add(group);
+        }
+        return [.. Enumerable.Range(0, meshes.Count).Where(i => !taken[i]).Select(i => new List<WorldNodeCompile.Entry> { meshes[i] }), .. merged];
+    }
+
+    private static bool Merges(WorldNodeCompile.Entry a, WorldNodeCompile.Entry b)
+    {
+        if (Io.Tier0Strings.IgnoreCase.Compare(a.Material, b.Material) != 0 || a.Facts.Mesh184 != b.Facts.Mesh184)
+            return false;
+        var (ta, tb) = (MeshTint(a.Facts), MeshTint(b.Facts));
+        if (ta.Set != tb.Set || (ta.Set && ta.Value != tb.Value))
+            return false;
+        return SameLayout(a.Facts.Streams, b.Facts.Streams);
+    }
+
+    // CMesh +0x14f and +0x154 as the model compile sees them (CMesh_SetTint, see DrawTint).
+    private static (bool Set, Vector4 Value) MeshTint(WrbMeshEntry e)
+        => e.DebugColor ? (true, e.DebugColorValue) : e.Field28 != Vector4.One ? (true, e.Field28) : (false, default);
+
+    // The stream compare of 180344ae0: name (case-blind), index, count and +0x1d per stream in order
+    // (the offsets follow from the counts; +8 and +0x1c are empty for map meshes, the type is not compared).
     private static bool SameLayout(IReadOnlyList<WrbMeshEntry.Stream> a, IReadOnlyList<WrbMeshEntry.Stream> b)
-        => a.Count == b.Count && a.Zip(b).All(p => p.First == p.Second);
+        => a.Count == b.Count && a.Zip(b).All(p => Io.Tier0Strings.IgnoreCase.Compare(p.First.Name, p.Second.Name) == 0
+                                                   && p.First.Index == p.Second.Index && p.First.Count == p.Second.Count && p.First.Precise == p.Second.Precise);
 
     private static (float[] Vertices, int[] Indices) Append(List<WorldNodeCompile.Entry> group)
     {
@@ -339,13 +567,64 @@ internal static class WorldNodeModels
     private static bool Reads(IReadOnlyList<Source2ContainerAuthor.MaterialAuthoring.InputSignatureElement> elements, WrbMeshEntry.Stream s)
         => elements.Any(x => MaterialStreams.Inputs([x.Semantic]) is [var m] && Io.Tier0Strings.EqualsIgnoreCase(m.Name, Key(s).Name) && m.Index == Key(s).Index);
 
-    // Field order: position, texcoords, normal, tangent, then the rest as the mesh has them
-    // (ze_hold_em_p's baked fluorescent props, streamed P N Tg T0, lay out P T0 N).
-    private static int Rank(WrbMeshEntry.Stream s) => s.Name.ToLowerInvariant() switch
+    // MapBuilder_CMeshToHalfEdge's row table (18243b690): name and float count, then by count alone
+    // (18243b820); the half-edge field type and whether it is per vertex (+0x24 clear) or per face vertex.
+    private static readonly (string Name, int Count, int Type, bool PerVertex)[] NamedRows =
+    [
+        ("position", 2, 9, true), ("position", 3, 12, true), ("normal", 3, 13, false), ("tangent", 3, 14, false),
+        ("tangent", 4, 18, false), ("texcoord", 2, 10, false), ("color", 1, 2, false),
+        ("vertexPaintTintColor", 1, 2, false), ("vertexPaintBlendParams", 1, 2, false),
+    ];
+
+    private static readonly int[] CountRowTypes = [3, 8, 11, 17];
+
+    // The DMX writer's group per half-edge type (table 1822b73e0): 2 int, 3 float, 8 color, 9 Vector2,
+    // 10 Vector3, 11 Vector4.
+    private static int DmeGroup(int type) => type switch
     {
-        // The lightmap's uvs lay out among the texcoords, after them (ze_hold_em_p's baked aggregates).
-        "position" => 0, "texcoord" or "lightmapuv" => 1, "normal" => 2, "tangent" => 3, _ => 4,
+        1 => 2, 2 => 8, 3 => 3, 8 or 9 or 10 => 9, >= 11 and <= 16 => 10, _ => 11,
     };
+
+    // HalfEdge_WriteDmeMesh (180d4f480) writes the vertex fields (+0x38), then the face-vertex fields (+0xb0),
+    // each pass as 180d4cfe0 (type 12 only), 180d4cc00 (float), 180d4cdf0 (Vector2), 180d4cfe0 (other Vector3),
+    // 180d4d1d0 (Vector4), 180d4ca10 (int), 180d4d3c0 (color); a group keeps its fields in the order
+    // 1813319d0 added them, the mesh's. 180d463b0 lists the DmeMesh's fields in that order and
+    // DmeMeshToCMesh's stream layout (180d473d0) follows it.
+    private static readonly int[] DmeGroupOrder = [3, 9, 10, 11, 2, 8];
+
+    private static int? DmeFieldKey(WrbMeshEntry.Stream s, int at)
+    {
+        var row = NamedRows.FirstOrDefault(r => r.Count == s.Count && Io.Tier0Strings.EqualsIgnoreCase(s.Name, r.Name));
+        var (type, perVertex) = row.Name != null ? (row.Type, row.PerVertex)
+            : s.Count is >= 1 and <= 4 ? (CountRowTypes[s.Count - 1], false)
+            // Any other count takes the "invalid" row (18243b958, type 0, class 0): no writer adds it.
+            : (0, false);
+        if (type == 0)
+            return null;
+        var pass = type == 12 ? 0 : 1 + Array.IndexOf(DmeGroupOrder, DmeGroup(type));
+        return (perVertex ? 0 : 1 << 20) + (pass << 16) + at;
+    }
+
+    // The DmeMesh's field order after the model compile's round trip: CMesh -> half-edge (1813319d0) ->
+    // DmeMesh (180d4f480) -> CMesh (DmeMeshToCMesh). The first blendweight(s) and blendindices stream
+    // (lowest index, 1812e0b10) skip the rows; 180d4f1f0 writes them after both passes, weights first
+    // (181899f00). A stream no writer takes is not in the DmeMesh.
+    private static IEnumerable<WrbMeshEntry.Stream> DmeFieldOrder(IReadOnlyList<WrbMeshEntry.Stream> streams)
+    {
+        int Lowest(params string[] names) => streams.Select((s, i) => (s, i))
+            .Where(x => names.Any(n => Io.Tier0Strings.EqualsIgnoreCase(x.s.Name, n)))
+            .OrderBy(x => x.s.Index).ThenBy(x => x.i).Select(x => x.i).DefaultIfEmpty(-1).First();
+        var weights = Lowest("blendweight", "blendweights");
+        var indices = Lowest("blendindices");
+        var keyed = new List<(int Key, WrbMeshEntry.Stream Stream)>();
+        for (var i = 0; i < streams.Count; i++)
+        {
+            int? key = i == weights ? 1 << 22 : i == indices ? (1 << 22) + 1 : DmeFieldKey(streams[i], i);
+            if (key is { } k)
+                keyed.Add((k, streams[i]));
+        }
+        return keyed.OrderBy(x => x.Key).Select(x => x.Stream);
+    }
 
     private static List<Slot> Layout(List<DrawInput> draws, MaterialFacts facts, bool aggregate, bool mapMesh, Func<int, uint>? texcoordFormat = null)
     {
@@ -357,12 +636,19 @@ internal static class WorldNodeModels
                      && draws[0].Streams.Any(x => !x.Name.Equals("tangent", StringComparison.OrdinalIgnoreCase) && !Reads(facts.Depth, x));
         var slots = new List<Slot>();
         var offsets = new int[2];
-        foreach (var s in draws[0].Streams.OrderBy(Rank))
+        foreach (var s in DmeFieldOrder(draws[0].Streams))
         {
             if (s.Name.Equals("tangent", StringComparison.OrdinalIgnoreCase))
                 continue;
             var (stream, index) = Key(s);
             var input = signature.FirstOrDefault(x => MaterialStreams.Inputs([x.Semantic]) is [var m] && Io.Tier0Strings.EqualsIgnoreCase(m.Name, s.Name) && m.Index == s.Index);
+            // CMesh_BuildPackedInputLayout (181364720, flags 0 from ModelCompile_MeshInputLayouts' global
+            // 18307e21e): with a signature, a field none of its elements takes is dropped unless
+            // InputLayout_MatchSignature's second pass keeps it (181363de0: PerVertexLighting, LightmapUV,
+            // PropWorldOrigin, curvature, bentnormal, blendindices, blendweight(s)); with none (param_7
+            // null) every field stays, with no semantic (atixref's milwall001).
+            if (input == null && signature.Count > 0 && !KeptUnmatched.Contains(s.Name))
+                continue;
             uint format = s.Name.ToLowerInvariant() switch
             {
                 "position" => R32G32B32Float,
@@ -383,8 +669,15 @@ internal static class WorldNodeModels
         return slots;
     }
 
+    private static readonly HashSet<string> KeptUnmatched = new(
+        ["PerVertexLighting", "LightmapUV", "PropWorldOrigin", "curvature", "bentnormal", "blendindices", "blendweights", "blendweight"], StringComparer.OrdinalIgnoreCase);
+
     // The shader semantic is kept in a 32-byte buffer.
     private static string Truncate(string s) => s.Length > 31 ? s[..31] : s;
+
+    // A layout as the set match sees it: an R16G16_SNORM texcoord is the R16G16_FLOAT it was compressed from.
+    private static IEnumerable<(WorldNodeModel.LayoutField, int)> Uncompressed(List<Slot> slots)
+        => slots.Select(l => (l.Field.Format == R16G16Snorm ? l.Field with { Format = R16G16Float } : l.Field, l.Buffer));
 
     private static uint TexcoordFormat(List<DrawInput> draws, WrbMeshEntry.Stream s, bool aggregate)
     {
@@ -458,7 +751,9 @@ internal static class WorldNodeModels
                         var tn = TJunctionFix.Normalise(new Vector3(t.X, t.Y, t.Z));
                         t = new Vector4(tn, t.W);
                     }
-                    BitConverter.TryWriteBytes(o, TangentFrame.Compress(n, t));
+                    var word = TangentFrame.Compress(n, t);
+                    ObserveTangentFrame?.Invoke(n, t, word);
+                    BitConverter.TryWriteBytes(o, word);
                     break;
                 case R32Uint:
                     BitConverter.TryWriteBytes(o, BitConverter.SingleToUInt32Bits(v[at]));

@@ -17,6 +17,8 @@ what the tests pin (`Source2ContainerAuthorTests` against the compiles in
 | `.vsndevts` | matches | matches | n/a | identical |
 | `.vdata` | matches | matches | matches | identical |
 | `.vpcf` | matches | matches | superset (G3) | differs (G2) |
+| `.vsurf` | matches | matches | n/a | identical (RC_PARITY C10 on main, ledger 260) |
+| `.vcompmat` | matches | matches | n/a | identical; texture inputs refused (ledger 261) |
 | `.vtex`, `.vsnd`, `.vsvg` | authored | authored | n/a | binary |
 | `.vagrp` | no ground truth (extinct in CS2) | | | |
 
@@ -24,6 +26,13 @@ Rules:
 - **KV3** is binary v5. A block is compressed when its payload is above
   about 256 bytes and stored raw below (tier0 `binary_auto`, CONTAINERS.md).
 - **Integers** narrow by value: 0 and 1 as singletons, then Int32.
+- **Shared passes** (ledger 262, `Kv3References`): `resource:` and `resource_name:` strings are fixed up
+  (lower case, forward slashes), `resource_name:` strings become RED2 weak references, `soundevent:` strings
+  soundevent subasset references, and RERL and the weak list are sorted by `V_stricmp_fast`.
+- **What the installed RC compiles** comes from `game/bin/assettypes_common.txt` (`m_CompilerIdentifier`). `.vsmart`
+  is listed with none; `.vpulse`, `.vmix`, `.vdsp`, `.vrr` and the animation graph types are only in Valve's unshipped
+  `assettypes_internal.txt`, so the user's RC cannot compile them. Left of the listed ones: `.vpost` (bakes a colour
+  correction volume), `.vsndstck`, `.vrmap`, `econitem`, Panorama `.vcss` / `.vxml` / `.vpdi`, and `.vmdl`.
 - **References** are stated twice, as a `resource:`-flagged string in DATA
   and as a RERL entry with `Source2ResourceId.ForPath` (MurmurHash64B, seed
   0xEDABCDEF). Checked on 90,371 references of 116 maps and all of pak01

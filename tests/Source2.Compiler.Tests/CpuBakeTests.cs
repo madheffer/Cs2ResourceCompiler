@@ -456,14 +456,18 @@ public class CpuBakeTests(ITestOutputHelper output)
             var vmat = File.ReadAllBytes(matFile);
             var vinst = File.ReadAllBytes(instFile);
             var omat = Bytes(ctx.MatU);
+            var ourOffsets = ctx.Instances.Select(x => x.nMaterialData).Distinct().Order().ToList();
             var seen = new HashSet<(uint, uint)>();
             for (var i = 0; i < scene.Instances.Count; i++)
             {
                 var vo = BitConverter.ToUInt32(vinst, i * 32 + 8);
                 var oo = ctx.Instances[i].nMaterialData;
-                if (!seen.Add((vo, oo)) || rtx.ShaderOf(i) is not { } shader)
+                if (!seen.Add((vo, oo)) || rtx.GpuShaderOf(i) is not { } shader)
                     continue;
-                var size = shader.Layout.Length == 0 ? 0x20 : shader.Layout.Max(f => f.Offset) + 16;
+                // A GPU-only hit group has no C# layout: its block runs to our next block.
+                var size = shader is Source2.Compiler.Lighting.Bake.GpuOnlyHitShader
+                    ? (int)(ourOffsets.FirstOrDefault(o => o > oo, (uint)omat.Length) - oo)
+                    : shader.Layout.Length == 0 ? 0x20 : shader.Layout.Max(f => f.Offset) + 16;
                 var diffs = new List<string>();
                 for (var at = 0; at + 4 <= size && vo + at + 4 <= vmat.Length && oo + at + 4 <= omat.Length; at += 4)
                 {
@@ -951,6 +955,44 @@ public class CpuBakeProbe(ITestOutputHelper output)
                         same++;
                 output.WriteLine($"  perceptual {lum}: {same} of {ours.Length / blockBytes} blocks identical");
             }
+        }
+    }
+
+    /// <summary>
+    /// <c>PKGTEX=&lt;Valve's vpk&gt;|&lt;our vpk&gt;|&lt;map&gt;</c>: each lightmap texture's mip 0 blocks against Valve's, with
+    /// where the differing blocks lie (the compressed files alone cannot say how far a lit compile is off).
+    /// </summary>
+    [Fact]
+    public void LightmapBlocksAgainstValve()
+    {
+        if (Environment.GetEnvironmentVariable("PKGTEX") is not { Length: > 0 } spec || spec.Split('|') is not [var valveVpk, var oursVpk, var map])
+            return;
+        (Texture T, byte[] Mip) Read(string vpk, string name)
+        {
+            using var pkg = new ValvePak.Package();
+            pkg.Read(vpk);
+            pkg.ReadEntry(pkg.FindEntry($"maps/{map}/lightmaps/{name}.vtex_c")!, out var vtex);
+            var res = new ValveResourceFormat.Resource();
+            res.Read(new MemoryStream(vtex));
+            var t = (Texture)res.DataBlock!;
+            var mip = new byte[t.CalculateBufferSizeForMipLevel(0)];
+            t.ReadTextureMipLevel(mip, 0);
+            return (t, mip);
+        }
+        foreach (var name in new[] { "irradiance", "directional_irradiance", "direct_light_shadows", "debug_chart_color", "env_light_probe_volume_atlas", "env_light_probe_volume_atlas_dlshd" })
+        {
+            var (vt, valve) = Read(valveVpk, name);
+            var (ot, ours) = Read(oursVpk, name);
+            var block = valve.Length / ((vt.Width + 3) / 4 * ((vt.Height + 3) / 4) * Math.Max(1, (int)vt.Depth));
+            var wide = (vt.Width + 3) / 4;
+            var differ = new List<int>();
+            for (var k = 0; k < Math.Min(valve.Length, ours.Length) / block; k++)
+                if (!valve.AsSpan(k * block, block).SequenceEqual(ours.AsSpan(k * block, block)))
+                    differ.Add(k);
+            var rows = differ.Select(k => k / wide).Distinct().Count();
+            output.WriteLine($"{name}: {vt.Width}x{vt.Height}x{vt.Depth} {vt.Format} (ours {ot.Width}x{ot.Height}x{ot.Depth} {ot.Format}), "
+                + $"{differ.Count} of {valve.Length / block} blocks differ in {rows} block rows"
+                + (differ.Count > 0 ? $", first block {differ[0]} (x {differ[0] % wide * 4}, y {differ[0] / wide * 4}), last {differ[^1]}" : ""));
         }
     }
 

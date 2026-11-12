@@ -80,6 +80,7 @@ public class GameContent : SettleWorld.IModels, IDisposable
             Floats = mat.FloatParams.ToDictionary(x => x.Key, x => x.Value, Tier0Strings.IgnoreCase),
             Vectors = mat.VectorParams.ToDictionary(x => x.Key, x => x.Value, Tier0Strings.IgnoreCase),
             Textures = mat.TextureParams.ToDictionary(x => x.Key, x => x.Value, Tier0Strings.IgnoreCase),
+            VectorAttributes = mat.VectorAttributes.ToDictionary(x => x.Key, x => x.Value, Tier0Strings.IgnoreCase),
             Store = () => store ??= MaterialAttributes.OfModes(info!, Shaders),
         };
     }
@@ -113,6 +114,16 @@ public class GameContent : SettleWorld.IModels, IDisposable
     {
         ReadSurfaces();
         return _surfaceNames!.GetValueOrDefault(nameHash);
+    }
+
+    /// <summary>The compiled surface properties (surfaceproperties.vsurf_c's data block).</summary>
+    public ValveKeyValue.KVObject SurfaceProperties()
+    {
+        _pak.ReadEntry(_pak.FindEntry("surfaceproperties/surfaceproperties.vsurf_c")!, out var bytes);
+        var res = new Resource();
+        res.Read(new MemoryStream(bytes));
+        _keep.Add(res);
+        return ((BinaryKV3)res.DataBlock!).Data;
     }
 
     private void ReadSurfaces()

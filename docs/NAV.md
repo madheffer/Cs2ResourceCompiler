@@ -39,13 +39,13 @@ In order:
 
 | order | function | input | CNavGenInput | state |
 |---|---|---|---|---|
-| 1 | 180f21760 | point_nav_walkable origins, every instance copy | +0x78 seeds | ported (ledger 109) |
+| 1 | 180f21760 | point_nav_walkable origins, every instance copy, in the entity list's order after the bake (the links' search, 180fc6f40) | +0x78 seeds | ported (ledgers 109, 179, 180: all 16 captures' records bit for bit and in order) |
 | 2 | 180f209f0 | func_nav_markup: each `navProperty_<tag>` string key, else a `navProperty_NavAttributes` array | +0x90 markups, tag table +0x30 | ported (ledger 142); a markup inside an instance or prefab (its instance paths, 180f88460) and a scaled markup mesh refuse |
-| 3 | 180f1f830 | prop_deformable and block_base_nav_mesh entities as NONAV blocks | +0x90 | not ported |
+| 3 | 180f1f830 | prop_deformable entities (180fc6f60, mode 3) whose `block_base_nav_mesh` holds (180f31c30): their geometry (180f4a9d0, 0x10), as triangles inside the nav bounds (+0x194 .. +0x1a4, 1818e0800 through the physics world's vf 0x1c0 / 0x1c8), through the mesh processor 181352fb0 (settings 100, 5, 10, 1, 0.9, 40, about 30 helpers at 18133xxxx .. 18135xxxx); then each output triangle whose normal is not within 0.01 of 0 one NONAV markup (0x50 bytes: the box of its corners in the frame 18125d400 builds on the normal, the frame, the centroid, the NONAV tag, flag 1). Read 2026-11-03 (rc 0923) | +0x90 | not ported: 181352fb0 and 1818e0800 unread; no corpus map has a prop_deformable, so a specimen and a Valve compile come first |
 | 4 | 180f21ac0 | info_gravity_shift with `CreateProjectedNavMesh`, then every info_nav_oriented* entity (180f21930) | +0xa8 oriented volumes | not ported |
-| 5 | 180f203b0 | ai_nav_link_area nodes that are CMapNavLink objects: the node's position through each instance path, and that plus the link's vector at +0x185c | +0xc0 links (0x18 each: start, end) | not ported; IslandRemoval already takes links (NavIslandInput.Links) |
-| 6 | 180fb5440 | the compile context's AVOID list (filled by 180f4aed0 from `nav_attribute_avoid`) as NavGen AVOID markups | +0x90 | not ported |
-| 7 | 180fb15e0 | ladders: meshes with a `mapbuilder.ladder` material, then func_ladder children | +0x60 ladders | partial (below) |
+| 5 | 180f203b0 | visible CMapNavLink nodes whose classname is ai_nav_link_area (case-blind), in the world's entity list order after the bake (MapEntityList): the node's position, and that plus its `locatoroffset` (+0x185c); a copy's both as its locators leave them | +0xc0 links (0x18 each: start, end) | ported (ledgers 175, 177, 178, NavGenMapInput.Links): instances, nested copies, prefabs, plain groups, hidden links skipped |
+| 6 | 180fb5440 | the compile context's AVOID list as NavGen AVOID markups, each record copied whole. 180f4aed0 fills it (below, "AVOID from models") | +0x90 | not ported |
+| 7 | 180fb15e0 | ladders: meshes with a `mapbuilder.ladder` material, then func_ladder children | +0x60 ladders | ported; a func_ladder in an instance or prefab refuses (below) |
 | 8 | 180f20f00 | info_nav_space (`DetailedGenerationForSmallNpcs`, `CoarseGenerationForLargeNpcs`); with one, info_node_air seeds and path_corner, info_node_hint, info_cover_hint, ai_flyer_flanking_route_hint, info_combine_gunship_bomb_target hints | +0x100 / +0x108 nav space | not ported |
 | 9 | 180f20e40 | whether any info_nav_oriented_mesh exists | +0x128 | ported (the pipeline's `oriented` flag) |
 | 10 | 180f20c70 | info_nav_oriented_mesh_debug_gen_clip and _render_clip (and their `[PR#]` forms) | | not ported |
@@ -55,8 +55,8 @@ mesh with a mapbuilder.ladder material gives its best face per placement (180fb2
 Then each func_ladder of the root's flat node array whose visibility (+0x370) is set, and each
 sub-map's (180fc8c80, recursing with flag 4), gives its direct children (node vfn 0x130) through the
 same 180fb21f0. 180fb21f0 still needs a mapbuilder.ladder material on the mesh: with none, its
-first-material index is -1 and no face is taken. Ported: the walk. Not ported: the func_ladder
-part (refuses).
+first-material index is -1 and no face is taken. Ported: both parts (NavGenLadders). Not ported: a
+func_ladder inside an instance or prefab (its place in the flat node array, 180fc8c80) refuses.
 
 Movable meshes (6) are marked while the settle world is built (180fb5ce0, called from 180fb5020):
 - func_movelinear with `CreateMovableNavMesh`: its mesh ("does not have a mesh" / "any associated
@@ -65,9 +65,24 @@ Movable meshes (6) are marked while the settle world is built (180fb5ce0, called
 - point_nav_movable_mesh: `ref_ent` (exactly one), `navgen_on_ref_ent`, `GravityFollowsRotation`;
   the reference entity's children, prop_deformable excluded.
 - prop_deformable with `enable_map_generated_navmesh`.
-State: not ported (NavCompile refuses a nav with movable meshes; NavWriter refuses an id path past
-five ids). Several local maps carry `CreateMovableNavMesh` keys (Mako, ze_doom_p2, c2m2,
-cs_script_demo); which have it set is not checked yet.
+State: func_movelinear ported 2026-11-04 (NavMovable, ledger 242). Each collected mover is an entry:
+its id path, its world-to-local matrix (vf 0xa8, 180fdee80: 18125aba0 of the world matrix), the gravity
+bit, and its nodes, whose bodies go to it (180fb6cf0). navsystem's 1800250e0 runs each through the input
+builder (180048b20) and the stage runner 1800260e0 with the first list one stage short (count - 1: no
+IslandRemoval) and no second list; a mover with no polygons is skipped ("no polys present") but still
+listed. Its polygons are appended after the static ones and NAV_GEN_PROJ's, after JoinNonZup
+(18006bee0: indices and connection polygons offset, nothing welded), each polygon's +4 the tag 180020cc0
+(MurmurHash2 of the id path's ints, seed 0x3501a674, rc 180105f50), which the .nav writes per polygon
+(1818e9510 through 1818ed5a0 / 1818f58c0, 0xFFFFFFFF for static). probe_classes (a mover with no
+polygons) and s2c_navmovable (tools/coverage/movable_nav_specimen.py: a level platform, a yawed one, a
+control) are Valve's .nav up to the custom data. Of the local maps only probe_classes sets the key.
+func_mover too (s2c_navmovable4: its platform and a func_brush parented to it, 180fb6e00's parentname chain,
+case-sensitive, prop_deformable left out; Valve's .nav up to the custom data). point_nav_movable_mesh is
+read (ref_ent through the targetname search, navgen_on_ref_ent, the reference's matrix, the point's id path
+and GravityFollowsRotation) but refused: on s2c_navmovable2 and 3 Valve's search finds no entity for a
+ref_ent naming a visible func_brush ("0 reference entities found"), which the code read does not explain.
+Refused also: prop_deformable's enable_map_generated_navmesh, a mover in an instance or prefab, a movable
+mesh on a map with ladders.
 
 ### Which bodies the nav world takes
 
@@ -92,7 +107,7 @@ stages, for example 022 ClipPolysToHullClearance and 029 IslandRemoval, as the c
 | SplitPolysByMarkup, WeldVertices, RemoveDegens | ported |
 | ClipPolysToHullClearance | ported; casts against non-mesh shapes partly refused (below) |
 | GenerateConnections, SplitBottleneckPolys, SplitPolysWithMultipleConnections, SplitBoundaryPolysWithConnections | ported |
-| AddJumps, RemoveSmallAreasOnEdge | ported |
+| AddJumps, RemoveSmallAreasOnEdge | ported; AddJumps' cast is vphysics2's cylinder sweep (NavJumpSweepWorld, ledger 174) |
 | LadderConnect | ported (ledger 107); rays against spheres and capsules refuse |
 | IslandRemoval (twice: one hull, all hulls; nav_gen_island_removal / _all_hulls) | ported in the all-hulls form; links and several hulls not exercised |
 
@@ -106,14 +121,11 @@ with FlowMap_Enabled), the debug stages (NavGenRecastDebugStage_t, .navdbg). Non
 ## The mesh build and the .nav (navsystem, navlib)
 
 CNavMesh::BuildFromNavGenPolys (1818d63c0) and SaveNavMeshToBuffer (1818d1320), version 36.
-Ported for one hull with no ladders, links, movable meshes or place names. **Gap found 2026-10-28:**
-NavWriter writes zero ladders and empty per-area ladder lists without refusing, so a map with a
-mapbuilder.ladder mesh (s2c_prefabprobe3) passes 028 with Valve's connectivity but its .nav lacks the
-ladders. The ladder save (1818e71b0) and the build's ladder step are not ported.
+Ported for one hull with ladders (2026-10-28, ledger 174: s2c_prefabprobe3's .nav from the .vmap is
+Valve's up to the custom data, ladder included); no links, movable meshes or place names. NavCompile.Mesh
+runs the area build, then the ladders (NavMeshLadders), and NavWriter saves both.
 
-Since 2026-10-28 NavCompile refuses a nav with ladders instead of writing it.
-
-### Ladders in the mesh build (read 2026-10-28, not ported)
+### Ladders in the mesh build (ported 2026-10-28, NavMeshLadders)
 
 After the areas, the grid and vfn 0x60, BuildFromNavGenPolys makes one CNavLadder (0x78 bytes,
 1818e6970) per input ladder (1818c78a0: top, bottom, normal, width of CNavGenInput +0x68's 0x28-byte
@@ -142,9 +154,11 @@ The trace (CNavToolsPhysicsInterface, vtable 182771930; vfn 0x10 = 1818d2b40 -> 
 interacts with 0x3021 (DAT_183023858), +0x2f = 1, +0x30 = 4, flags 0x49, the same query bytes as
 LadderConnect's ray (GROUND_TRUTH 107) but a cast through vfn 0x560 like the analysis' sphere
 (NavSphereWorld). The result's +0xac fraction, +0x90 / +0x98 normal, +0xbb start-solid, +0x28 the
-hit's attribute qword with bit 0 set. What is still to read: the hit normal and start-solid of that
-cast (1817c6b60 and the shape vfn 0x20s), and 1818d1fa0's choice among its up to 128 hits (Ghidra
-prints the compare oddly; take it from the disassembly).
+hit's attribute qword with bit 0 set. 1818d1fa0 keeps the first hit and replaces it only by a strictly
+nearer one. The hit record (vphysics2 1801c7c70) takes the shape's normal through the body's turn as
+(n.x r0 + n.y r3) + n.z r6, and the attributes from CPhysicsShape vfn 0x50 (18003f500, RnShape +0x50).
+A cast starting inside a closed mesh reports fraction 0 and a normal from 18016f710, which is not
+ported: the ladder refuses when it would take that normal. Start-solid never changes a result here.
 
 The save (1818e71b0), per ladder after the areas: u32 id, f32 width, top, bottom, f32 length,
 u32 direction, then the ids (+0x60) of the seven areas (+0x20, +0x28, +0x30, +0x38, +0x40, +0x48,
@@ -185,20 +199,48 @@ What Hammer can put in a .vmap that the nav step reads:
   a .vmap can still carry them, so they are in scope.
 - CMapNavLink (the Nav Links tool): type (MapNavLinkType_t GENERIC, GROUND, JUMP_DOWN, CLIMB_UP,
   VAULT_OVER), width, movement forward / reverse and previews (scripts/navlinks.vdata), locators
-  (CMapNavLinkLocator). The collector takes only its two end points.
+  (CMapNavLinkLocator). The collector takes only its two end points. In the .vmap the attributes carry
+  the tool attributes' lower-case names (`locatoroffset` measured; `locatorOffset` is not read), and
+  `navlink_type` is the MapNavLinkType_t name as a string, matched case-blind (ledger 176).
 - CMapNavData (the map's nav settings, `navData`): ported.
-- Materials: mapbuilder.ladder (tools/toolsinvisibleladder), mapbuilder.navclip,
-  nav_attribute_avoid.
+- Materials: mapbuilder.ladder (tools/toolsinvisibleladder), mapbuilder.navclip.
+- Models: a model whose KV3 has `nav_data { nav_attribute_avoid = true }` (collector 6). No CS2 FGD
+  offers a `nav_data` ModelGameData block, so only hand-written model key values reach it.
 - Hammer-only: the nav mesh polyclip tool (CToolNavMeshPolyclip, "Generate Nav Debug", "Load Nav From
   VPK") and grid nav (CMapDotaGridnavMarkup, `-gridnav`): whether either reaches a CS2 compile is
   not read.
 
+## AVOID from models (collector 6, decompiled 2026-10-29, rc 0923)
+
+Read from disassembly, not ported, no capture.
+- ResourceCompilerMap_CompileMap (1800fd550) calls 180fb6b80 at 1800fdd3b, after 180fb5020,
+  180fb5790 and 180fb6de0 set up the nav physics context at rbp - 0x60. It runs only when
+  180fb0670(.., 5) holds and the list at rbp + 0x948 exists; the list's +0x18 is then pointed at the context.
+- 180fb6b80 passes [ctx + 8] to 180f4aed0, which walks that object's table (slots of 0x28, a
+  negative first int is empty, nodes at +0x18 with the count at +0x10, each node at +0x40).
+- Per node: the first helper (+0x180 count, +0x188 array) that dynamic-casts from CBaseHelper to
+  CModelHelper. Its model's KV3 (helper +0xb8, then +0x38) needs a member `nav_data` holding a true
+  bool `nav_attribute_avoid`. Then the node's vfn 0xa0 writes its 3x4 transform, and the record is
+  the bounds at node +0x14c, min + (18, 18, 0) and max - (18, 18, 0), followed by that transform.
+  The record is 0x48 bytes.
+- 180fb5440 appends each record to the markups (+0x90) with the AVOID tag and the flag byte cleared.
+- Open before porting: what [ctx + 8] is and which nodes enter its table, and the table's slot order,
+  which decides the markups' order. Both need a capture on a probe model carrying the key, with CS2
+  closed.
+
 ## Order of work
 
-1. Ladders end to end: the func_ladder collector, the mesh build's ladders and the .nav ladder save,
-   area ladder lists, the analysis with ladders. Check: s2c_prefabprobe3 and c2m3_coaster_d.
-2. Nav links: the CMapNavLink collector, IslandRemoval with links, whatever the mesh build and the
-   analysis do with them. Needs a probe map with every link type.
+1. Ladders: done on s2c_prefabprobe3 (2026-10-28). Left: a func_ladder in an instance or prefab,
+   the closed-mesh normal (18016f710), and c2m3_coaster_d as a second check.
+2. Nav links: done on s2c_navlink (2026-10-28, ledger 175): the collector, IslandRemoval with links
+   (navsystem's only reader; the mesh build and the analysis never see them) and the links' lump
+   entities. Every attribute measured on s2c_navlink2 (ledger 176); instances, nested copies, groups
+   and hidden links on s2c_navlink4 (ledger 177, the entity list after the bake), prefabs on
+   s2c_navlink3 (ledger 178). Prefabs whose map has instances or prefabs: ledgers 179, 180 (whole
+   lists of s2c_prefabprobe3, 4, 5, 7, 9, s2c_deformpath3, 4); hidden instances: ledger 181 (mako,
+   c2m3_coaster_d_d whole); hidden prefabs, prefabs in targets and a target moved rather than
+   cloned: ledger 183 (s2c_hidepf, s2c_pfintarget, s2c_aheadprobe whole). Left: what MapEntityList
+   still refuses (a moved or cloned target holding instances or prefabs, a target deleted with another).
 3. Movable meshes, every source above.
 4. AVOID from materials (6) and NONAV blocks (3).
 5. Oriented and projected generation (4, 10, stages 005 / 007, JoinNonZup).

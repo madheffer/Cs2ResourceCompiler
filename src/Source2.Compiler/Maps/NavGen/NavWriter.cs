@@ -25,6 +25,21 @@ public static class NavWriter
 
         /// <summary>Per corner edge: (area id, edge on that area) of each walk connection.</summary>
         public List<(uint Area, int Edge)>[] Connections = [];
+
+        /// <summary>The area's two ladder lists (1818ed310 0 and 1), as ladder ids: 0 holds ladders it is a bottom area of, 1 a top area.</summary>
+        public List<uint>[] Ladders = [[], []];
+    }
+
+    /// <summary>A CNavLadder (0x78 bytes, 1818e6970) as the mesh build leaves it and 1818e71b0 saves it.</summary>
+    public sealed class Ladder
+    {
+        public uint Id;
+        public System.Numerics.Vector3 Top, Bottom, Normal;
+        public float Width, Length;
+        public int Direction;
+
+        /// <summary>The area slots +0x20, +0x28, +0x30, +0x38 (top) and +0x40, +0x48, +0x50 (bottom).</summary>
+        public Area?[] Areas = new Area?[7];
     }
 
     /// <summary>The mesh the file is written from: the compacted corners, the polygons and the areas.</summary>
@@ -32,10 +47,16 @@ public static class NavWriter
     {
         public List<(float X, float Y, float Z)> Corners = [];
         public List<int[]> Polygons = [];
+
+        /// <summary>Each polygon's movable mesh tag (<see cref="NavMovable.Tag"/>), 0xFFFFFFFF for the static mesh's.</summary>
+        public List<uint> PolygonTags = [];
         public List<Area> Areas = [];
 
         /// <summary>The movable meshes (navsystem's list of 0x70-byte entries): none of their polygons are ported.</summary>
         public List<MovableMesh> Movable = [];
+
+        /// <summary>The ladders (the mesh's +0x108 list), from <see cref="NavMeshLadders.Build"/>.</summary>
+        public List<Ladder> Ladders = [];
     }
 
     /// <summary>
@@ -77,33 +98,47 @@ public static class NavWriter
     /// attributes 0x8000 for flag 8, 0x20000 for flag 0x10, 0x10000 for kind 1, 0x40000 for kind 2;
     /// +0x58 from the polygon's +0x62.
     /// </summary>
-    public static Mesh Build(NavGenPolys g)
+    public static Mesh Build(NavGenPolys g, IReadOnlyList<(NavMovable Mesh, NavGenPolys? Polys)>? movable = null)
     {
+        // The movable meshes' polygons come after the static ones (1800250e0 appends each with 18006bee0,
+        // which only offsets the corner indices and the connections' polygons), each tagged; the
+        // compaction then runs over all of them.
+        var parts = new List<(NavGenPolys Polys, uint Tag)> { (g, 0xFFFFFFFF) };
+        foreach (var (m, polys) in movable ?? [])
+            if (polys is not null)
+                parts.Add((polys, m.Tag));
         // JoinNonZup only acts on polygons with flag 8 (the oriented-mesh path).
-        if (g.Polys.Any(p => (p.Flags & 8) != 0))
+        if (parts.Any(part => part.Polys.Polys.Any(p => (p.Flags & 8) != 0)))
             throw new NotSupportedException("nav polygons with flag 8 (JoinNonZup, 180072b50) are not ported");
         var mesh = new Mesh();
-        var remap = new int[g.Pool.Count];
-        Array.Fill(remap, -1);
-        foreach (var p in g.Polys)
+        foreach (var (m, _) in movable ?? [])
+            mesh.Movable.Add(new MovableMesh(m.Name, m.Matrix, m.GravityFollowsRotation));
+        foreach (var (part, tag) in parts)
         {
-            var poly = new int[p.Indices.Count];
-            for (var k = 0; k < poly.Length; k++)
+            var remap = new int[part.Pool.Count];
+            Array.Fill(remap, -1);
+            foreach (var p in part.Polys)
             {
-                var v = p.Indices[k];
-                if (remap[v] == -1)
+                var poly = new int[p.Indices.Count];
+                for (var k = 0; k < poly.Length; k++)
                 {
-                    remap[v] = mesh.Corners.Count;
-                    var (x, y, z) = g.Pool[v];
-                    mesh.Corners.Add(((float)x, (float)y, (float)z));
+                    var v = p.Indices[k];
+                    if (remap[v] == -1)
+                    {
+                        remap[v] = mesh.Corners.Count;
+                        var (x, y, z) = part.Pool[v];
+                        mesh.Corners.Add(((float)x, (float)y, (float)z));
+                    }
+                    poly[k] = remap[v];
                 }
-                poly[k] = remap[v];
+                mesh.Polygons.Add(poly);
+                mesh.PolygonTags.Add(tag);
             }
-            mesh.Polygons.Add(poly);
         }
-        for (var i = 0; i < g.Polys.Count; i++)
+        var all = parts.SelectMany(part => part.Polys.Polys.Select((p, i) => (Poly: p, Base: parts.TakeWhile(x => x.Polys != part.Polys).Sum(x => x.Polys.Polys.Count)))).ToList();
+        for (var i = 0; i < all.Count; i++)
         {
-            var p = g.Polys[i];
+            var (p, polyBase) = all[i];
             var area = new Area { Id = (uint)i + 1, Polygon = i, Byte58 = p.Field62, Connections = new List<(uint, int)>[p.Indices.Count] };
             for (var e = 0; e < area.Connections.Length; e++)
             {
@@ -113,7 +148,7 @@ public static class NavWriter
                 foreach (var c in links.PerEdge[e])
                 {
                     var link = links.Connections[c];
-                    var target = (uint)link.PolyB + 1;
+                    var target = (uint)(link.PolyB + polyBase) + 1;
                     if (link.Kind == 0 && target != area.Id)
                         area.Connections[e].Add((target, (sbyte)(byte)link.EdgeB));
                 }
@@ -137,8 +172,8 @@ public static class NavWriter
     }
 
     /// <summary>
-    /// SaveNavMeshToBuffer (1818d1320), version 36, for a mesh with no ladders, no movable meshes and
-    /// no area names: the header, the place-name table (1818ee8d0), the movable meshes' KV3 (vfn 0xd8,
+    /// SaveNavMeshToBuffer (1818d1320), version 36, for a mesh with no movable meshes and no area
+    /// names: the header, the place-name table (1818ee8d0), the movable meshes' KV3 (vfn 0xd8,
     /// null without any), the polygon pool (1818e9510), the second KV3 (vfn 0xe8, null), the areas
     /// (vfn 0x40, 1818cfe80), ladders, transformed bounds, the generation parameters (1818d0690), the
     /// NavGenParams KV3 (vfn 0xf8, 1818d18f0) and the custom data (CSNavMesh vfn 0x78). Each KV3
@@ -168,12 +203,14 @@ public static class NavWriter
             w.F32(z);
         }
         w.U32((uint)mesh.Polygons.Count);
-        foreach (var poly in mesh.Polygons)
+        for (var i = 0; i < mesh.Polygons.Count; i++)
         {
+            var poly = mesh.Polygons[i];
             w.U8((byte)poly.Length);
             foreach (var k in poly)
                 w.U32((uint)k);
-            w.U32(0xFFFFFFFF);
+            // 1818e9510: the area's movable mesh (1818ed5a0), 0xFFFFFFFF for the static mesh.
+            w.U32(i < mesh.PolygonTags.Count ? mesh.PolygonTags[i] : 0xFFFFFFFF);
         }
         w.U32(0);
         w.U32((uint)mesh.Movable.Count);
@@ -202,14 +239,34 @@ public static class NavWriter
                     w.U32((uint)e);
                 }
             }
-            // Hiding spots (byte), encounter spots, ladders up and down: none.
+            // Hiding spots (byte) and encounter spots: none. Then ladder lists 0 and 1 (count, ids +0x68).
             w.U8(0);
             w.U32(0);
-            w.U32(0);
-            w.U32(0);
+            foreach (var list in a.Ladders)
+            {
+                w.U32((uint)list.Count);
+                foreach (var id in list)
+                    w.U32(id);
+            }
         }
-        // Ladders, transformed bounds (movable meshes not marked +0x4c): none.
-        w.U32(0);
+        // 1818e71b0 per ladder: id, width, top, bottom, length, direction, the seven areas' ids (0 for none).
+        w.U32((uint)mesh.Ladders.Count);
+        foreach (var l in mesh.Ladders)
+        {
+            w.U32(l.Id);
+            w.F32(l.Width);
+            w.F32(l.Top.X);
+            w.F32(l.Top.Y);
+            w.F32(l.Top.Z);
+            w.F32(l.Bottom.X);
+            w.F32(l.Bottom.Y);
+            w.F32(l.Bottom.Z);
+            w.F32(l.Length);
+            w.U32((uint)l.Direction);
+            foreach (var a in l.Areas)
+                w.U32(a?.Id ?? 0);
+        }
+        // Transformed bounds (movable meshes not marked +0x4c): none.
         w.U32(0);
         GenerationParameters(w, settings);
         w.Kv3(NavGenParams(settings), GenericFormat);

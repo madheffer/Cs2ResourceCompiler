@@ -101,7 +101,12 @@ public sealed class RtxShaderLibrary(params string[] packages) : IDisposable
         if (Get(info.Shader) is not { } p)
             return null;
         var f = info.Params.Where(x => x.Key.StartsWith("F_", StringComparison.Ordinal)).ToDictionary(x => x.Key, x => (byte)x.Value);
-        return (p, ValveResourceFormat.IO.ShaderDataProvider.GetStaticConfiguration_ForFeatureState(p.Features, p.Rtx, f).StaticComboId);
+        var (config, id) = ValveResourceFormat.IO.ShaderDataProvider.GetStaticConfiguration_ForFeatureState(p.Features, p.Rtx, f);
+        // A configuration the file does not carry is reduced as MaterialAttributes reduces the pc programs' (the
+        // trace flags built on that equal Valve's .rte); the material blocks then check it against vrad3's.
+        if (!p.Rtx.StaticComboEntries.ContainsKey(id) && ValveResourceFormat.IO.ShaderDataProvider.TryReduceStaticConfiguration(p.Rtx, config, out var reduced))
+            id = new ValveResourceFormat.CompiledShader.ComboConfigMapping(p.Rtx).CalcComboIdFromValues(reduced);
+        return (p, id);
     }
 
     /// <summary>One shader attribute of a material's static combo: its constant or expression, and the variable it binds (with that variable's SrgbRead).</summary>
@@ -199,22 +204,25 @@ public sealed class VfxEval
     private readonly string _text;
     private int _pos;
     private readonly Func<string, float[]?> _lookup;
+    private readonly Func<string, float[]?>? _reflectivity;
     private readonly int[] _features;
     private readonly Dictionary<string, float[]> _locals = [];
 
-    private VfxEval(string text, Func<string, float[]?> lookup, int[] features)
+    private VfxEval(string text, Func<string, float[]?> lookup, int[] features, Func<string, float[]?>? reflectivity)
     {
         _text = text;
         _lookup = lookup;
         _features = features;
+        _reflectivity = reflectivity;
     }
 
-    /// <summary>Unported colour matrix arguments met (non-default colour correction or tint): the result was identity.</summary>
-    public static int UnportedColorMatrices;
-
-    public static float[] Evaluate(string text, Func<string, float[]?> lookup, int[] features)
+    /// <summary>
+    /// <paramref name="reflectivity"/>: a texture variable's header reflectivity, TextureAverageColor's source (null
+    /// when the material sets no such texture).
+    /// </summary>
+    public static float[] Evaluate(string text, Func<string, float[]?> lookup, int[] features, Func<string, float[]?>? reflectivity = null)
     {
-        var e = new VfxEval(text.Trim(), lookup, features);
+        var e = new VfxEval(text.Trim(), lookup, features, reflectivity);
         if (e._text.StartsWith("return ", StringComparison.Ordinal))
             e._pos = 7;
         float[] last = [0f];
@@ -412,6 +420,17 @@ public sealed class VfxEval
         }
         if (Eat("("))
         {
+            // TextureAverageColor(texture): rendersystem's copy of the .vtex header's reflectivity (+4), w 1
+            // (materialsystem2 18009bb70; Gpu/VfxExpression). A texture the material does not set keeps (0, 0, 0, 1)
+            // (the shader default texture is not read).
+            if (id == "TextureAverageColor")
+            {
+                var at = _pos;
+                Skip();
+                if (Identifier() is { } texture && Eat(")"))
+                    return _reflectivity?.Invoke(texture) is { } r ? [r[0], r[1], r[2], 1f] : [0f, 0f, 0f, 1f];
+                _pos = at;
+            }
             var args = new List<float[]>();
             if (!Eat(")"))
             {
@@ -461,6 +480,27 @@ public sealed class VfxEval
                 return Zip(a[0], a[1], MathF.Max);
             case "saturate":
                 return Map(a[0], x => Math.Clamp(x, 0f, 1f));
+            case "normalize":
+            {
+                // materialsystem2 18009b6e0 -> 180080f40, mathlib's VectorNormalize on xyz (w as it was): the squares
+                // y, z, x summed, times 1 / length inside 1e-17 .. 1e17, zero stays zero. The double path past that
+                // range (1800834c0) is not read.
+                var v = (float[])a[0].Clone();
+                if (v.Length < 3)
+                    throw new NotSupportedException($"VfxEval: normalize of {v.Length} components");
+                var len = MathF.Sqrt(v[1] * v[1] + v[2] * v[2] + v[0] * v[0]);
+                if (len != 0f && !(1e-17f <= len && len <= 1e17f))
+                    throw new NotSupportedException("VfxEval: normalize outside 1e-17 .. 1e17 (180080f40's double path) is not ported");
+                if (len != 0f)
+                {
+                    var inv = 1f / len;
+                    (v[0], v[1], v[2]) = (inv * v[0], inv * v[1], inv * v[2]);
+                }
+                return v;
+            }
+            case "log":
+                // materialsystem2 18009a240: tier0's V_logf on each component (MathF.Log's, Tier0MathTests).
+                return Map(a[0], MathF.Log);
             case "lerp":
                 return Zip(Zip(a[0], a[1], (x, y) => y - x), a[2], (d, t) => d * t) is var d2 ? Zip(a[0], d2, (x, y) => x + y) : a[0];
             case "dot":
@@ -473,16 +513,16 @@ public sealed class VfxEval
                 return v;
             }
             case "MatrixMultiply":
-                return Multiply(a[0], a[1]);
+                return a[0].Length == 16 && a[1].Length == 16 ? ColorMatrices.Multiply(a[0], a[1]) : Identity();
             case "MatrixColorTint2":
-                // 1800818d0 builds D^-1 R^T (tint terms) R D like ColorCorrect; with a white tint the tint
-                // terms are identity, and its output equals ColorCorrect(1, 1, 1) word for word
-                // (tools/vrad3/capture_colormatrix.py). Coloured tints are not ported.
-                if (!a[0].Take(3).All(x => x == 1f))
-                    UnportedColorMatrices++;
-                return ColorCorrect(1f, 1f, 1f, [0f, 0f, 0f]);
+                // 1800818d0 (Lighting/ColorMatrices; a white tint's output is ColorCorrect(1, 1, 1)'s word for word,
+                // tools/vrad3/capture_colormatrix.py).
+                return ColorMatrices.Tint2([a[0][0], a[0][Math.Min(1, a[0].Length - 1)], a[0][Math.Min(2, a[0].Length - 1)]], a[1][0]);
             case "MatrixColorCorrect2":
-                return ColorCorrect(a[0][0], a[0][1], a[0][2], a.Count > 1 ? a[1] : [0f, 0f, 0f]);
+            {
+                var avg = a.Count > 1 ? a[1] : [0f, 0f, 0f];
+                return ColorMatrices.Correct2(a[0][0], a[0][1], a[0][2], [avg[0], avg[Math.Min(1, avg.Length - 1)], avg[Math.Min(2, avg.Length - 1)]]);
+            }
             case "TextureAverageColor":
                 return [0f, 0f, 0f, 1f];
             default:
@@ -500,89 +540,6 @@ public sealed class VfxEval
     }
 
     private static float[] Identity() => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-
-    // Row-major 4x4 product a * b (materialsystem2 180081100: each element a dpps of a row and a column,
-    // (a0 b0 + a1 b1) + (a2 b2 + a3 b3)).
-    private static float[] Multiply(float[] a, float[] b)
-    {
-        if (a.Length != 16 || b.Length != 16)
-            return Identity();
-        var r = new float[16];
-        for (var i = 0; i < 4; i++)
-            for (var j = 0; j < 4; j++)
-                r[i * 4 + j] = (a[i * 4] * b[j] + a[i * 4 + 1] * b[4 + j]) + (a[i * 4 + 2] * b[8 + j] + a[i * 4 + 3] * b[12 + j]);
-        return r;
-    }
-
-    private static float[] Diagonal(float x, float y, float z) => [x, 0, 0, 0, 0, y, 0, 0, 0, 0, z, 0, 0, 0, 0, 1];
-
-    /// <summary>
-    /// MatrixColorCorrect2 (materialsystem2 18009c090 / 180081260) of (contrast, saturation,
-    /// brightness) about the average colour a: ((((((D^-1 R^T) S) R) D) B) C), R the rotation
-    /// (1800828c0) taking the normalised luminance axis (0.2125, 0.7154, 0.0721) (180080f40) to z,
-    /// D that axis' components, S diag(saturation, saturation, 1), B diag(brightness),
-    /// C = (T(a) diag(contrast)) T(-a).
-    /// </summary>
-    public static float[] ColorCorrect(float contrast, float saturation, float brightness, float[] a)
-    {
-        float[] t = [1, 0, 0, a[0], 0, 1, 0, a[1], 0, 0, 1, a[2], 0, 0, 0, 1];
-        float[] tn = [1, 0, 0, -a[0], 0, 1, 0, -a[1], 0, 0, 1, -a[2], 0, 0, 0, 1];
-        var c = Multiply(Multiply(t, Diagonal(contrast, contrast, contrast)), tn);
-        // 180080f40: length from (y y + z z) + x x, scaled by its reciprocal.
-        float lx = 0.2125f, ly = 0.7154f, lz = 0.0721f;
-        var len = MathF.Sqrt(ly * ly + lz * lz + lx * lx);
-        if (len >= 1e-17f && len <= 1e17f)
-        {
-            var inv = 1f / len;
-            (lx, ly, lz) = (inv * lx, inv * ly, inv * lz);
-        }
-        var r = RotationBetween(lx, ly, lz, 0f, 0f, 1f);
-        float[] rt =
-        [
-            r[0], r[4], r[8], r[12], r[1], r[5], r[9], r[13], r[2], r[6], r[10], r[14], r[3], r[7], r[11], r[15],
-        ];
-        var m = Multiply(Diagonal(1f / lx, 1f / ly, 1f / lz), rt);
-        m = Multiply(m, Diagonal(saturation, saturation, 1f));
-        m = Multiply(m, r);
-        m = Multiply(m, Diagonal(lx, ly, lz));
-        m = Multiply(m, Diagonal(brightness, brightness, brightness));
-        return Multiply(m, c);
-    }
-
-    // 1800828c0: the rotation taking unit vector f to unit vector t about their cross product, with
-    // |cross| as the sine (identity when it is 0); the decompile's operation order.
-    private static float[] RotationBetween(float fx, float fy, float fz, float tx, float ty, float tz)
-    {
-        var cy = fz * tx - tz * fx;
-        var cx = tz * fy - fz * ty;
-        var cz = ty * fx - fy * tx;
-        var len = MathF.Sqrt(cz * cz + cy * cy + cx * cx);
-        var cos = fz * tz + ty * fy + fx * tx;
-        var k = 1f - cos;
-        var m = new float[16];
-        m[15] = 1f;
-        if (!(len > 0f))
-        {
-            m[0] = m[5] = m[10] = 1f;
-            return m;
-        }
-        var inv = 1f / len;
-        var ax = inv * cx;
-        var ay = inv * cy;
-        var az = inv * cz;
-        var t = ax * k;
-        m[0] = ax * t + cos;
-        m[1] = ay * t - az * len;
-        m[4] = ay * t + az * len;
-        m[5] = ay * ay * k + cos;
-        var u = az * ay * k;
-        m[2] = az * t + ay * len;
-        m[8] = az * t - ay * len;
-        m[9] = u + ax * len;
-        m[6] = u - ax * len;
-        m[10] = az * k * az + cos;
-        return m;
-    }
 
     private static float[] Map(float[] a, Func<float, float> f) => [.. a.Select(f)];
 
@@ -634,6 +591,14 @@ public sealed class RtxScene
 
     /// <summary>The instance's hit group, or null (the caller shades it).</summary>
     public HitShader? ShaderOf(int instance) => _shaders[instance];
+
+    /// <summary>
+    /// The hit group the GPU bake runs for an instance: <see cref="ShaderOf"/>, or for a material whose rtx combo
+    /// is not transpiled a <see cref="GpuOnlyHitShader"/> naming Valve's program and combo.
+    /// </summary>
+    public HitShader? GpuShaderOf(int instance) => GpuShaders is { } g ? g[instance] : _shaders[instance];
+
+    private HitShader?[]? GpuShaders { get; init; }
 
     /// <summary>The content reader the scene was built with (the GPU oracle uploads the same files).</summary>
     public Func<string, byte[]?>? ContentRead { get; private init; }
@@ -702,6 +667,13 @@ public sealed class RtxScene
             textures.Add(t);
             return textures.Count - 1;
         }
+        var reflectivity = new Dictionary<string, float[]?>(StringComparer.OrdinalIgnoreCase);
+        float[]? Reflectivity(string path)
+        {
+            if (!reflectivity.TryGetValue(path, out var r))
+                reflectivity[path] = r = TextureReflectivity(read(path + "_c"));
+            return r;
+        }
         var samplers = new List<BindlessSampler>();
         var samplerIndex = new Dictionary<BindlessSampler, int>();
         int Sampler(BindlessSampler s)
@@ -715,6 +687,7 @@ public sealed class RtxScene
         }
         var data = new List<byte>();
         var blocks = new Dictionary<string, (HitShader Shader, uint Offset)?>(StringComparer.OrdinalIgnoreCase);
+        var gpuOnly = new Dictionary<string, (HitShader Shader, uint Offset)>(StringComparer.OrdinalIgnoreCase);
         (HitShader, uint)? Block(string material)
         {
             if (blocks.TryGetValue(material, out var b))
@@ -738,11 +711,21 @@ public sealed class RtxScene
             {
                 var shader = HitShaders.All.FirstOrDefault(h => h.Name == $"{program.Shader}_vulkan_60_rtx" && h.Combo == combo);
                 if (shader == null)
-                    notes.Add($"{material}: {program.Shader} rtx combo {combo} is not transpiled; the default hit group stands in");
+                {
+                    // Not transpiled: the CPU bake stands the default hit group in; the GPU bake runs Valve's own
+                    // hit group on the block the combo's write sequence lays out (no C# layout for its pads).
+                    notes.Add($"{material}: {program.Shader} rtx combo {combo} is not transpiled; the CPU bake stands the default hit group in");
+                    var bytes = MaterialBlock(program, combo, info, Texture, Sampler, Reflectivity,
+                        Environment.GetEnvironmentVariable("CPUBAKE_MATDUMP") == "1" ? line => notes.Add($"  {material} {line}") : null);
+                    while (data.Count % 16 != 0)
+                        data.Add(0);
+                    gpuOnly[material] = (new GpuOnlyHitShader($"{program.Shader}_vulkan_60_rtx", combo), (uint)data.Count);
+                    data.AddRange(bytes);
+                }
                 else
                 {
                     // CPUBAKE_MATDUMP=1: every variable the block writes, as a note (a check against the vmat).
-                    var bytes = MaterialBlock(program, combo, info, Texture, Sampler,
+                    var bytes = MaterialBlock(program, combo, info, Texture, Sampler, Reflectivity,
                         Environment.GetEnvironmentVariable("CPUBAKE_MATDUMP") == "1" ? line => notes.Add($"  {material} {line}") : null);
                     while (data.Count % 16 != 0)
                         data.Add(0);
@@ -759,11 +742,15 @@ public sealed class RtxScene
         }
         var instances = new PackedRtxInstanceData_t_natural[scene.Instances.Count];
         var hit = new HitShader?[scene.Instances.Count];
+        var gpu = new HitShader?[scene.Instances.Count];
         for (var i = 0; i < instances.Length; i++)
         {
             var inst = scene.Instances[i];
             var block = Block(inst.Material.Name);
             hit[i] = block?.Item1;
+            gpu[i] = block?.Item1;
+            if (block == null && gpuOnly.TryGetValue(inst.Material.Name, out var g))
+                (gpu[i], block) = (g.Shader, (g.Shader, g.Offset));
             instances[i] = new PackedRtxInstanceData_t_natural
             {
                 nSrgbColor = inst.SrgbColor, nTriangleGeometry = (uint)inst.Mesh, nMaterialData = block?.Item2 ?? 0,
@@ -776,6 +763,10 @@ public sealed class RtxScene
                 light.Cookie = Texture(cookie, CookieSrgb, false);
         while (data.Count % 4 != 0)
             data.Add(0);
+        // A hit group loads its whole struct, pads included; with no C# layout for a GPU-only block's pads,
+        // zeros past the buffer's end keep the last one's load inside it (only when there is such a block).
+        if (gpuOnly.Count > 0)
+            data.AddRange(new byte[4096]);
         var raw = data.ToArray();
         var matF = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(raw).ToArray();
         var matI = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, int>(raw).ToArray();
@@ -787,9 +778,7 @@ public sealed class RtxScene
             Instances = instances, Geometries = geometries, VerticesF = vf, VerticesU = vu, Indices = ib,
             MatF = matF, MatI = matI, MatU = matU, Textures = tex, Samplers = smp,
         };
-        if (VfxEval.UnportedColorMatrices > 0)
-            notes.Add($"{VfxEval.UnportedColorMatrices} coloured MatrixColorTint2 tints taken as white (1800818d0 is ported for white only)");
-        return new RtxScene(scene, hit, Factory, notes, textureSources) { ContentRead = read };
+        return new RtxScene(scene, hit, Factory, notes, textureSources) { ContentRead = read, GpuShaders = gpu };
     }
 
     /// <summary>
@@ -802,9 +791,10 @@ public sealed class RtxScene
     /// else RepresentativeTexture; -1 without), the opacity texture at +20
     /// (-1), the material flags at +24 (180098660's 1, 2, 5), zero at +28. The
     /// shader reads the albedo, the colour texture times the instance colour.
-    /// Not ported (they throw): LightSim_Albedo (vf 0x70's width not read) and
-    /// a translucent material's opacity (texture 0xfa77b522, not named, else
-    /// LightSim_Opacity).
+    /// A translucent material's opacity: texture 0xfa77b522 (not named) at +20,
+    /// else LightSim_Opacity at +12. LightSim_Albedo from the vmat_c's vector
+    /// attributes (vf 0x70 copies three floats); one only the shader declares
+    /// is not ported (it throws).
     /// </summary>
     private static byte[] DefaultBlock(string material, SettleWorld.MaterialInfo? info, uint flags, IReadOnlyList<RtxShaderLibrary.Attribute> attributes,
                                        Func<string?, bool, bool, int> texture)
@@ -813,9 +803,28 @@ public sealed class RtxScene
         BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(12), 1f);
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(16), -1);
         BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(20), -1);
-        if (attributes.Any(a => a.Name == "LightSim_Albedo"))
-            throw new NotSupportedException($"{material}: LightSim_Albedo in the default hit group block is not ported");
-        var colour = attributes.FirstOrDefault(a => a.Name == "LightSim_DiffuseAlbedoTexture") ?? attributes.FirstOrDefault(a => a.Name == "RepresentativeTexture");
+        // vf 0x70 (materialsystem2 18000bea0) finds LightSim_Albedo in the material's store, which the vmat_c's
+        // m_vectorAttributes fill (toolsblocklight and toolssolidblocklight: (0, 0, 0)): its three components,
+        // each clamped as 180098cd0 does, and no colour texture (+16 stays -1).
+        var albedo = info?.VectorAttributes.TryGetValue("LightSim_Albedo", out var v) == true ? v : (System.Numerics.Vector4?)null;
+        if (albedo == null && attributes.Any(a => a.Name == "LightSim_Albedo"))
+            throw new NotSupportedException($"{material}: LightSim_Albedo from the shader in the default hit group block is not ported");
+        if (albedo is { } a3)
+        {
+            static float Clamp(float c)
+            {
+                if (0.99f <= c)
+                    c = 0.99f;
+                if (c <= 0f)
+                    c = 0f;
+                return c;
+            }
+            BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(0), Clamp(a3.X));
+            BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(4), Clamp(a3.Y));
+            BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(8), Clamp(a3.Z));
+        }
+        var colour = albedo != null ? null
+            : attributes.FirstOrDefault(a => a.Name == "LightSim_DiffuseAlbedoTexture") ?? attributes.FirstOrDefault(a => a.Name == "RepresentativeTexture");
         if (colour?.Binding is { } parameter)
         {
             if (info == null || !info.Textures.TryGetValue(parameter, out var path))
@@ -823,7 +832,37 @@ public sealed class RtxScene
             BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(16), texture(path, colour.BindingSrgb, false));
         }
         if ((flags & 2) != 0)
-            throw new NotSupportedException($"{material}: a translucent material's default hit group opacity (texture 0xfa77b522 or LightSim_Opacity) is not ported");
+        {
+            // 180098cd0 with flag 2: texture attribute 0xfa77b522 (LightSim_Opacity_A, vf 0x80) gives the opacity texture's bindless index at
+            // +20, the opacity staying 1; without it float attribute LightSim_Opacity (0xe2945d83, vf 0x58), 0 when the
+            // material has none, clamped to 0..1, at +12.
+            // 0xfa77b522 is LightSim_Opacity_A; a constant one (csgo_water_fancy's 1) is not a texture attribute.
+            var opacityTexture = attributes.FirstOrDefault(a => a.Murmur == 0xfa77b522 && a.Binding != null);
+            if (opacityTexture is not null)
+            {
+                if (info == null || !info.Textures.TryGetValue(opacityTexture.Binding!, out var path))
+                    throw new NotSupportedException($"{material}: LightSim_Opacity_A binds {opacityTexture.Binding}, which the material does not set (the shader default is not ported)");
+                BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(20), texture(path, opacityTexture.BindingSrgb, false));
+            }
+            else
+            {
+                var opacity = attributes.FirstOrDefault(a => a.Murmur == 0xe2945d83);
+                if (opacity is not null && (opacity.Expression != null || opacity.Binding != null))
+                    throw new NotSupportedException($"{material}: LightSim_Opacity from an expression or variable is not ported");
+                var value = opacity?.Constant switch
+                {
+                    null => 0f,
+                    float f => f,
+                    int i => i,
+                    var other => throw new NotSupportedException($"{material}: LightSim_Opacity as {other.GetType().Name} is not ported"),
+                };
+                if (value <= 0f)
+                    value = 0f;
+                if (1f <= value)
+                    value = 1f;
+                BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(12), value);
+            }
+        }
         BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(24), flags);
         return bytes;
     }
@@ -839,8 +878,10 @@ public sealed class RtxScene
 
     // The material's _RTX_MATERIAL_DATA_ block: each field from its rtx variable (artist value, default or expression).
     private static byte[] MaterialBlock(RtxShaderLibrary.Program program, long combo, SettleWorld.MaterialInfo info,
-                                        Func<string?, bool, bool, int> texture, Func<BindlessSampler, int> sampler, Action<string>? log = null)
+                                        Func<string?, bool, bool, int> texture, Func<BindlessSampler, int> sampler, Func<string, float[]?> reflectivity,
+                                        Action<string>? log = null)
     {
+        float[]? TextureAverage(string name) => info.Textures.TryGetValue(name, out var path) ? reflectivity(path) : null;
         var vars = program.Rtx.VariableDescriptions;
         var features = program.Features.StaticComboArray.Select(f => info.Params.TryGetValue(f.Name, out var v) ? (int)v : 0).ToArray();
         var cache = new Dictionary<string, float[]?>();
@@ -854,8 +895,20 @@ public sealed class RtxScene
                 return [vec.X, vec.Y, vec.Z, vec.W];
             return null;
         }
-        float[] Default(VfxVariableDescription v) => v.VfxType is VfxVariableType.Int or VfxVariableType.Int2 or VfxVariableType.Int3 or VfxVariableType.Int4 or VfxVariableType.Bool
-            ? [.. v.IntDefs.Select(x => (float)x)] : [.. v.FloatDefs];
+        // The type's own components of the stored defaults (a Float's [1, 0, 0, 0] is 1), as ProgramGlobals.Default
+        // takes them: float3(contrast, saturation, brightness) over defaulted scalars must see three scalars.
+        float[] Default(VfxVariableDescription v)
+        {
+            var n = v.VfxType switch
+            {
+                VfxVariableType.Float or VfxVariableType.Int or VfxVariableType.Bool => 1,
+                VfxVariableType.Float2 or VfxVariableType.Int2 => 2,
+                VfxVariableType.Float3 or VfxVariableType.Int3 => 3,
+                _ => 4,
+            };
+            return v.VfxType is VfxVariableType.Int or VfxVariableType.Int2 or VfxVariableType.Int3 or VfxVariableType.Int4 or VfxVariableType.Bool
+                ? [.. v.IntDefs.Take(n).Select(x => (float)x)] : [.. v.FloatDefs.Take(n)];
+        }
         float[]? Value(string name, string? self = null, float[]? selfValue = null)
         {
             if (name == self)
@@ -867,23 +920,51 @@ public sealed class RtxScene
             if (candidates.Count == 0)
                 return null;
             var d = candidates.FirstOrDefault(v => v.CompiledExpression.Length > 0 && v.VariableSource is VfxVariableSourceType.__Expression__ or VfxVariableSourceType.__SetByArtistAndExpression__) ?? candidates[0];
-            float[]? r;
+            return cache[name] = Evaluate(d);
+        }
+        float[]? Evaluate(VfxVariableDescription d)
+        {
             switch (d.VariableSource)
             {
                 case VfxVariableSourceType.__Expression__:
-                    r = VfxEval.Evaluate(ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression), n => Value(n), features);
-                    break;
+                    return VfxEval.Evaluate(ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression), n => Value(n), features, TextureAverage);
                 case VfxVariableSourceType.__SetByArtistAndExpression__:
                 {
                     var artist = Artist(d) ?? Default(d);
-                    r = VfxEval.Evaluate(ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression), n => Value(n, name, artist), features);
-                    break;
+                    return VfxEval.Evaluate(ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression), n => Value(n, d.Name, artist), features, TextureAverage);
                 }
+                case VfxVariableSourceType.__SetByArtist__:
+                    return Artist(d) is { } set ? ArtistInRange(d, set) : Default(d);
                 default:
-                    r = Artist(d) ?? Default(d);
-                    break;
+                    return Artist(d) ?? Default(d);
             }
-            return cache[name] = r;
+        }
+        // materialsystem2's SET_BY_ARTIST read (GetValueFromMaterialParamAsVector4D 18002f3b0, and
+        // GetValueFromDynamicMaterialParam 18002c000 the same way): each component of the material's value clamped
+        // to the variable's range (description +0x18c min, +0x19c max for floats; the int range +0x15c / +0x16c as
+        // floats), a bool as 1 when non-zero. A defaulted variable is not clamped.
+        static float[] ArtistInRange(VfxVariableDescription d, float[] value)
+        {
+            var r = (float[])value.Clone();
+            for (var i = 0; i < r.Length && i < 4; i++)
+            {
+                if (d.VfxType is >= VfxVariableType.Bool and <= VfxVariableType.Bool4)
+                {
+                    r[i] = r[i] != 0f ? 1f : 0f;
+                    continue;
+                }
+                var isInt = d.VfxType is >= VfxVariableType.Int and <= VfxVariableType.Int4;
+                if (!isInt && d.VfxType is not (>= VfxVariableType.Float and <= VfxVariableType.Float4))
+                    continue;
+                float lo = isInt ? d.IntMins[i] : d.FloatMins[i], hi = isInt ? d.IntMaxs[i] : d.FloatMaxs[i];
+                var x = r[i];
+                if (x <= lo)
+                    x = lo;
+                if (hi <= x)
+                    x = hi;
+                r[i] = x;
+            }
+            return r;
         }
         // The static combo's write sequence places every variable it uses: RegisterOffset in 4-byte words of the block.
         var all = program.Rtx.GetStaticCombo(combo).AllVariables.Fields.Where(f => f.RegisterOffset >= 0).ToList();
@@ -893,7 +974,7 @@ public sealed class RtxScene
         {
             var d = vars[f.VariableIndex];
             var value = d.VariableSource == VfxVariableSourceType.__Expression__ && d.CompiledExpression.Length > 0
-                ? (int)(VfxEval.Evaluate(ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression), n => Value(n), features)?[0] ?? 0f)
+                ? (int)(VfxEval.Evaluate(ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression), n => Value(n), features, TextureAverage)?[0] ?? 0f)
                 : d.IntDefs[0];
             if (!states.TryGetValue(f.RegisterOffset, out var st))
                 states[f.RegisterOffset] = st = [];
@@ -922,7 +1003,10 @@ public sealed class RtxScene
                 log?.Invoke($"{desc.Name} @{at}: sampler {state}");
                 continue;
             }
-            var v = Value(desc.Name) ?? [0f];
+            // The write's own description (its VariableIndex): a name can have several, csgo_environment's
+            // g_mTextureColorAdjust1 one from the artist's colour values and one of constants, and vrad3's
+            // block holds the one the combo binds (captured on s2c_coloradjust, capture_host.py).
+            var v = Evaluate(desc) ?? [0f];
             Write(bytes, at, desc.VfxType, v);
             log?.Invoke($"{desc.Name} @{at}: {desc.VfxType} {string.Join(" ", v.Select(x => x.ToString("G6", System.Globalization.CultureInfo.InvariantCulture)))}");
         }
@@ -1000,6 +1084,16 @@ public sealed class RtxScene
     }
 
     /// <summary>The resident mips of a texture as linear floats (8-bit sRGB through the sRGB curve when the shader reads it sRGB).</summary>
+    /// <summary>A .vtex_c's header reflectivity (the four floats after version and flags), null when not a texture.</summary>
+    public static float[]? TextureReflectivity(byte[]? bytes)
+    {
+        if (bytes is null)
+            return null;
+        using var res = new ValveResourceFormat.Resource();
+        res.Read(new MemoryStream(bytes));
+        return res.DataBlock is ValveResourceFormat.ResourceTypes.Texture tex ? [tex.Reflectivity.X, tex.Reflectivity.Y, tex.Reflectivity.Z, tex.Reflectivity.W] : null;
+    }
+
     public static BindlessTexture? LoadTexture(byte[]? bytes, bool srgb)
     {
         if (bytes is null)
@@ -1091,4 +1185,13 @@ public sealed class RtxScene
 
     // System.Numerics' row-vector matrix as GLSL's mat4x3 (columns: the basis images and the translation).
     internal static mat4x3 Mat(Matrix4x4 m) => new(new vec3(m.M11, m.M12, m.M13), new vec3(m.M21, m.M22, m.M23), new vec3(m.M31, m.M32, m.M33), new vec3(m.M41, m.M42, m.M43));
+}
+
+/// <summary>An rtx program and static combo with no C# transpile: only the GPU bake can run it (Valve's SPIR-V).</summary>
+public sealed class GpuOnlyHitShader(string name, long combo) : HitShader
+{
+    public override string Name { get; } = name;
+    public override long Combo { get; } = combo;
+    public override MaterialField[] Layout => [];
+    public override void ClosestHit(HitContext ctx) => throw new NotSupportedException($"{Name} combo {Combo} is not transpiled (the GPU bake runs it)");
 }

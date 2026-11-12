@@ -20,7 +20,8 @@ public static class CubemapFaceBlocks
     /// What the blocks take from the map: the cube's origin, the light probe volumes, env_cubemap_fog, the
     /// light_environment (its angles, colour times brightness, the sky colour and intensity, fades), the world's
     /// lightmap uv scale and size, env_sky's angles and origin. <paramref name="ScriptedCamera"/> is whether the
-    /// build saw a scripted camera (UI state, ledger 149: cascade 0's distance).
+    /// build saw a scripted camera (UI state, ledger 149: cascade 0's distance). <paramref name="HasSun"/> false is a map
+    /// with no light_environment (the sun fields are then unused: no fast path sun, no cascades).
     /// </summary>
     public sealed record Scene(
         Vector3 Origin,
@@ -38,7 +39,9 @@ public static class CubemapFaceBlocks
         Vector3 SkyAngles,
         Vector3 SkyOrigin,
         bool ScriptedCamera,
-        float MinSpecLightmapSize = 4096f);
+        float MinSpecLightmapSize = 4096f,
+        bool HasSun = true,
+        IReadOnlyList<BarnLightEntries.Light>? Lights = null);
 
     /// <summary>One face's blocks.</summary>
     public sealed record Face(
@@ -53,7 +56,17 @@ public static class CubemapFaceBlocks
         byte[] BinnerRecords,
         byte[] BinnerEdges,
         byte[] SkyWsToOs,
-        int BinnerMaskWords);
+        int BinnerMaskWords,
+        byte[]? BarnLights = null);
+
+    /// <summary>BakedLightingConstantBuffer_t's lightmap size for a world with no lightmaps: measured (GROUND_TRUTH 184).</summary>
+    public const int UnbakedLightmapSize = 256;
+
+    /// <summary>
+    /// light_environment's cascade cross fade and distance fade when the lump has no key, as csgo.fgd's remove_key
+    /// leaves every Hammer-made CS2 map: measured in atixref's light block (GROUND_TRUTH 184), not read from the game.
+    /// </summary>
+    public const float AbsentCrossFade = 0.1f, AbsentDistanceFade = 0.05f;
 
     /// <summary>The view's near and far planes (the buildcubemaps record's, client 1801ea0a0; ledger 118).</summary>
     public const float Near = 1f, Far = 10000f;
@@ -83,9 +96,12 @@ public static class CubemapFaceBlocks
     /// gameinfo's BakedLighting MinSpecLightmapSize (client 181206bfe).</item>
     /// </list>
     /// What is not read throws: rotated volumes or fog, fog with a height range (its struct fill is not read), a
-    /// tinted sky, func_ and plain env_light_probe_volume, more than one fog, sun or sky.
+    /// tinted sky, func_ and plain env_light_probe_volume, more than one fog, sun or sky. A map with no
+    /// light_environment has no sun (<see cref="Scene.HasSun"/> false); one with no env_sky has no sky object to draw
+    /// (C_EnvSky makes it, client 180282390), so <paramref name="skyMaterial"/> is null (ze_hold_em_p's capture: the
+    /// colour pass draws no sky).
     /// </summary>
-    public static List<Cube> FromPackage(ValvePak.Package package, string gameinfo, bool scriptedCamera, out string skyMaterial)
+    public static List<Cube> FromPackage(ValvePak.Package package, string gameinfo, bool scriptedCamera, out string? skyMaterial)
     {
         var entities = new List<(string Class, Maps.LightPrecompute.KeyReader Key)>();
         foreach (var entry in (package.Entries!.GetValueOrDefault("vents_c") ?? []).OrderBy(e => e.GetFullPath(), StringComparer.Ordinal))
@@ -105,6 +121,9 @@ public static class CubemapFaceBlocks
         foreach (var unread in new[] { "func_combined_light_probe_volume", "env_light_probe_volume" })
             if (entities.Any(e => e.Class == unread))
                 throw new NotSupportedException($"{unread} in the light block is not read");
+        // The binner's barn lights: light_barn is ported (BarnLightEntries). light_omni2 and the other dynamic classes are
+        // not gathered yet (CUBEMAPS.md F.1): s2c_l5probe's omni2 reaches none of its cube's faces (the capture), atixref's do.
+        var lights = entities.Any(e => e.Class == "light_barn") ? BarnLightEntries.Lights(entities) : null;
         var volumes = new List<CubemapFaceConstants.LightProbeVolume>();
         foreach (var (_, key) in entities.Where(e => e.Class == "env_combined_light_probe_volume"))
         {
@@ -125,24 +144,40 @@ public static class CubemapFaceBlocks
                 F(f("cubemapfogfalloffexponent")), new Vector4(0f, F(f("cubemapfogheightstart")), F(f("cubemapfogheightexponent")), F(f("cubemapfogmaxopacity"))),
                 Matrix4x4.CreateTranslation(V(f("origin"))));
         }
-        var sun = One("light_environment") ?? throw new NotSupportedException("no light_environment: the sunless light block is not read");
-        var sky = One("env_sky") ?? throw new NotSupportedException("no env_sky");
-        if (sky("tint_color") is { } tint && V(tint) != new Vector3(255, 255, 255) || sky("brightnessscale") is { } scale && F(scale) != 1f)
+        var sun = One("light_environment");
+        var sky = One("env_sky");
+        if (sky != null && (sky("tint_color") is { } tint && V(tint) != new Vector3(255, 255, 255) || sky("brightnessscale") is { } scale && F(scale) != 1f))
             throw new NotSupportedException("a tinted env_sky: SkyTint from the entity is not read");
-        skyMaterial = sky("skyname") ?? throw new InvalidDataException("env_sky has no skyname");
+        skyMaterial = sky == null ? null : sky("skyname") ?? throw new InvalidDataException("env_sky has no skyname");
         using var worldResource = Read(package, package.Entries!.GetValueOrDefault("vwrld_c")!.Single());
-        var uvScale = ((World)worldResource.DataBlock!).Data.GetSubCollection("m_worldLightingInfo").GetSubCollection("m_vLightmapUvScale").ToVector2();
-        var irradiance = (package.Entries!.GetValueOrDefault("vtex_c") ?? []).Single(e => e.DirectoryName.EndsWith("lightmaps", StringComparison.Ordinal) && e.FileName == "irradiance");
-        using var lightmap = Read(package, irradiance);
-        var tex = (Texture)lightmap.DataBlock!;
+        var lightingInfo = ((World)worldResource.DataBlock!).Data.GetSubCollection("m_worldLightingInfo");
+        var uvScale = lightingInfo.GetSubCollection("m_vLightmapUvScale").ToVector2();
+        int lightmapWidth, lightmapHeight;
+        if (!lightingInfo.GetBooleanProperty("m_bHasLightmaps"))
+        {
+            // An unbaked world (m_bHasLightmaps false): worldrenderer's loader (180015740) returns before it builds the
+            // block, and the game's block measured 256 x 256 (atixref's capture, GROUND_TRUTH 184; its writer is not read).
+            (lightmapWidth, lightmapHeight) = (UnbakedLightmapSize, UnbakedLightmapSize);
+        }
+        else
+        {
+            var irradiance = (package.Entries!.GetValueOrDefault("vtex_c") ?? []).Single(e => e.DirectoryName.EndsWith("lightmaps", StringComparison.Ordinal) && e.FileName == "irradiance");
+            using var lightmap = Read(package, irradiance);
+            var tex = (Texture)lightmap.DataBlock!;
+            (lightmapWidth, lightmapHeight) = (tex.Width, tex.Height);
+        }
         var minSpec = Regex.Match(gameinfo, @"BakedLighting\s*\{[^}]*?MinSpecLightmapSize\s+(\d+)") is { Success: true } m
             ? float.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) : 0f;
         var cubes = new List<Cube>();
         foreach (var cls in new[] { "env_cubemap", "env_cubemap_box", "env_combined_light_probe_volume" })
             foreach (var (_, key) in entities.Where(e => e.Class == cls))
-                cubes.Add(new Cube(new Scene(V(key("origin")), volumes, fog, V(sun("angles")), Colour(sun("color")) * F(sun("brightness")),
-                    F(sun("cascadecrossfade")), F(sun("cascadedistancefade")), Colour(sun("skycolor")), F(sun("skyintensity")),
-                    uvScale, tex.Width, tex.Height, V(sky("angles")), V(sky("origin")), scriptedCamera, minSpec),
+                cubes.Add(new Cube(new Scene(V(key("origin")), volumes, fog,
+                    sun == null ? Vector3.Zero : V(sun("angles")), sun == null ? Vector3.Zero : Colour(sun("color")) * F(sun("brightness")),
+                    sun?.Invoke("cascadecrossfade") is { } crossFade ? F(crossFade) : AbsentCrossFade,
+                    sun?.Invoke("cascadedistancefade") is { } distanceFade ? F(distanceFade) : AbsentDistanceFade,
+                    sun == null ? Vector3.Zero : Colour(sun("skycolor")), sun == null ? 0f : F(sun("skyintensity")),
+                    uvScale, lightmapWidth, lightmapHeight, sky == null ? Vector3.Zero : V(sky("angles")), sky == null ? Vector3.Zero : V(sky("origin")),
+                    scriptedCamera, minSpec, sun != null, lights),
                     uint.Parse(key("handshake") ?? throw new InvalidDataException($"{cls} has no handshake"), CultureInfo.InvariantCulture), cls));
         return cubes;
     }
@@ -161,19 +196,34 @@ public static class CubemapFaceBlocks
         var view = CubemapFaceViews.Face(scene.Origin, Vector3.Zero, Near, Far, face);
         var frustum = AggregateCulling.FaceFrustum(view);
         var volumes = CubemapFaceConstants.VisibleVolumes(frustum, scene.Volumes);
-        var (toSun, lightDirection, cameraDirection) = CubemapShadowCascades.SunDirections(scene.SunAngles);
-        var cascades = CubemapShadowCascades.GameCascades(view, toSun, Near, Far, scene.ScriptedCamera);
         var tiles = CubemapFaceDrawList.CascadeTiles.Select(t => new[] { t.X, t.Y }).ToArray();
-        var cascadeViews = Enumerable.Range(0, 4).Select(k => CubemapFaceConstants.CascadePerView(cascades[k], cameraDirection, tiles[k][0], tiles[k][1],
-            CubemapShadowCascades.Inputs.Resolution, CubemapShadowCascades.Inputs.AtlasWidth, CubemapShadowCascades.Inputs.AtlasHeight)).ToArray();
-        var sun = new CubemapFaceConstants.Sun(lightDirection, scene.SunColour, scene.SunCrossFade, scene.SunDistanceFade, scene.SkyColourLinear, scene.SkyIntensity);
-        var stretched = CubemapShadowCascades.Slice(view, Near, CubemapShadowCascades.GameDistances(Near, Far, scene.ScriptedCamera)[^1]).Diameter * 1.42f;
+        // With no sun there is no shadow object, so no cascade view or pass (ze_hold_em_p's capture: the atlas is only cleared).
+        List<CubemapShadowCascades.Cascade> cascades = [];
+        byte[][] cascadeViews = [];
+        CubemapFaceConstants.Sun? sun = null;
+        var stretched = 0f;
+        if (scene.HasSun)
+        {
+            var (toSun, lightDirection, cameraDirection) = CubemapShadowCascades.SunDirections(scene.SunAngles);
+            cascades = [.. CubemapShadowCascades.GameCascades(view, toSun, Near, Far, scene.ScriptedCamera)];
+            cascadeViews = [.. Enumerable.Range(0, 4).Select(k => CubemapFaceConstants.CascadePerView(cascades[k], cameraDirection, tiles[k][0], tiles[k][1],
+                CubemapShadowCascades.Inputs.Resolution, CubemapShadowCascades.Inputs.AtlasWidth, CubemapShadowCascades.Inputs.AtlasHeight))];
+            sun = new CubemapFaceConstants.Sun(lightDirection, scene.SunColour, scene.SunCrossFade, scene.SunDistanceFade, scene.SkyColourLinear, scene.SkyIntensity);
+            stretched = CubemapShadowCascades.Slice(view, Near, CubemapShadowCascades.GameDistances(Near, Far, scene.ScriptedCamera)[^1]).Diameter * 1.42f;
+        }
         // The binner's items: no lights or environment maps are binned in the cubemap view, the visible volumes are.
         var bin = new LightBinnerItems.View(view.Origin, new Vector3(view.CameraToWorld[0], view.CameraToWorld[4], view.CameraToWorld[8]),
             AggregateCulling.WorldToProjection(view), CubemapFaceDrawList.FaceSize, CubemapFaceDrawList.FaceSize, BinnerTilePixels);
         var footprints = volumes.Select(v => LightBinnerItems.Bounds(bin, v.BoxMins, v.BoxMaxs, [1f, 0f, 0f, v.Origin.X, 0f, 1f, 0f, v.Origin.Y, 0f, 0f, 1f, v.Origin.Z])
             ?? throw new InvalidOperationException("a visible volume rejected by the binner")).ToList();
-        var (records, edges) = LightBinnerItems.Pack(bin, footprints);
+        // The barn lights first (items 0 .., padded to 32), then the volumes (ledger 193). The records' context is the
+        // cube view's: camera and view origin the cube's, view flags bit 25 clear and 180922570 0 (measured, 218 pairs).
+        var gathered = scene.Lights is { Count: > 0 } sceneLights ? BarnLightEntries.Face(sceneLights, view, bin) : [];
+        var (lightRecords, lightEdges) = LightBinnerItems.PackLights(bin, [.. gathered.Select(g => (g.Frustum, (LightBinnerItems.Footprint?)g.Box))]);
+        var (volumeRecords, volumeEdges) = LightBinnerItems.Pack(bin, footprints, (gathered.Count + 31) / 32 * 32, lightEdges.Length / 16);
+        byte[] records = [.. lightRecords, .. volumeRecords], edges = [.. lightEdges, .. volumeEdges];
+        var context = new BarnLightRecords.Context(scene.Origin, scene.Origin, 0, false);
+        byte[] barnLights = [.. gathered.SelectMany(g => BarnLightRecords.Record(g.Entry, context))];
         static int Words(int count) => count != 0 ? (count + 31) / 32 : 0;
         return new Face(
             view,
@@ -183,11 +233,12 @@ public static class CubemapFaceBlocks
             CubemapFaceConstants.BakedLighting(scene.LightmapUvScale, scene.LightmapWidth, scene.LightmapHeight, false),
             cascadeViews,
             CubemapFaceConstants.LightBlock(sun, volumes, cascades, tiles, CubemapShadowCascades.Inputs.Resolution, CubemapShadowCascades.Inputs.AtlasWidth,
-                CubemapShadowCascades.Inputs.AtlasHeight, scene.Origin, stretched),
-            CubemapFaceConstants.LightBinnerCullParams(CubemapFaceDrawList.FaceSize, CubemapFaceDrawList.FaceSize, Far, 0, 0, volumes.Count, BinnerTilePixels, BinnerBinSlices),
+                CubemapShadowCascades.Inputs.AtlasHeight, scene.Origin, stretched, lights: gathered.Count),
+            CubemapFaceConstants.LightBinnerCullParams(CubemapFaceDrawList.FaceSize, CubemapFaceDrawList.FaceSize, Far, gathered.Count, 0, volumes.Count, BinnerTilePixels, BinnerBinSlices),
             records,
             edges,
             CubemapFaceConstants.SkyWsToOs(CubemapFaceViews.AngleMatrix(scene.SkyAngles, scene.SkyOrigin)),
-            Words(0) + Words(0) + Words(volumes.Count));
+            Words(gathered.Count) + Words(0) + Words(volumes.Count),
+            barnLights);
     }
 }

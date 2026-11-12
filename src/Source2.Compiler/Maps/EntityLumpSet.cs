@@ -47,7 +47,7 @@ public static class EntityLumpSet
     /// FUN_180f8ee20): snapshot_file becomes
     /// <c>maps/&lt;map&gt;/particle_snapshots/node_&lt;id&gt;.vsnap</c>, the id the found
     /// node's own. Id 1 is the world; an id no node has leaves the key alone.
-    /// The node's type is not checked. The .vsnap itself is not generated here.
+    /// The node's type is not checked. <see cref="Maps.ParticleSnapshots"/> generates the .vsnap.
     /// A source without snapshot_file gets it appended; only the case with the
     /// key present is measured (the probe map).
     /// </summary>
@@ -57,14 +57,7 @@ public static class EntityLumpSet
     private static MapEntities.Entity WithParticleSnapshot(MapEntities.Entity entity, IReadOnlySet<int>? nodeIds,
                                                            string worldName)
     {
-        var mesh = entity.Keys.FirstOrDefault(k => k.Key.EqualsAscii("snapshot_mesh"));
-        if (nodeIds is null || mesh.Key is null)
-            return entity;
-        var id = (int)CNumbers.Atoi(mesh.Value);
-        if ((entity.Instanced || entity.Prefabs.Length > 0) && id >= 1)
-            throw new NotSupportedException(
-                $"{entity.ClassName} {entity.NodeId}: a particle snapshot node inside an instance is not ported");
-        if (id != 1 && !nodeIds.Contains(id))
+        if (nodeIds is null || SnapshotNode(entity, nodeIds) is not { } id)
             return entity;
         var path = $"maps/{worldName}/particle_snapshots/node_{id.ToString(System.Globalization.CultureInfo.InvariantCulture)}.vsnap";
         var keys = entity.Keys.ToList();
@@ -74,6 +67,22 @@ public static class EntityLumpSet
         else
             keys.Add(new("snapshot_file", path));
         return entity with { Keys = keys };
+    }
+
+    /// <summary>
+    /// The node id an entity's snapshot_mesh names when it names one of <paramref name="nodeIds"/>
+    /// or the world (1), the node whose particle snapshot the compile writes; null otherwise.
+    /// </summary>
+    internal static int? SnapshotNode(MapEntities.Entity entity, IEnumerable<int> nodeIds)
+    {
+        var mesh = entity.Keys.FirstOrDefault(k => k.Key.EqualsAscii("snapshot_mesh"));
+        if (mesh.Key is null)
+            return null;
+        var id = (int)CNumbers.Atoi(mesh.Value);
+        if ((entity.Instanced || entity.Prefabs.Length > 0) && id >= 1)
+            throw new NotSupportedException(
+                $"{entity.ClassName} {entity.NodeId}: a particle snapshot node inside an instance is not ported");
+        return id == 1 || nodeIds.Contains(id) ? id : null;
     }
 
     /// <summary>Author the map's lumps: default_ents first, then the child lumps
@@ -385,13 +394,19 @@ public static class EntityLumpSet
                                                   : template,
                                               copy.Through, copy.Prefabs, Maps.SettleWorld.IsUnderDeformer(node, parents, targets), node)
                 : null;
+            // A link's copy stands where its locators leave it (MapEntities.NavLinkFields.Copied).
+            var navLink = template.NavLink is not { } link ? ((Vector3, Vector3, MapEntities.NavLinkFields)?)null
+                : copy.Prefabs.Length > 0 || copy.Node is null
+                    ? throw new NotSupportedException("a CMapNavLink copied inside a prefab's map is not ported")
+                    : link.Copied(template.Origin, template.Angles, copy.Through, []);
             here.Add(new EntityLumpAuthor.Emission(
                 Settle(template with
                 {
                     NodeId = copy.NodeId,
-                    Origin = path?.Origin ?? copy.Origin,
-                    Angles = path?.Angles ?? copy.Angles,
+                    Origin = navLink?.Item1 ?? path?.Origin ?? copy.Origin,
+                    Angles = navLink?.Item2 ?? path?.Angles ?? copy.Angles,
                     PathNodes = path?.PathNodes ?? template.PathNodes,
+                    NavLink = navLink?.Item3 ?? template.NavLink,
                     Layer = copy.Layer,
                     Instanced = true,
                     // A copy made inside a prefab's map ships with a plain id (GROUND_TRUTH 46).

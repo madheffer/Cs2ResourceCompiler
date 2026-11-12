@@ -5,7 +5,7 @@ The .vmap's meshes into what the compile builds from them:
 - the ray trace scene (`.rte`) that visibility reads;
 - the world nodes and render meshes the map ships.
 
-Only the first two are ported.
+All three are ported: the world nodes since ledgers 54-55 and 249-258 (GROUND_TRUTH.md).
 
 ## Mesh export
 
@@ -125,8 +125,11 @@ Open:
 - **Skip boxes:** the emitter also skips triangles inside the builder's
   oriented boxes (`WRB_RteSkipBoxes`). What places them is unknown, and no
   specimen has any.
-- **Triangle order:** ours is walk order. The file groups each mesh by
-  material, and the rest follows the world renderer's mesh split.
+- **Triangle order:** settled (ledger 29): a mesh's triangles as the
+  exported mesh holds them, one face set per (lightmap scale bias,
+  material), biases ascending, materials in the mesh's array order, face
+  order kept within a set. Every triangle at the .rte's own index on
+  probe01, cardtest, ze_hold_em_p and atixref.
 - **Bad meshes:** a mesh whose bounds exceed `2 sqrt(3) g_flConfigMaxCoord`
   is skipped whole; no specimen has one.
 - The entry's 0x80 (object flag 0x80): no specimen's world meshes carry it.
@@ -213,7 +216,7 @@ The compile, as read from resourcecompiler 0923 (ADDRESSES.md, WN):
   (a point, the unit direction along the edge, the entry's +0x40, the
   vertex), sorted and deduplicated, then a CVertexKDTree over them, and a
   job that inserts other meshes' points lying on each open edge and cuts
-  the face again (18025b410; not ported yet).
+  the face again (18025b410; ported as `Maps/TJunctionFix.cs`).
 - **Subdivided meshes in the entries** (`MapMeshCorners`, baked path):
   ConvertMeshForBuilder bakes subdivision first (1810c6520 ->
   BakeSubdivisionForFaces), so a mesh with subdivided faces is exported
@@ -306,8 +309,8 @@ The compile, as read from resourcecompiler 0923 (ADDRESSES.md, WN):
   texcoord precision its target entry's, the cubemap and probe), and
   CanMerge on all 141,067 pairs. Not yet end to end: a -world compile's
   merger runs on six grid boxes, not vis clusters (the world bounds grown
-  by 0.01 cut into floor(extent / 1024) equal cells per axis; the code is
-  not found), and a full compile's inputs carry the bake's lightmap UVs
+  by 0.01 cut into floor(extent / 1024) equal cells per axis; read since:
+  the node's box grid 180283520, RenderClusters.Grid, ledger 55), and a full compile's inputs carry the bake's lightmap UVs
   (not ported), so the merge of either is not built from the .vmap yet.
 - **The merge:** for each entry without attribute bit 0x2, later entries
   that `WRBMeshEntry_CanMerge` accepts join it while the sum stays under
@@ -502,7 +505,8 @@ The compile, as read from resourcecompiler 0923 (ADDRESSES.md, WN):
   matches from its decoded index range.
 - **Vertex layouts** differ by material and data: texcoords are float32,
   float16 or 16-bit snorm, and float32 appears where every value would fit
-  snorm, so the choice is not a value range alone (not settled). Measured
+  snorm, so the choice is not a value range alone (settled since: ledger 44,
+  NodeDraw.TexcoordFormat; the history follows). Measured
   (WorldNodeLayoutProbe, WNLAYOUT=1): of 210 float32 texcoord buffers, 162
   hold a value half precision cannot represent, but 24 are half-exact and
   still float32 (and TEXCOORD1 is often snorm-exact yet float32), so it is
@@ -522,7 +526,7 @@ The compile, as read from resourcecompiler 0923 (ADDRESSES.md, WN):
   181365a40) is not found yet. The lowprecisionuv scan (1810d5f40) is
   editor UI.
 
-Open, in order: the triangle order above (it also decides the meshlet
-partition), why four probe01 meshes were not aggregated, the texcoord
-format rule, static prop aggregates' cones, the fragment split, the
-T-junction pass, then the node and world files.
+This list is from early October; the triangle order (ledger 29), the
+texcoord format rule (ledger 44), the T-junction pass (TJunctionFix) and
+the node and world files (ledgers 249-258) have landed since. What is
+still open is in PARITY_AUDIT.md chunk 1.

@@ -24,8 +24,10 @@ public class ParityReport(ITestOutputHelper output)
             return "lightmaps";
         if (p.Contains("cubemap") || p.Contains("/envmaps/") || p.EndsWith(".vtex_c", StringComparison.Ordinal) && p.Contains("envmap"))
             return "cubemaps";
-        if (p.Contains("steamaudio") || p.EndsWith(".vsnap_c", StringComparison.Ordinal) || p.Contains("/sa_"))
+        if (p.Contains("steamaudio") || p.Contains("/sa_"))
             return "steam audio";
+        if (p.EndsWith(".vsnap_c", StringComparison.Ordinal))
+            return "particle snapshots";
         if (p.EndsWith(".nav", StringComparison.Ordinal))
             return "nav";
         if (p.EndsWith(".vvis_c", StringComparison.Ordinal))
@@ -42,6 +44,32 @@ public class ParityReport(ITestOutputHelper output)
             || p.EndsWith(".vrman_c", StringComparison.Ordinal))
             return "index";
         return "other";
+    }
+
+    /// <summary>
+    /// A .nav that differs, by ledger 109's comparison: the bytes before the CS custom data, then the
+    /// custom data with its heap pointer fields (spotencounterdata from / to, order ids) masked. Equal
+    /// on both is Valve's run-to-run variance, not a miss of ours.
+    /// </summary>
+    public static string NavWhy(byte[] valve, byte[] mine)
+    {
+        try
+        {
+            var (endA, endB) = (NavWriterTests.CustomDataAt(valve), NavWriterTests.CustomDataAt(mine));
+            if (endA != endB)
+                return $"mesh length ({endB} against Valve's {endA})";
+            var first = Enumerable.Range(0, endA).FirstOrDefault(i => valve[i] != mine[i], -1);
+            if (first >= 0)
+                return $"mesh bytes (first at {first})";
+            var (a, b) = (NavCompileTests.Flatten(NavAnalysisTests.CustomData(valve), "", []),
+                          NavCompileTests.Flatten(NavAnalysisTests.CustomData(mine), "", []));
+            var differ = a.Count != b.Count ? Math.Max(a.Count, b.Count) : a.Zip(b).Count(p => p.First != p.Second);
+            return differ == 0 ? "heap pointers only (Valve's variance, ledger 109)" : $"custom data ({differ} of {a.Count} lines)";
+        }
+        catch (Exception e)
+        {
+            return $"undecoded: {e.GetType().Name}";
+        }
     }
 
     /// <summary>Per role: (Valve's files, ours identical, Valve's bytes, bytes in identical files, files we lack).</summary>
@@ -312,7 +340,7 @@ public class ParityReport(ITestOutputHelper output)
             {
                 if (ours.GetValueOrDefault(path) is not { } mine || mine.AsSpan().SequenceEqual(theirs))
                     continue;
-                var why = Why(theirs, mine);
+                var why = path.EndsWith(".nav", StringComparison.OrdinalIgnoreCase) ? NavWhy(theirs, mine) : Why(theirs, mine);
                 var key = $"{Role(path)}: {why}";
                 if (Environment.GetEnvironmentVariable("PARITY_WHYFILES") is { Length: > 0 } pattern && why.Contains(pattern, StringComparison.Ordinal))
                     output.WriteLine($"  file {theirs.Length,10:n0} {path}: {why[..Math.Min(why.Length, 160)]}");

@@ -68,6 +68,9 @@ public static class MapEntities
         /// </summary>
         public string? BoneTransforms { get; init; }
 
+        /// <summary>A CMapNavLink's own fields (<see cref="NavLinkFields"/>); null for every other node.</summary>
+        public NavLinkFields? NavLink { get; init; }
+
         /// <summary>The <c>CMapPrefab</c> node ids the node was reached through, outermost first
         /// (<see cref="Maps.MapPrefabs"/>); empty for a node of the map's own.</summary>
         public int[] Prefabs { get; init; } = [];
@@ -119,6 +122,79 @@ public static class MapEntities
         Vector3 Origin, IReadOnlyList<KeyValuePair<string, string>> Keys,
         Vector3 InTangent = default, Vector3 OutTangent = default,
         int InTangentType = 0, int OutTangentType = 0);
+
+    /// <summary>
+    /// A CMapNavLink's fields (CMapNavLink, 0x18b0 bytes, factory rc 181063b90): navlink_type +0x1888,
+    /// width +0x1858, locatoroffset +0x185c, locatorangles +0x1868, nav_link_movement +0x1878 and
+    /// nav_link_movement_reverse +0x1880. The factory's defaults: type 0 (GENERIC), width 128, offset
+    /// (128, 0, 0), angles (0, 180, 0), no movement.
+    /// </summary>
+    public sealed record NavLinkFields(int Type, float Width, Vector3 Offset, Vector3 LocatorAngles, string Movement, string MovementReverse)
+    {
+        public static readonly NavLinkFields Defaults = new(0, 128f, new Vector3(128f, 0f, 0f), new Vector3(0f, 180f, 0f), "", "");
+
+        // navlink_type's string setter (181067b60): V_stricmp_fast against each MapNavLinkType_t name of the
+        // table at 18300fa90 (values 0 to 4), an unknown name 0. The display names (Generic, Climb Up, ...)
+        // are the editor's choices only. The other setters (18106b850, 18106b4f0, 18106b350, 18106b6b0,
+        // 18106b6c0) store as given; the preview strings (+0x1890, +0x1898) reach neither the collector nor
+        // the lump. s2c_navlink2 (ledger 176) measures each: a lower-case name parses, a display name is 0.
+        private static readonly string[] TypeNames =
+        [
+            "MapNavLinkType_t::GENERIC", "MapNavLinkType_t::CLIMB_UP", "MapNavLinkType_t::JUMP_DOWN",
+            "MapNavLinkType_t::VAULT_OVER", "MapNavLinkType_t::GROUND",
+        ];
+
+        /// <summary>
+        /// A copy an instance bake made of a link standing at <paramref name="origin"/>, <paramref name="angles"/>:
+        /// its origin, angles and fields. The collapse moves the link (TransformBy, 181001820) and its locators
+        /// (181064ab0: locator 0 at the link, locator 1 at locatoroffset + origin with locatorangles + angles), which
+        /// are CMapTransforms and move by their own TransformBy (vf 0xc8 181076410, the step as a CTransform:
+        /// <see cref="Maps.SettleWorld.UnderDeformerStep"/>). The locators' handler (181065720) then gives the link
+        /// locator 0's origin and angles and takes locatoroffset and locatorangles as locator 1 minus locator 0
+        /// (s2c_navlink4: the records and the lump's copies, GROUND_TRUTH 177). A prefab's map moves the same way
+        /// (its collapse moves every node by the group setter's step, 180f834d0, ledger 133's prefab note):
+        /// <paramref name="prefabs"/>, outermost first (s2c_navlink3, GROUND_TRUTH 178).
+        /// </summary>
+        internal (Vector3 Origin, Vector3 Angles, NavLinkFields Link) Copied(Vector3 origin, Vector3 angles, IReadOnlyList<DmxBinary.Element> through,
+                                                                             IReadOnlyList<DmxBinary.Element> prefabs)
+            => Copied(origin, angles, [.. prefabs, .. through]);
+
+        /// <summary><see cref="Copied(Vector3, Vector3, IReadOnlyList{DmxBinary.Element}, IReadOnlyList{DmxBinary.Element})"/>
+        /// through a chain of instances and prefabs in nesting order, outermost first.</summary>
+        internal (Vector3 Origin, Vector3 Angles, NavLinkFields Link) Copied(Vector3 origin, Vector3 angles, IReadOnlyList<DmxBinary.Element> chain)
+        {
+            var (o, a) = Maps.SettleWorld.UnderDeformerStep(origin, angles, chain);
+            var (l, la) = Maps.SettleWorld.UnderDeformerStep(
+                new Vector3(Offset.X + origin.X, Offset.Y + origin.Y, Offset.Z + origin.Z),
+                new Vector3(LocatorAngles.X + angles.X, LocatorAngles.Y + angles.Y, LocatorAngles.Z + angles.Z), chain);
+            return (o, a, this with
+            {
+                Offset = new Vector3(l.X - o.X, l.Y - o.Y, l.Z - o.Z),
+                LocatorAngles = new Vector3(la.X - a.X, la.Y - a.Y, la.Z - a.Z),
+            });
+        }
+
+        internal static NavLinkFields Read(DmxBinary.Element element)
+        {
+            T? Typed<T>(string name) where T : class
+                => element.Attributes.TryGetValue(name, out var value) ? value as T ?? throw Mistyped(name, value) : null;
+            T? TypedValue<T>(string name) where T : struct
+                => element.Attributes.TryGetValue(name, out var value) ? value is T t ? t : throw Mistyped(name, value) : null;
+            NotSupportedException Mistyped(string name, object? value)
+                => new($"a CMapNavLink's {name} as {value?.GetType().Name ?? "null"} is not measured");
+
+            _ = Typed<string>("nav_link_preview");
+            _ = Typed<string>("nav_link_preview_reverse");
+            var type = Typed<string>("navlink_type") is { } name ? Math.Max(Array.FindIndex(TypeNames, n => Tier0Strings.EqualsIgnoreCase(n, name)), 0) : Defaults.Type;
+            return new NavLinkFields(
+                type,
+                TypedValue<float>("width") ?? Defaults.Width,
+                TypedValue<Vector3>("locatoroffset") ?? Defaults.Offset,
+                TypedValue<Vector3>("locatorangles") ?? Defaults.LocatorAngles,
+                Typed<string>("nav_link_movement") ?? Defaults.Movement,
+                Typed<string>("nav_link_movement_reverse") ?? Defaults.MovementReverse);
+        }
+    }
 
     /// <summary>One output wired to an input on another entity.</summary>
     public sealed record Connection(
@@ -249,8 +325,11 @@ public static class MapEntities
         // the file used rather than assumed to be one width.
         var nodes = manager.GetElements("nodes").ToList();
         var flags = manager.Get<object[]>("hiddenFlags") ?? [];
+        // VisibilityMgr_IsNodeVisible (180f6ffc0) asks 1810eeba0 with mask 0xb: a node is hidden when
+        // flags & 0xb & ~manager+0x508 is not zero, and +0x508 is only ever set to 0 (CVisibilityMgr::vf10). Flag 4
+        // alone does not hide (c2m3_coaster_d_d's prefabs, GROUND_TRUTH 181).
         for (var i = 0; i < nodes.Count && i < flags.Length; i++)
-            if (flags[i] is IConvertible flag && flag.ToInt64(CultureInfo.InvariantCulture) != 0
+            if (flags[i] is IConvertible flag && (flag.ToInt64(CultureInfo.InvariantCulture) & 0xb) != 0
                 && nodes[i].GetValue<int>("nodeID") is { } id)
                 hidden.Add(id);
         return hidden;
@@ -277,8 +356,11 @@ public static class MapEntities
     /// every compile_source_id past the first path 12 too low, which reads as a
     /// difference on every class in the map. A CMapCable is a path too: Mako's
     /// one cable_dynamic and its seven nodes put every later id 8 out.</para>
+    ///
+    /// <para>A CMapNavLink is a CMapEntity (its IsA, rc 181064a10) and ships as one, with keys of
+    /// its own (EntityLumpAuthor.NavLinkKeys): s2c_navlink's three links are compile_source_id 70 to 72.</para>
     /// </summary>
-    private static readonly string[] GameKeyBearer = ["CMapEntity", "CMapPath", "CMapPathNode", "CMapCable"];
+    private static readonly string[] GameKeyBearer = ["CMapEntity", "CMapPath", "CMapPathNode", "CMapCable", "CMapNavLink"];
 
     /// <summary>Node types that are paths and carry CMapPathNode children.</summary>
     private static bool IsPath(DmxBinary.Element element) => element.Type is "CMapPath" or "CMapCable";
@@ -330,6 +412,12 @@ public static class MapEntities
                     // (SettleWorld.PlacedPath; s2c_prefabinst's tangents).
                     if (entity.PathNodes is not null)
                         entity = Maps.SettleWorld.PlacedPath(entity, [], prefab.Chain, Maps.PathDeformer.UnderAnyDeformer(child), child);
+                    // A link stands where its locators leave it (NavLinkFields.Copied).
+                    else if (entity.NavLink is { } link)
+                    {
+                        var (origin, angles, moved) = link.Copied(entity.Origin, entity.Angles, [], prefab.Chain);
+                        entity = entity with { Origin = origin, Angles = angles, NavLink = moved };
+                    }
                     else
                     {
                         var (origin, angles) = Maps.SettleWorld.PrefabPlacement(entity.Origin, entity.Angles, prefab.Chain);
@@ -471,7 +559,10 @@ public static class MapEntities
             InterpolationType: element.GetValue<int>("interpolationType") ?? 1,
             // A cable's tint, which a cable_dynamic ships as its rendercolor. The
             // node starts white (0xffffffff, CMapCable's factory).
-            Tint: element.Type is "CMapCable" ? element.Get<byte[]>("tintColor") ?? [255, 255, 255, 255] : null);
+            Tint: element.Type is "CMapCable" ? element.Get<byte[]>("tintColor") ?? [255, 255, 255, 255] : null)
+        {
+            NavLink = element.Type is "CMapNavLink" ? NavLinkFields.Read(element) : null,
+        };
     }
 
     /// <summary>

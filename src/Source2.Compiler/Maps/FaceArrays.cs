@@ -20,6 +20,63 @@ internal sealed class FaceArrays
     private readonly object?[] gridPaint;
     private readonly object?[] paintStream;
     private readonly Dictionary<string, object?[]> gridStreams = [];
+    private readonly int[] edgeData = [], edgeFlags = [];
+
+    /// <summary>The edge flags (edgeData's flags stream: bit 0 hard, bit 1 soft) of half-edge <paramref name="h"/>'s edge.</summary>
+    public int EdgeFlags(int h) => h < edgeData.Length && edgeData[h] >= 0 && edgeData[h] < edgeFlags.Length ? edgeFlags[edgeData[h]] : 0;
+
+    /// <summary>Corner i's patch control points as 1813bda20 makes them: the corner, the next and previous sides'
+    /// midpoints and the loop's mean (each corner times 1/m added in loop order from the corner).</summary>
+    public Vector3[] PatchControls(List<int> hs, int i)
+    {
+        var m = hs.Count;
+        var inv = 1f / m;
+        float cx = 0f, cy = 0f, cz = 0f;
+        for (var k = 0; k < m; k++)
+        {
+            var v = Pos(To[hs[(i + k) % m]]);
+            cx = (inv * v.X) + cx;
+            cy = (v.Y * inv) + cy;
+            cz = (v.Z * inv) + cz;
+        }
+        var p0 = Pos(To[hs[i]]);
+        var pn = Pos(To[hs[(i + 1) % m]]);
+        var pp = Pos(To[hs[(i + m - 1) % m]]);
+        return [p0, new Vector3((p0.X + pn.X) * 0.5f, (pn.Y + p0.Y) * 0.5f, (pn.Z + p0.Z) * 0.5f),
+                new Vector3((pp.X + p0.X) * 0.5f, (pp.Y + p0.Y) * 0.5f, (pp.Z + p0.Z) * 0.5f), new Vector3(cx, cy, cz)];
+    }
+
+    /// <summary>The patch frame Displace moves points in: the loop's Newell normal N, T and B (1813bc230).</summary>
+    public (Vector3 N, Vector3 T, Vector3 B) PatchFrame(List<int> hs, int i, int face)
+    {
+        var m = hs.Count;
+        var loopPoints = new Vector3[m];
+        float cx = 0f, cy = 0f, cz = 0f;
+        var inv = 1f / m;
+        for (var k = 0; k < m; k++)
+        {
+            var v = loopPoints[k] = Pos(To[hs[(i + k) % m]]);
+            cx = (inv * v.X) + cx;
+            cy = (v.Y * inv) + cy;
+            cz = (v.Z * inv) + cz;
+        }
+        var n = PolygonTriangulator.Newell(loopPoints);
+        var e1 = First[face];
+        var a = Pos(To[e1]);
+        var b = Pos(To[Next[e1]]);
+        var dx = cx - ((b.X + a.X) * 0.5f);
+        var dy = cy - ((a.Y + b.Y) * 0.5f);
+        var dz = cz - ((b.Z + a.Z) * 0.5f);
+        var t = Unit(new Vector3((dz * n.Y) - (dy * n.Z), (dx * n.Z) - (dz * n.X), (dy * n.X) - (dx * n.Y)));
+        var bt = Unit(new Vector3((t.Y * n.Z) - (t.Z * n.Y), (t.Z * n.X) - (n.Z * t.X), (n.Y * t.X) - (t.Y * n.X)));
+        return (n, t, bt);
+    }
+
+    /// <summary>Whether this mesh stores the displacement grids the patch code reads (subdivisionData's displacement).</summary>
+    public bool HasDisplacement => Displacement.Length > 0;
+
+    /// <summary>The displacement of grid point <paramref name="k"/> of the patch at corner half-edge <paramref name="h"/>.</summary>
+    public Vector3 DisplacementAt(int h, int k) => (Vector3)Displacement[blockOf[CornerData[h]] + k]!;
 
     public FaceArrays(DmxBinary.Element data)
     {
@@ -48,6 +105,9 @@ internal sealed class FaceArrays
                 }
         }
         paintStream = Stream(data.Get<DmxBinary.Element>("faceVertexData"), "VertexPaintBlendParams");
+        edgeData = Ints(data, "edgeDataIndices");
+        edgeFlags = (data.Get<DmxBinary.Element>("edgeData")?.GetElements("streams").FirstOrDefault(x => x.Name.StartsWith("flags", StringComparison.Ordinal))
+                     ?.Get<object?[]>("data") ?? []).Select(x => x is int i ? i : 0).ToArray();
         foreach (var st in subdivision?.GetElements("streams") ?? [])
             gridStreams[st.Name] = st.Get<object?[]>("data") ?? [];
     }
@@ -203,38 +263,59 @@ internal sealed class FaceArrays
         var at = 0;
         foreach (var (name, w) in layout)
         {
+            // 1813b82f0 lerps every stream; 1813c83f0's record then gives a stored grid weight 0, so a value is
+            // lerp * 0 + stored (a -0 there comes out +0 unless the lerp is negative). A stream with no grid keeps
+            // the lerp here; FinishLerps adds the record's + 0.
+            float[] Of(int h) => cornerData(CornerData[h])[at..(at + w)];
+            var mean = new float[w];
+            for (var k = 0; k < m; k++)
+            {
+                var c = Of(hs[(i + k) % m]);
+                for (var j = 0; j < w; j++)
+                    mean[j] = (c[j] * inv) + mean[j];
+            }
+            var s0 = Of(hs[i]);
+            var s1 = HalfEdgeMesh.Lerp(s0, Of(hs[(i + 1) % m]), 0.5f)!;
+            var s2 = HalfEdgeMesh.Lerp(s0, Of(hs[(i + m - 1) % m]), 0.5f)!;
+            var n = side - 1;
+            var step = 1f / n;
+            for (var r = 0; r <= n; r++)
+            {
+                var left = HalfEdgeMesh.Lerp(s0, s2, r * step)!;
+                var right = HalfEdgeMesh.Lerp(s1, mean, r * step)!;
+                for (var c = 0; c <= n; c++)
+                    Array.Copy(HalfEdgeMesh.Lerp(left, right, c * step)!, 0, points[(r * side) + c], at, w);
+            }
             if (gridStreams.TryGetValue(name, out var stored) && stored.Length > 0)
             {
                 var start = blockOf[CornerData[hs[i]]];
                 for (var k = 0; k < points.Length; k++)
-                    Array.Copy(Floats(stored[start + k]), 0, points[k], at, w);
-            }
-            else
-            {
-                float[] Of(int h) => cornerData(CornerData[h])[at..(at + w)];
-                var mean = new float[w];
-                for (var k = 0; k < m; k++)
                 {
-                    var c = Of(hs[(i + k) % m]);
+                    var s = Floats(stored[start + k]);
                     for (var j = 0; j < w; j++)
-                        mean[j] = (c[j] * inv) + mean[j];
-                }
-                var s0 = Of(hs[i]);
-                var s1 = HalfEdgeMesh.Lerp(s0, Of(hs[(i + 1) % m]), 0.5f)!;
-                var s2 = HalfEdgeMesh.Lerp(s0, Of(hs[(i + m - 1) % m]), 0.5f)!;
-                var n = side - 1;
-                var step = 1f / n;
-                for (var r = 0; r <= n; r++)
-                {
-                    var left = HalfEdgeMesh.Lerp(s0, s2, r * step)!;
-                    var right = HalfEdgeMesh.Lerp(s1, mean, r * step)!;
-                    for (var c = 0; c <= n; c++)
-                        Array.Copy(HalfEdgeMesh.Lerp(left, right, c * step)!, 0, points[(r * side) + c], at, w);
+                        points[k][at + j] = (points[k][at + j] * 0f) + s[j];
                 }
             }
             at += w;
         }
         return points;
+    }
+
+    /// <summary>
+    /// 1813b82f0's last step for a stream with no grid (1813c83f0: weight 1, stride 0, the +0 at 18243e890):
+    /// lerp * 1 + 0, so a -0 lerp comes out +0. <paramref name="gridded"/> names the stream offsets a grid wrote.
+    /// </summary>
+    public void FinishLerps(float[][] points, IReadOnlyList<(string Name, int Width)> layout, ICollection<int> gridded)
+    {
+        var at = 0;
+        foreach (var (name, w) in layout)
+        {
+            if (!HasGrid(name) && !gridded.Contains(at))
+                foreach (var p in points)
+                    for (var j = 0; j < w; j++)
+                        p[at + j] = (p[at + j] * 1f) + 0f;
+            at += w;
+        }
     }
 
     /// <summary>Whether subdivisionData stores a grid for the face-vertex stream of this DMX name.</summary>

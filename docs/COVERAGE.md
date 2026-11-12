@@ -62,8 +62,8 @@ The world step bakes when no builder is named or `-bakelighting` is given,
 unless `-nobakedlighting` is given; without `-s2cbake` or `-vrad3output` the
 bake is refused by name, as Steam Audio always is. The nav step generates the
 nav with its CS custom data, and the CS2 bomb damage post step runs after every
-build (ledger 109); a nav or bomb damage the port refuses (func_ladder, nav
-links, markups inside instances or prefabs, movable meshes, the analysis' casts
+build (ledger 109); a nav or bomb damage the port refuses (a func_ladder in an
+instance or prefab, nav links where the entity list simulation refuses, markups inside instances or prefabs, movable meshes, the analysis' casts
 against spheres and capsules, bomb damage over hull, sphere or capsule worlds)
 refuses the build. `--skip-unported` runs the rest and leaves those parts as the
 package has them, for quick test builds. A lump whose lights or probe
@@ -120,12 +120,12 @@ says so.
 | `-nolightmaps` | no label found | no output: resourcecompiler has no such argument |
 | `-vis` | Build vis | compile-map: off without it (no vvis, grid clustering); byte-identical VXVS from the .vmap end to end on five maps incl. s2c_prefabprobe4 and split hints (ledger 127); `-oldvis` is not reproducible in Valve's own tool |
 | `-phys` | Build physics | compile-map: world_physics, exact against Valve's decoded trees on 9 maps |
-| `-nav` | Nav | compile-map: generated from the .vmap with the CS custom data and the bomb damage after it; probe01, cardtest and s2c_navmarkup (every markup kind) Valve's (the custom data's heap pointer fields aside), ledgers 109, 142; spheres and capsules in the nav world Valve's through stage 029 (s2c_navround, ledger 143); nav links, func_ladder, ladders in the .nav (any map with a mapbuilder.ladder mesh), movable meshes and the analysis' casts against round shapes refused; every input and output in [NAV.md](NAV.md) |
+| `-nav` | Nav | compile-map: generated from the .vmap with the CS custom data and the bomb damage after it; probe01, cardtest and s2c_navmarkup (every markup kind) Valve's (the custom data's heap pointer fields aside), ledgers 109, 142; spheres and capsules in the nav world Valve's through stage 029 (s2c_navround, ledger 143); ladders Valve's up to the custom data on s2c_prefabprobe3 (ledger 174); nav links' records, islands and lump entities Valve's on s2c_navlink and, with every link attribute, s2c_navlink2, and in instances, nested copies, groups and prefabs, s2c_navlink3 and 4 (ledgers 175 to 178); nav links in instances or prefabs, a func_ladder in an instance or prefab, movable meshes and the analysis' casts against round shapes refused; every input and output in [NAV.md](NAV.md) |
 | `-navdbg` | Save debug stages to file | not started |
 | `-gridnav` | Grid Nav, Build grid nav | not started |
 | `-lod` | Build LOD | not read |
-| `-sareverb -sareverb_threads N` | Steam Audio: Bake Reverb, Threads | not started |
-| `-sapaths` | Bake Paths | not started |
+| `-sareverb -sareverb_threads N` | Steam Audio: Bake Reverb, Threads | ported outside compile-map (s2c_saprobe exact but for one Embree tie; refused in compile-map, docs/STEAM_AUDIO.md) |
+| `-sapaths` | Bake Paths | ported outside compile-map (s2c_saprobe exact; refused in compile-map) |
 | `-sacustomdata -sacustomdata_threads N` | Bake Custom Data | not started |
 | `-sabakestrictmode` | Strict Bake Mode | not started |
 | `-steamaudio_gpu` | no label found | not started |
@@ -153,7 +153,7 @@ these; a few are only reachable from resourcecompiler's command line.
 | `tileMeshBaseGeometry`, `deformables` | not read |
 | `bakelighting`, `nobakedlighting` | read: decide whether the world step bakes (GROUND_TRUTH 55) |
 | `lightmapMaxResolution` | ported (with `lightmapMipCount`, `lightmapVRadQuality`, `lightmapChartPackIterations`, `lightmapNoWeld` and `lightmapCompressionDisabled`, read from the command line over the world's keys) |
-| `steamaudio`, `sareverb_*`, `sapaths_*`, `sacustomdata_*`, `sacustombake_*` | not started |
+| `steamaudio`, `sareverb_*`, `sapaths_*`, `sacustomdata_*`, `sacustombake_*` | pathing settings read (`PathingSettings.From`); the rest not read |
 | `meshletMaxTriangles`, `meshletMaxVertices` | not read (render geometry) |
 | `keep_vertices` | written into world_physics' compile arguments as Valve does; the option itself not read |
 | `entity_lump_params` | not read |
@@ -216,11 +216,11 @@ exact 30, partial 2, unpinned 0, no sample 0
 | env_cubemap_box | Point | resourcecompiler, physicsbuilder, vrad3 | as env_cubemap with box bounds; upgrade of older vmaps only renames boxproject_* keys | lump keys exact on every pinned map, baked keys included (cubemaptexture, handshake); vmap upgrader not ported | exact |
 | env_light_probe_volume | Point | resourcecompiler | probe record for the bake; lightprobetexture* keys added; kept | lump keys exact on every pinned map, baked keys included (atlas textures, handshake, size) | exact |
 | env_sky | Point | resourcecompiler, physicsbuilder, vrad3 | upgrade of older vmaps only: skyname gets .vmat | lump pass-through ported; vmap upgrader not ported | exact |
-| func_movelinear | Solid | resourcecompiler | nav: movable nav mesh when CreateMovableNavMesh is set | lump ported; nav not started | partial (movable nav mesh not started) |
+| func_movelinear | Solid | resourcecompiler | nav: movable nav mesh when CreateMovableNavMesh is set | lump ported; the movable nav mesh (NavMovable, ledger 242: probe_classes and s2c_navmovable .nav Valve's up to the custom data) | exact |
 | func_nav_markup | Solid | resourcecompiler | nav: markup volumes | lump ported; nav markups ported (the collector, NONAV in the extraction, 003 / 009, 019, WALKABLESEED in 029; ledger 142); inside instances or prefabs refused | exact |
 | func_physbox | Solid | resourcecompiler, physicsbuilder, vrad3 | upgrade of older vmaps only: spawnflags to gravity-grab keys | lump ported; vmap upgrader not ported | exact |
 | info_cull_triangles | Point | resourcecompiler | dropped from the lump; a record for render-mesh triangle culling | dropped as Valve does; culling not ported (render geometry) | exact |
-| info_particle_system | Point | resourcecompiler, physicsbuilder, vrad3 | snapshot_mesh naming a map node: snapshot_file set to maps/<map>/particle_snapshots/node_<id>.vsnap and the snapshot generated from the node; upgrade of older vmaps: snapshot_file gets .vsnap | snapshot_file key ported (not inside instances); .vsnap not generated; vmap upgrader not ported | partial (.vsnap not generated) |
+| info_particle_system | Point | resourcecompiler, physicsbuilder, vrad3 | snapshot_mesh naming a map node: snapshot_file set to maps/<map>/particle_snapshots/node_<id>.vsnap and the snapshot generated from the node; upgrade of older vmaps: snapshot_file gets .vsnap | snapshot_file key ported (not inside instances); .vsnap from a CMapMesh, CMapPath or CMapCable byte for byte, none from the world or an entity (ledger 241, probe_classes and s2c_snapprobe); vmap upgrader not ported | exact |
 | info_player_start | Point | resourcecompiler | Hammer's map check only | nothing to port for the compile | exact |
 | light_barn | Point | resourcecompiler, physicsbuilder, vrad3 | light description for precompute, bake and vis membership; precomputed* keys, directlight, lightcookie resource; upgrade of older vmaps only converts light_spot/omni/ortho | lump keys exact on every pinned map (precomputed shape keys, matrix angles, brightness units, baked shadow keys, vis membership); bake: the own lighting port (VRAD3.md) | exact |
 | light_environment | Point | resourcecompiler, physicsbuilder, vrad3 | legacy directional light for bake and shadows; lump through the light path; upgrade of older vmaps only | lump keys exact on every pinned map (precomputed shape keys, matrix angles, brightness units, baked shadow keys, vis membership); bake: the own lighting port (VRAD3.md) | exact |
@@ -699,10 +699,10 @@ read from resourcecompiler and ported:
 - A key spelled `name` never gets a default: every DMX element already has a
   name attribute, and the default fill finds it.
 - snapshot_mesh naming a map node sets snapshot_file to the particle snapshot
-  the compile generates from it. The key is ported. The .vsnap file itself is
-  not, and neither is a snapshot node inside an instance (the port refuses it).
+  the compile generates from it. The key is ported, and the .vsnap from a mesh,
+  path or cable node (Maps/ParticleSnapshots.cs); a snapshot node inside an
+  instance is not (the port refuses it).
 
 ### Next
 
 - The `compile-map` command, routing Hammer's switches to the parts above.
-- Particle snapshot files (.vsnap) from mesh nodes.

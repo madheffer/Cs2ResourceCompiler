@@ -114,6 +114,8 @@ public partial class EntityLumpAgainstValveTests(ITestOutputHelper output)
     [InlineData("s2c_rtprefab4")]
     [InlineData("s2c_rtprefab5")]
     [InlineData("s2c_rtprefab6")]
+    [InlineData("s2c_navlink4")]
+    [InlineData("s2c_navlink3")]
     public void PrefabProbe_DiffersOnlyInTheDocumentedGaps(string map)
     {
         var source = MapFixtures.VmapSource("s2c_rc_probe", map);

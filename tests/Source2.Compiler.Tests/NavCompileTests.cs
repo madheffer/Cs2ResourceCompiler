@@ -23,7 +23,7 @@ public sealed class NavCompileTests(ITestOutputHelper output)
     }
 
     /// <summary>The custom data as path = value lines; spotencounterdata from / to and order ids (heap pointers) masked.</summary>
-    private static List<string> Flatten(KVObject node, string path, List<string> lines)
+    internal static List<string> Flatten(KVObject node, string path, List<string> lines)
     {
         if (node.IsArray)
         {
@@ -231,5 +231,71 @@ public sealed class NavCompileTests(ITestOutputHelper output)
         Assert.True(first < 0, ".nav before the custom data");
         Assert.Equal(theirs, ours);
         Assert.Equal(valveBomb, bomb);
+    }
+
+    /// <summary>
+    /// A map with a mapbuilder.ladder mesh (s2c_prefabprobe3's ladder) or nav links (s2c_navlink): the .nav
+    /// from the .vmap, with the mesh build's ladders and the areas' ladder lists, or the links' islands,
+    /// against the package Valve compiled in the addon. The custom data is compared too, unless <paramref name="analyze"/> is false (the mesh
+    /// only, without the hours-long CS analysis). s2c_prefabprobe3's analysis runs over two hours in a Release
+    /// suite, so it runs only with NAV_ANALYZE_BIG=1.
+    /// </summary>
+    [Theory]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe3", false)]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe3", true)]
+    [InlineData("s2c_rc_probe", "s2c_navlink", false)]
+    [InlineData("s2c_rc_probe", "s2c_navlink", true)]
+    [InlineData("s2c_rc_probe", "s2c_navlink2", false)]
+    [InlineData("s2c_rc_probe", "s2c_navlink2", true)]
+    [InlineData("s2c_rc_probe", "s2c_navlink4", false)]
+    [InlineData("s2c_rc_probe", "s2c_navlink4", true)]
+    [InlineData("s2c_rc_probe", "s2c_navlink3", false)]
+    [InlineData("s2c_rc_probe", "s2c_navlink3", true)]
+    public void NavWithLaddersMatchesValve(string addon, string map, bool analyze)
+    {
+        if (analyze && map == "s2c_prefabprobe3" && Environment.GetEnvironmentVariable("NAV_ANALYZE_BIG") != "1")
+        {
+            output.WriteLine($"{map}: set NAV_ANALYZE_BIG=1 to run the analysis (hours)");
+            return;
+        }
+        if (CS2Fixtures.StockPak() is not { } pak || MapFixtures.GameSchema() is not { } schema)
+        {
+            output.WriteLine("skipped: no stock pak or schema");
+            return;
+        }
+        var root = Path.GetFullPath(Path.Combine(Csgo, "..", ".."));
+        var vmap = Path.Combine(root, "content", "csgo_addons", addon, "maps", map + ".vmap");
+        var reference = Path.Combine(root, "game", "csgo_addons", addon, "maps", map + ".vpk");
+        if (!File.Exists(vmap) || !File.Exists(reference))
+        {
+            output.WriteLine($"skipped: no {vmap} or {reference}");
+            return;
+        }
+        var document = DmxBinary.ReadFile(vmap);
+        MapPrefabs.Attach(document, MapPrefabs.FromContent(Path.Combine(root, "content", "csgo_addons", addon)));
+        MapDeformers.Apply(document, MapFixtures.GameSchema());
+        using var assets = new GameContent(pak, Path.Combine(root, "game", "csgo_addons", addon));
+        using var package = new ValvePak.Package();
+        package.Read(reference);
+        var nav = NavCompile.Generate(document, schema, assets, Path.Combine(Csgo, "gameinfo.gi"), MapEntities.From(document), analyze);
+        foreach (var l in nav.Mesh.Ladders)
+            output.WriteLine($"ladder {l.Id}: width {l.Width:R} top {l.Top:R} bottom {l.Bottom:R} length {l.Length:R} direction {l.Direction} "
+                             + $"areas {string.Join(' ', l.Areas.Select(a => a?.Id ?? 0))}");
+        var valve = Entry(package, $"maps/{map}.nav");
+        var end = NavWriterTests.CustomDataAt(valve);
+        var first = end == NavWriterTests.CustomDataAt(nav.Bytes) ? Enumerable.Range(0, end).FirstOrDefault(i => nav.Bytes[i] != valve[i], -1) : 0;
+        output.WriteLine($"{map}: {nav.Mesh.Areas.Count} areas, {nav.Mesh.Ladders.Count} ladders; .nav {(first < 0 ? $"bytes 0..{end} Valve's" : $"differs at byte {first}")}");
+        if (!analyze)
+        {
+            Assert.True(first < 0, ".nav before the custom data");
+            return;
+        }
+        var ours = Flatten(NavAnalysisTests.CustomData(nav.Bytes), "", []);
+        var theirs = Flatten(NavAnalysisTests.CustomData(valve), "", []);
+        output.WriteLine($"custom data: {ours.Count} lines ours, {theirs.Count} Valve's, {ours.Zip(theirs).Count(p => p.First != p.Second)} differ");
+        foreach (var ((a, b), k) in ours.Zip(theirs).Select((p, k) => (p, k)).Where(x => x.p.First != x.p.Second).Take(8))
+            output.WriteLine($"  line {k}: ours {a} | Valve {b}");
+        Assert.True(first < 0, ".nav before the custom data");
+        Assert.Equal(theirs, ours);
     }
 }

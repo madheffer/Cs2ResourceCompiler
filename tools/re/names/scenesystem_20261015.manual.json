@@ -127,24 +127,6 @@
    "note": "edges of the footprint hull (count +0x80, points +0x84) as (nx, ny, quarter diagonal - (ny y + nx x), 0): longer than two pixel diagonals, turning one way; rsqrtss with (3 - r len2 r) (r 0.5); the last folded into the first when they turn back; LightBinnerItems.Edges"
   },
   {
-   "addr": "1805ec900",
-   "name": "SkyCube_Vertices",
-   "module": "s2c:baked/lighting",
-   "note": "data: the sky's unit cube, eight corners at +-0.5; CubemapFaceMeshes.SkyCubeVertices"
-  },
-  {
-   "addr": "1805ec960",
-   "name": "SkyCube_Triangles",
-   "module": "s2c:baked/lighting",
-   "note": "data: its twelve triangles as one-based ints (1 3 2, 1 4 3, ...); CubemapFaceMeshes.SkyCubeIndices"
-  },
-  {
-   "addr": "1805fe430",
-   "name": "LightBinner_SilhouetteTable",
-   "module": "s2c:baked/lighting",
-   "note": "data (20261023; 1805fe400 in 20261015): per eye-outside plane mask, a count and up to 8 box corner indices of the outline"
-  },
-  {
    "addr": "1801cc400",
    "name": "LPV_SortRecords",
    "module": "s2c:baked/lighting",
@@ -154,7 +136,13 @@
    "addr": "1801af7b0",
    "name": "LightBinner_WriteLightBlock",
    "module": "s2c:baked/lighting",
-   "note": "PerViewLightingConstantBufferGpu_t: g_VisibleLPV from +0xe528 (at most 128): world-to-volume rows 18049b3b0(object +0x30), box +0xd0 .. +0xe4 padded by 0.1, 1 / +0xe8, +0xec, +0xf0 (FLT_MAX for 0), then the int from the view's map; g_vShadowSampleRotations V_sincosf(i / 16 2pi + frame 1.618034); CubemapFaceConstants.LightBlock"
+   "note": "PerViewLightingConstantBufferGpu_t: g_VisibleLPV from +0xe528 (at most 128): world-to-volume rows 18049b3b0(object +0x30), box +0xd0 .. +0xe4 padded by 0.1, 1 / +0xe8, +0xec, +0xf0 (FLT_MAX for 0), then the int from the view's map; g_vShadowSampleRotations V_sincosf(i / 16 2pi + frame 1.618034); the fast path sun from +0xebd0 (null: (0, 0, -1, 0.04), +31176 -1), cascades and ambient SH only with the shadow object +0xebd8; +304 .. +372 the binner's batches and grid from +0xf370 .. +0xf398; +31936 .. +31960 the atlas (+0xef80) and three other bindless indices, light entries (+0xe3a8), env map bits, volumes; built 0x7de0 bytes (ledger 192); CubemapFaceConstants.LightBlock"
+  },
+  {
+   "addr": "1801c5cf0",
+   "name": "BitSet_Count",
+   "module": "s2c:baked/lighting",
+   "note": "set bits of the binner's environment map bit set (+0xe498); the light block's +31956 and the env map mask words (1801a9b70)"
   },
   {
    "addr": "18000f900",
@@ -515,6 +503,144 @@
    "name": "Frustum_PlanesFromMatrix",
    "module": "s2c:baked/lighting",
    "note": "scenesystem's copy of client 1817465f0; the cascade fit calls it with the zero-to-one flag"
+  },
+  {
+   "addr": "180079700",
+   "name": "BaseObject_WriteInstanceRecords",
+   "module": "s2c:baked/lighting",
+   "note": "the base scene object draw's g_instanceBuffer records (0x20 each), all eight words: w0 = element +4, w1 / w2 / w6 kept from 18007a540's loop, w3 = w4 = -1, w5 = (u16 element +0 << 20) | (u16 element +2 below 0x8000, else 0), w7 = element +8; the 12-byte elements filled at 18007ad74 / 18007af6d from the draw primitive (+0x64, +0x5c, +0x50, +0x54); found by a cubehost watchpoint (base_records.js), CUBEMAPS.md A.4"
+  },
+  {
+   "addr": "1800ed2d0",
+   "name": "InstanceBuffer_Allocate",
+   "module": "s2c:baked/lighting",
+   "note": "(pool, count, out): an atomic counter at +0x2010 hands out count 0x20-byte records (capacity +0x2a54), stores the first's address in *out and returns its index, or -1 and NULL when full"
+  },
+  {
+   "addr": "18019fe30",
+   "name": "LightBinnerGPU_GatherBarnLight",
+   "module": "s2c:baked/lighting",
+   "note": "per barn light and view (from CBarnLightObjectDescGPU vfunc 0x30, 1801c1e50, on job threads): skipped when +0x1a8 / +0x1ac are 0, the +0x78 flags fail the view's layer masks (+0x490 all, +0x498 none), byte table 180921fc8[+0x9b] & 8, or its world (+0xb8) is not in the view's list; distance fades from +0x260 / +0x264 and +0x268 / +0x26c against view +0x1c; the transform (+0x30) and oriented box (+0xf0) into a 0x640-byte CPU light entry appended to one of four hash-bucketed lists (1801c9a40); found by a cubehost watchpoint (barn_records.js), CUBEMAPS.md A.6"
+  },
+  {
+   "addr": "1800cdae0",
+   "name": "BarnLightDesc_Destroy",
+   "module": "s2c:baked/lighting",
+   "note": "desc vfunc 0x28: 1800d06f0 then the object's deleting destructor (vfunc 0, flag 1)"
+  },
+  {
+   "addr": "1801a9410",
+   "name": "LightBinnerGPU_MergeBarnLights",
+   "module": "s2c:baked/lighting",
+   "note": "CLightBinnerGPU vfunc 0x8 (vtable 1805fe688), per view: the four bucket lists into one (count +0xe3a8, 0x640-byte entries +0xe3b0), sorted (1801cc930), trimmed to min(convar 180923b68 when >= 0, 315); then 1801a3980 (shadows) and 1801a7fd0; CUBEMAPS.md A.6"
+  },
+  {
+   "addr": "1801cc930",
+   "name": "LightEntries_Sort",
+   "module": "s2c:baked/lighting",
+   "note": "MSVC std::sort of the 0x640-byte entries (insertion below 33, heap fallback), comparator 1801a9e70 with the view's camera (+0x10) and direction (+0x194 .. +0x19c); ledger 193"
+  },
+  {
+   "addr": "1801a9e70",
+   "name": "LightEntry_Less",
+   "module": "s2c:baked/lighting",
+   "note": "a before b: +0x1bc (the screen size) descending, then ((dy dy + dx dx) + dz dz) from the camera to +0x150 / +0x160 / +0x170 ascending, then colour luminance (+0xcc .. +0xd4, 0.2126 / 0.7152 / 0.0722) descending, then the view direction against +0x144 / +0x154 / +0x164 ascending, then 1804a2230 on the descriptions; ledger 193"
+  },
+  {
+   "addr": "1801aa3f0",
+   "name": "LightEntry_BinnerFootprints",
+   "module": "s2c:baked/lighting",
+   "note": "the light's binner item: the 8 clip-box corners (1805fe3a0) through the description's +0x40 with a divide, 6 planes (corner triples 1805fe340, VectorNormalize), 1801abf30 into +0x370; with the illumination box (+0x214 bit 8 and a convar) a second footprint of the box (+0x340 quaternion, +0x350 position, +0x35c half extents) into +0x474; false (the light dropped) when either is rejected; ledger 193"
+  },
+  {
+   "addr": "1801a1030",
+   "name": "LightEntry_ShadowSizeRequest",
+   "module": "s2c:baked/lighting",
+   "note": "the shadow map size (+0x1d0, capped by binner +0xef98) smoothed over time per light object (+0xe0 block, the binner clock +0xef48): runtime state; ledger 193"
+  },
+  {
+   "addr": "1801a2720",
+   "name": "LightEntry_ShadowTexel",
+   "module": "s2c:baked/lighting",
+   "note": "+0x1dc: 1 / size without the convar, else sqrt(max(1, sqrt(luminaire area + 0.01))) / 512 corrected by the frustum's corner directions, ceil(size x) clamped to 6 into +0x1cc; ledger 193"
+  },
+  {
+   "addr": "1800ce950",
+   "name": "BarnLightDesc_Bounds",
+   "module": "s2c:baked/lighting",
+   "note": "desc vfunc 0x10: 1804a2480's world box of the light, clipped by the illumination box (18049e080 on object +0x220) when +0x251 is set (the clip's empty result keeps the box's own), then CSceneSystem vf 0xe0 (1800d5410); ledger 193"
+  },
+  {
+   "addr": "1804a2480",
+   "name": "LightShape_WorldBounds",
+   "module": "s2c:baked/lighting",
+   "note": "the light's world box: (transform x description +0x40) on the 8 clip-box corners with a divide each, min and max"
+  },
+  {
+   "addr": "1800d5410",
+   "name": "SceneObject_SetBoundsSnapped",
+   "module": "s2c:baked/lighting",
+   "note": "CSceneSystem vf 0xe0: mins rounded by +-2^23 then down 1 where above, maxs up; stored at object +0x20's block (min +0, max +0x10; +0x1c the cull radius, written elsewhere) when changed"
+  },
+  {
+   "addr": "1801b2450",
+   "name": "LightBinnerGPU_UploadBarnLights",
+   "module": "s2c:baked/lighting",
+   "note": "one 0x1e0-byte g_BarnLights record per merged entry through the binner's vfunc 0x70 (1801b14a0 -> 1801b14b0), then count x 0x1e0 bytes to the buffer at +0xe558 (render context vfunc 0x380); called from vfunc 0x28 (1801b4530)"
+  },
+  {
+   "addr": "1801b14b0",
+   "name": "LightBinnerGPU_WriteBarnLightRecord",
+   "module": "s2c:baked/lighting",
+   "note": "(binner, 0x640-byte entry, 0x1e0-byte record): the g_BarnLights record; transforms at +0 .. +0x7f, colour x intensity +0xa0 .. +0xa8, flags +0x108 (entry +0x1fc << 16 | type bits), falloff block +0x140 .. +0x18c (1 / +0x14c at +0x18c); Cubemaps/BarnLightRecords.Record (types 0 to 2, bit for bit on 64 captured pairs)"
+  },
+  {
+   "addr": "1804a65f0",
+   "name": "LightDesc_ToCameraSpace",
+   "module": "s2c:baked/lighting",
+   "note": "(desc, out, camera-relative 3 x 4): out = a copy of desc (18008beb0) with +0x00 = desc 4 x 4 x rigid inverse (18049b3b0, 180499080), +0x40 = transform x desc +0x40, +0x80 (1804a32f0), +0x90 a point (translation dropped when +0x9c is 0), the shape points / vectors by type (+0xec), +0xd0 the rotation; BarnLightRecords.Block"
+  },
+  {
+   "addr": "18049b3b0",
+   "name": "Matrix3x4_InvertRigid",
+   "module": "s2c:baked/lighting",
+   "note": "rotation transposed, translation -((t2 r2 + t1 r1) + t0 r0); BarnLightRecords.InvertRigid"
+  },
+  {
+   "addr": "180499080",
+   "name": "Matrix4_Mul",
+   "module": "s2c:baked/lighting",
+   "note": "a b, each element ((a0 b0 + a1 b1) + a2 b2) + a3 b3; BarnLightRecords.Mul4"
+  },
+  {
+   "addr": "180499f90",
+   "name": "Matrix3x4_Concat",
+   "module": "s2c:baked/lighting",
+   "note": "a b, row ((a2 b2 + a1 b1) + a0 b0) + (0, 0, 0, a3); BarnLightRecords.Concat"
+  },
+  {
+   "addr": "18049c360",
+   "name": "Matrix3x4_RotateVector",
+   "module": "s2c:baked/lighting",
+   "note": "z r2 + (y r1 + x r0) per row; BarnLightRecords.Rotate"
+  },
+  {
+   "addr": "18049d420",
+   "name": "Matrix3x4_ToQuaternion",
+   "module": "s2c:baked/lighting",
+   "note": "trace branch (trace >= 0) else the largest diagonal; s = sqrt(... + 1), f = 0.5 / s; BarnLightRecords.Quaternion"
+  },
+  {
+   "addr": "1804a6570",
+   "name": "Light_Falloff",
+   "module": "s2c:baked/lighting",
+   "note": "(point, k): (sqrt(w) + k)^2 / w as 1 / (w / (s s)), 1 unless w > 0; k = 100 from 1801b14b0; BarnLightRecords.Falloff"
+  },
+  {
+   "addr": "1801c9a40",
+   "name": "LightEntry_CopyConstruct",
+   "module": "s2c:baked/lighting",
+   "note": "(dest, src) copy of a 0x640-byte CPU light entry; 17 call sites (the gather 1801a0f1c, the merge 1801a95cf, the sort 1801cc930)"
   },
   {
    "addr": "1801a5c28",

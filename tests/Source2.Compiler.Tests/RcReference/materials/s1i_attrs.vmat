@@ -1,0 +1,36 @@
+"Layer0"
+{
+	"Shader"		"csgo_complex.vfx"
+	"TextureColor"		"materials/s2cmat/color.png"
+	"g_flModelTintAmount"		"1.000"
+	"g_bFogEnabled"		"0"
+	"g_vEmptyVector"		""
+	"g_vShortVector"		"[0.5 0.25]"
+	"F_NOT_A_COMBO"		"[1 2 3 4]"
+	"NotAParam"		"some text"
+	"attributes"
+	{
+		"S2cIntAttr"		"3"
+		"S2cFloatAttr"		"0.5"
+		"S2cVecAttr"		"[1 2 3 4]"
+		"S2cStrAttr"		"hello"
+	}
+	"SystemAttributes"
+	{
+		"PhysicsSurfaceProperties"		"metal"
+		"S2cSysInt"		"7"
+		"S2cSysFloat"		"0.25"
+		"S2cSysVec"		"[0.5 0.5]"
+		"S2cSysNested"
+		{
+			"x"		"1"
+		}
+	}
+	"legacy_import"
+	{
+		"VertexLitGeneric"
+		{
+			"$basetexture"		"models\props\x"
+		}
+	}
+}

@@ -158,6 +158,12 @@ public class WorldNodeProbe(ITestOutputHelper output)
                 for (var v = 0; v < vb.ElementCount; v++)
                 {
                     var at = (int)(v * vb.ElementSizeInBytes);
+                    if (vb.ElementSizeInBytes < 12 || vb.InputLayoutFields[0].Offset != 0 || !vb.InputLayoutFields[0].SemanticName.Equals("POSITION", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // A buffer without the position first (the depth split's remainder): raw bytes.
+                        text.AppendLine($"  v{v}: {Convert.ToHexString(vb.Data, at, (int)vb.ElementSizeInBytes)}");
+                        continue;
+                    }
                     var pos = new Vector3(BitConverter.ToSingle(vb.Data, at), BitConverter.ToSingle(vb.Data, at + 4), BitConverter.ToSingle(vb.Data, at + 8));
                     var rest = Convert.ToHexString(vb.Data, at + 12, (int)vb.ElementSizeInBytes - 12);
                     text.AppendLine($"  v{v}: {pos.X:R} {pos.Y:R} {pos.Z:R} | {rest}");

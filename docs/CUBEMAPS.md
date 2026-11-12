@@ -854,6 +854,55 @@ atixref's capture (%TEMP%/cubehost_run/atixref) has face 0's dump, cube 0's six 
 that run. The readbacks are this run's frames, so they are a valid reference for the face even though atixref's
 build varies run to run (ledger 144, item D).
 
+0. **Where atixref's no-dump render stops (2026-10-29).** With `CubeWithNoDumpMakesTheGamesExr` on atixref
+   (`CUBENODUMP_VPK` = the capture's package, `CUBEREADBACK_EXR` = env_cubemap_245678519.exr):
+   - Done: the scene from an unbaked package (atixref's has no lightmaps: the lightmap block's measured 256 x 256)
+     and from a light_environment with no fade keys (CS2's FGD removes them; 0.1 and 0.05 measured). GROUND_TRUTH 184.
+     It now builds all 42 cubes' scenes (sky sky_de_nuke).
+   - **It stops in the cascades, on foliage, before any probe-lit colour draw (item 1).** csgo_foliage's vertex
+     program reads set 4 binding 29, a sampler from the global late-bound bindless set (g_globalLateBoundBindlessSet,
+     set 4 slot 4; the capture binds array element 2), with g_bindless_Texture3D_float4 at binding 46. It samples
+     `NoiseMap` (Sampler3D, default materials/default/effects/noise/perlin_a_z000.tga) for its wind: g_flSwayAmount,
+     g_flFlutterSpeed, g_flBranchAnimSpeed and the rest. The renderer has no bindless set at all.
+   - So foliage needs, in order: the bindless set (which slots the engine's heap gives, or our own indices written
+     where the program reads them: read which constant carries the index), the sampler heap's element 2 (from code,
+     not the capture's state), the noise texture, and the TIME the wind is evaluated at. The last is item D: atixref's
+     run-to-run difference (ledger 144) is plausibly this wind, and pinning it needs a capture with CS2 closed.
+   - **The bindless set is built (2026-10-29, later).** The indices travel in the program's own $Globals: a
+     TextureNDIndex variable (csgo_foliage's g_tNoiseMap, at +0) and a SamplerStateIndex variable
+     (g_sTrilinearWrap, at +48), which ProgramGlobals.Fill already wrote through two callbacks. CubemapFaceRenderer
+     now gives them our own indices and binds the resources there: textures (the material's texture under the
+     variable's name) from 1 in the g_bindless_* array of their dimension (set 4, 30 + slot), samplers in set 4
+     binding 29, engine samplers by name (CubemapFaceSamplers.Engine; only g_sTrilinearWrap listed, checked) and a
+     g_sUserConfig* sampler from the program's material-filter state group (Filter 255 or absent), one slot per
+     distinct state from 32. A program with no bindless array keeps -1, as before; probe01's cubes and array are
+     unchanged.
+   - Checked on atixref face 0: our foliage vertex $Globals equal the capture's word for word on both foliage
+     materials but word 0 (our index 1 against the game's 1764); the sampler index is 2 in both. The noise texture
+     (perlin_a_z000_tga_8c53a467.vtex, 64 x 64 x 256 RGBA8) equals the capture's 3D Image 20400 in all nine mips
+     (CubemapBindlessTests, `CUBEBINDLESS=<face dump>`). `S2C_CUBE_GLOBALS_OUT=<dir>` writes every $Globals the
+     renderer makes. The game's heap, for the record: 0 aniso wrap, 1 bilinear clamp, 2 trilinear wrap, 3 trilinear
+     clamp, 4 point clamp, 5 bilinear border, 6 comparison, 7 aniso wrap (a material's).
+   - **Done: a pixel program with no rasterizer descriptor** (csgo_foliage's alpha-tested depth program, ps static
+     66) draws with D3D11's default one, back faces culled and no bias of its own, on top of the pass's state.
+     Measured, not read from the engine: all six of face 0's draws of that module (five cascades at the pass's 2.13
+     slope, one prepass at 0) cull back with no bias of their own.
+   - **Done: the engine's bindless samplers by name, and checked against the game's heap.** CubemapFaceSamplers.Engine
+     uses the game's own heap numbers: 1 g_sBilinearClamp, 2 g_sTrilinearWrap, 3 g_sTrilinearClamp (W wraps),
+     4 g_sPointClamp, 5 g_sCookieSampler (border, transparent black), 6 g_tShadowDepthBufferCmpSampler (less-or-equal
+     comparison, W wraps), each state as the capture's element holds it. tools/cubehost/cmp_globals.py compares every
+     $Globals the renderer makes (S2C_CUBE_GLOBALS_OUT) with the capture's draws of the same module: on atixref face
+     0 all 22 blocks are the capture's on every word but the texture indices, and csgo_lightmappedgeneric's pixel
+     block gives each of the six names the game's own index, so each name's element is confirmed. Material samplers
+     go from 32; the game put them at 0 (g_sUserConfigAllowGlobalMipBias) and 7 (g_sUserConfig), both anisotropic x 4
+     wrap, the state ours takes.
+   - **Next stop: `PerViewLightProbeVolumeConstantBuffer_t`**, csgo_lightmappedgeneric's pixel program (static 6177
+     dynamic 2) reading the light probe volumes: item 1 below. Then the wind's time (item D).
+   - Not unified: GpuMaterialSampler keeps its own sampler table (same names and slots 1 to 4; its 5 and 6 differ).
+   - The renderer's "named by no variable" error now lists what the program's write sequence holds in that set.
+     atixref's dump also trips BlockRoles (one downsample block at viewports 384 and 320); BlocksOfTheCapture finds
+     blocks by binding instead.
+
 1. **The probe-lit colour programs' inputs.** Props and vertex-painted brush blends draw with
    D_BAKED_LIGHTING_FROM_PROBE (ledger 163). Their pixel programs read texture and buffer attributes the renderer
    does not bind yet: `CubemapFaceRenderer.Texture` throws "no input for attribute <name>", which lists them. Expected
@@ -862,12 +911,85 @@ build varies run to run (ledger 144, item D).
    has 42 volumes, so check the light block's volume words against the capture first (the replay test's check of
    18832 .. and 31960). Check: a test like the replay's TextureInputs comparing every colour draw's bound
    subresources with the capture's.
+   **Read 2026-10-29 (csgo_lightmappedgeneric ps static 6177 dynamic 2, atixref face 0 eid 2517):**
+   - Its eight bindless textures: four material maps through $Globals (g_tColor +36, g_tLayer1NormalRoughness +40,
+     g_tLayer1AmbientOcclusion +44, g_tLayer1Detail +68; already bound), three through PerViewConstantBufferCsgo_t
+     (+72 a BC6 cube, 6 slices, 7 mips; +76 a colour attachment; +80 the D24S8 depth / stencil: our Csgo block writes
+     none of them yet), and one through PerViewLightProbeVolumeConstantBuffer_t (set 1 binding 2, 57600 bytes).
+   - That buffer is scenesystem 1015 1801ba530 ("UploadLightProbeVolumeConstants"): 400 records of 0x90, every slot
+     first filled by 1801ba3e0 (zeros, then bindless indices of engine default textures at +0x4c, +0x6c, +0x88 (type
+     0xd: 208 in the capture) and +0x8c (type 0x15: 200)), then one record per scene probe-volume object in the
+     list 1801ba530 walks (lambda vtable 1805fdd18, slot 2 -> 1801baa00), each the object's own 0x90 bytes at
+     +0x130 copied whole. The capture: 42 such records (atixref's volumes), the rest the default.
+   - A record: a world-to-volume 3 x 4 (1 / size on the diagonal, translation), +48 (0.25, 0.25, 0.25), +64
+     (0.75, 0.75, -1/12) and a texture index, +80 (1, 1, 1), +96 (1, 1, 1) and an index, +112 zeros and an index, +128
+     (0.25, 0.75) and two indices. Where the object's +0x130 block is built is NOT found: no scenesystem function
+     writing +0x130 .. +0x1b0 carries these constants (ten candidates checked), CSceneLightProbeVolumeObject's
+     vftable has three slots, and client's 180282060 / 18026c130 / 1801fbdb0 are keyvalue tables. Next: the client
+     side that hands scenesystem a CLightProbeVolumeObjectDesc, or a Frida probe on 1801baa00 in cubehost dumping each
+     object's +0x130 block with its entity (cubehost, CS2 and Steam closed).
+   - **Found with cubehost (2026-10-29, tools/cubehost/lpv_records.js).** Records only (WATCHED 0): atixref makes 44
+     objects (scenesystem 1800cd300, 0x1d0 bytes; the tools scene's comes first) and all 44 reach 1801baa00. Each
+     object holds its world 3 x 4 at +0x30, its box at +0xd0 (box_mins, box_maxs), 32 at +0xec (edge_fade_dists y) and
+     the record at +0x130. A watch run (copy the agent with `%WATCHED%` replaced by 1; SKIP 1 passes the tools scene's
+     object, whose watchpoint stopped the load) caught the record's first write: **client.dll 1.41.9.3, the function
+     at 1802819e0** (the 1015 build's at 1802818e0; Ghidra's 1015 client splits it wrongly, read the installed
+     disassembly), the probe volume entity's update, called from client 18023399d in a scenesystem job.
+   - What that function writes, read from the disassembly (rbx = the record, rsi the entity's object, rdi its data):
+     +0x00 .. +0x2f the 3 x 4 `A x B` (181743d40 is a 3 x 4 concatenation; A from 18026fea0 on the box floats, B
+     from 181745ff0 on the entity's transform); +0x60 .. +0x68 and +0x70 .. +0x78 ratios of the probe texture's
+     dimensions (rendersystem vfn 0x2c8, three shorts) to the entity's probe counts (rdi +0x80 .. +0x88, the z one
+     times 6; rdi +0x8c .. +0x94 for the second set), 1 when there is no texture; +0x30 .. +0x48 half-texel borders
+     from those; +0x50 .. +0x58 rdi +0x70 .. +0x78, +0x5c a fade or 0 (rdi +0x69 / +0x6a); +0x4c, +0x6c, +0x7c the
+     bindless indices (vfn 0x650 with flags 3) of the textures at rsi +0x108, +0x128, +0x110. +0x80 .. +0x8f
+     (0.25, 0.75, two indices) is written after 1802822ba, not read yet. NOT PORTED: the next step is to read that
+     function whole (its branches and constants) and port it, then check every one of the 44 records against
+     the run's dump (%TEMP%/cubehost_run/atixref_lpv/frida.jsonl).
+   - The run changed atixref's package in the scratch addon (buildcubemaps); it was restored from a backup and
+     cmp-checked. Back it up before any rerun.
+   - **Ported 2026-10-29 for unbaked volumes (Cubemaps/LightProbeVolumeRecords.cs).** The whole of 1802819e0 read:
+     the record is `BoxToUvw x InvertRigid(world)` (18026fea0 stores its twelve floats as given; 181745ff0 transposes
+     and takes -(((ty o1) + (tz o2)) + (tx o0)); 181743d40 adds ((a2 b2 + a1 b1) + a0 b0) + (0, 0, 0, a3)), and the
+     rest from the probe textures, which on an unbaked map are all the engine's default (a 2 x 2 x 2 R8G8B8A8 of
+     zeros): borders 0.25 / 0.75 / 1/6 - 0.25, residency 0, count ratios 1, +0x80 (0.25, 0.75). The box is
+     box_mins / box_maxs (1802755e0 grows it by edge_fade_dists only with WorldRenderer/LPVEdgeBlending). Refused:
+     a baked volume (its texture in the package), a rotated one (atixref has none), counts below the texture.
+     Measured, not mapped to keys (GROUND_TRUTH 185): the entity's +0x70 .. +0x78 (1, 1, 1) and the SDF fade (0).
+   - LightProbeVolumeRecordsTests (`CUBELPV=<face dump>`, `CUBELPV_VPK`): all 400 of atixref face 0's records are
+     the capture's on every word but the bindless indices, volumes in lump order. CubemapFaceRenderer binds the
+     buffer (set 1 binding 2) with the default probe texture in the bindless set.
+   - **atixref now renders all six faces from no dump**, with nothing refused. Not yet the game's: face 0 differs
+     in 2,127,217 of 4,194,304 halves (192 world draws to the capture's 256: item 4's non-aggregate objects), and
+     the count moved by 22 halves between two runs, which points at an unbound read. The likely one, not
+     checked: PerViewConstantBufferCsgo_t +72 / +76 / +80, the environment cube, a colour target and the depth,
+     which csgo_lightmappedgeneric reads through the bindless set and our Csgo block leaves 0. Then the wind's
+     time (item D).
+   - **Done (2026-10-29): the three Csgo indices, and no unbound bindless element.** For a program with a bindless
+     array, CubemapFaceRenderer writes our indices at Csgo +72 / +76 / +80 for what the named path binds as
+     EnvironmentMap (a zero cube), DynamicAmbientOcclusion (the AO target, UNORM) and DynamicAmbientOcclusionDepth
+     (the half depth). Matched by resource in atixref face 0's capture (a 256 BC6 cube; a 1280 x 720 R8G8B8A8 no
+     draw of the face writes; the D24S8 the half depth downsample writes); the writer of these words is not read.
+     Live targets keep their index and take the face's current image.
+   - **The variance was a device fault in waiting.** Re-running then lost the Vulkan device (driver event 153)
+     non-deterministically, on the committed code too, from reads of bindless element 0, which nothing bound
+     (partially bound arrays). Element 0 of every bindless array is now a zero texture of its dimension and
+     sampler slot 0 a trilinear wrap: ours, not Valve's, so a read through an index we leave 0 gives zeros. Two
+     runs are now identical: face 0 2,127,238, 1 2,152,488, 2 1,417,485, 3 1,222,252, 4 286,688, 5 3,147,685
+     halves differ. The indices barely move those, so the gap is elsewhere: item 4 first (192 of 256 world draws
+     on face 0). probe01 unchanged.
 2. **The sky's D_FOG_TYPE.** The sky object's +0xf4 (scenesystem 180154fb0, token 0x83cb90d6; type 2 also tests
    +0xf8 / +0xfc against -90) is copied from C_EnvSky's m_nFogType (+0x10b8) by client 180282390. Neither probe01's
    nor atixref's env_sky has the fog_type key, yet probe01 draws 0 and atixref 1. Find the other writer: dispscan
    client for `[reg + 0x10b8]` writes (180270020 is the constructor; check its FUN_18026faa0 at +0x10b4), the schema
    default in 18026d020, and whether env_cubemap_fog's cubemapfogsource 2 (atixref's, a sky material) sets it.
    Today the renderer draws 0. Check: the sky draw's pixel module equals the capture's (6856 on atixref).
+   **Found 2026-10-29 (by evidence, not yet by code):** atixref's skybox map (ze_atix_panic_new_skybox, loaded by
+   its skybox_reference) has its own env_sky, with `fog_type = 1` and the same sky_de_nuke material: it was
+   compiled with an FGD that still had the key, which csgo.fgd now comments out. probe01 has no skybox and no
+   key and draws 0, so the absent-key default is 0, and atixref's 1 is the skybox world's sky. In client the field
+   is written only by the constructor (installed 180270120; the copy to the sky object is installed 180282490 at
+   +0x10b8), so the value is networked from server.dll (CEnvSky m_nFogType, key "fog_type"; server is not in the
+   Ghidra project). Open: which env_sky the scene's sky object follows when both exist, read before porting.
 3. **env_cubemap_fog with a sky material.** atixref's fog has cubemapfogsource 2 (materials/skybox/sky_de_nuke.vmat)
    and no height fog. `CubemapFaceConstants.Csgo` was only checked on probe01's (source 1, sky entity): check
    PerViewConstantBufferCsgo_t's fog words (432 .. 548) and the fog cube texture binding against atixref's capture.
@@ -879,12 +1001,184 @@ build varies run to run (ledger 144, item D).
    nodes), their culling (the CPU draw path DrawArray 180042330, ledger 139), layers (CubemapLayerFlags applies to
    any object), transforms and instance records, and why some draw the error shader (a missing material or
    program). Start from the dump: rdc_actions.py's annotations (aggregate.model_name, material_name) name each draw.
+   **Inventory (2026-10-29).** `rdc_actions.py <capture.rdc>` (without modules.txt: atixref's is spvmatch's raw
+   output, not "id name" lines) lists 27,248 commands with the engine's annotations. Its first segment (before the
+   first vkCmdCopyImageToBuffer) carries no annotations, so read the face after the first readback: 124 draws, 66
+   aggregate (indirect), 56 base objects (`baseobject.model_name`), a skybox and a particle. The base objects:
+   - World node scene objects (`n0_lr0_c*_s_*`: the `tile_set_a` nomerge model in the colour and shadow lists).
+     atixref's n0.vwnod holds **194 m_sceneObjects** beside its 264 aggregates (m_vTransform, m_renderableModel,
+     m_nObjectTypeFlags: 65 x 0x408, 40 OVERLAY, 36 x 0x420, 19 x 0x410, 12 RENDER_TO_CUBEMAPS, 10 NONE, 8
+     RENDER_WITH_DYNAMIC, 4 x 132104; fade distances, lighting origin, cubemap / LPV handshakes). The renderer reads
+     only m_aggregateSceneObjects.
+   - Light blocker shadow meshes (`n0_lr0_c1x_s_cb_bl_mesh_blocklight1x_shadow`), in the shadow lists only
+     (USES_SHADOW_FAST_PATH batch lists), and an entity model (`unnamed_174`) with them.
+   - Skybox models placed as props (`de_vertigo_skybox01_*`, `citystreets`), BAKED_LIGHTING batch lists.
+   Entry points found, not read: scenesystem 1015 CBaseSceneObjectDesc's vftable 1805e5d70; by its position
+   against CAggregateSceneObjectDesc's (1805e4538, slot 8 DrawArray 180042330) its draw is slot 8, 18007d750
+   (inferred from the layout, check it); the annotators 180079cb0 / 180081cd0 (via 180083190 / 180083140).
+   Order of work: the base object's draw (18007d750) and its instance record, then its culling and layer
+   membership for the world node's scene objects (the colour and shadow lists), then the blocker shadow meshes,
+   then overlays (a path of their own) and the prop models (entities). Each slice is checkable against the
+   capture's direct draws by model name and index range.
+   **Read 2026-10-29 (scenesystem 1015, CS2 open: static only).**
+   - 18007d750 (slot 8) is only a dispatch: draw primitive flag +0x62 & 0x2000 to 180080c50, else 18007a540, the
+     generic material-system draw (render attribute hashing; too large to port as a block).
+   - A base object draws like an aggregate fragment, through g_instanceBuffer / g_transformBuffer (set 4,
+     read-write in the capture: Buffer 89762, 8192 x 0x20; Buffer 109119, 1024 x 0x30), selected by a per-instance
+     R32_UINT stream (binding 2 or 1, Buffer 1273 at the draw's offset), firstInstance 0, one instance. Face 0 has
+     71 direct draws: 50 atlas, 5 prepass, 16 colour, ids 291 .. 611, one record each.
+   - Records: (tint, transform, w2, -1, -1, w5, w6, 1.0). Atlas and prepass: tint mostly -1, w2 -1, w6 0, w5 0x7,
+     0x3 or 0x1 << 20. Colour: w2 0x121e .. 0x122d or -1 and w6 0x200 .. 0x5a6000 per object (vertex-stream offsets,
+     probably), w5 0x7 or 0x3 << 20, tint packed or -1. The colour programs are csgo_environment_blend's probe-lit
+     combo (no D_BAKED_LIGHTING_*), the atlas ones csgo_depth_only static 0 as for aggregates.
+   - 18007a540's loop writes w1 = object +0x60, w2 = +0x64, w6 = +0x90 (object at draw primitive +0x18, 0x70
+     primitives); 1800ed2d0 only hands out the records (an atomic counter).
+   - **The whole record, from a watchpoint (2026-10-30, cubehost, tools/cubehost/base_records.js, four write
+     watchpoints on a record 18007a540 had just allocated).** 180079700 (called at 18007ae06) rewrites every word:
+     w0 = element +4, w1 / w2 / w6 kept from 18007a540's loop, w3 = w4 = -1, w5 = (u16 element +0 << 20) |
+     (u16 element +2 if below 0x8000, else 0), w7 = element +8 (float). The elements are 12 bytes, one per
+     primitive, filled at 18007ad74 / 18007af6d from the draw primitive (0x70 stride, rsi = primitive + 0x5c,
+     object pointer at +8 in that loop): element +4 = primitive +0x50, +8 = +0x54, +2 = +0x5c, +0 = +0x64. The
+     watched record came back (-1, 0xa, -1, -1, -1, 7 << 20, 0, 1.0), the base-object shape above. Still to read:
+     what fills primitive +0x50 / +0x54 / +0x5c / +0x64 (tint, the 1.0, the low and high halves of w5), and the
+     object offset (+8 here, +0x18 from 18007a540's own r15, which may be a different base: check).
+     The other writer the run met, 18003cf80 .. 18003cfe4 (inside 18003c5a0, from 1800f042f on job threads), the aggregate
+     fragment record (all eight words), already ported.
+   - 18003d380 is the generic per-object cull (fade distances +0x79 / +0x7a, the size metric 18004c390, the
+     visible entry: position, size, fade byte, flags 1 / 3 / 0x10 / 0x20).
 5. **Shadowed lights' atlas tiles.** light_omni2-like lights render their own shadow views into atlas tiles that
    are no sun cascade (ledger 144: culled with the captured per-view block's frustum, 96 of 96). Port their view
    setup from the precomputed sub-frusta, their per-view blocks and their draws.
 6. **The light binner with lights.** The binner and light block bin no lights or environment maps in the cubemap
    view on probe01 and s2c_l5probe. Check atixref's CullParams_t and light block counts (g_nNumLights and the
    rest) against its capture before assuming the same.
+   **Checked 2026-10-29: atixref is not the same.** CubemapFaceReplayTests.PackageBlocksAgainstTheCapture
+   (`CUBEBLOCKCMP=<face dump>`, `CUBEBLOCKCMP_VPK`; BlockRoles no longer takes a material's 16-byte $Globals for a
+   downsample) compares every block of a face from the package with the capture by role. atixref face 0:
+   - the face view: 142 of 160 words; the rest is g_matProjectionToWorld (+64 .. +127, float noise in an inverse
+     the draws do not read per the sensitivity run) and -0 against 0. World-to-projection, the camera offset and
+     position are the capture's.
+   - a second world and sky per-view block: **the 3D skybox view** (near 2, far 56755.84, camera
+     (-773.323, -1224.058, -1680.191), depth range 0.95 .. 1 behind the world's 0 .. 0.95; 22 draws, the vertigo
+     skybox models). Not ported. Its world is another package: atixref's `skybox_reference` (worldGroupID
+     skyboxWorldGroup0) loads `maps/ze_atix_panic_new_skybox.vmap`, compiled at game/csgo/maps/
+     ze_atix_panic_new_skybox.vpk (its own n0.vwnod, sky_camera scale 16 at (-848.413, -1159.429, -2599.0), env_sky).
+     The position rule is confirmed in code (installed client 18020edff .. 18020ee7c, in the face render: the sky
+     camera from 180acc890; scale the short at +0x13d0, skipped when not > 0; position = (1 / scale) * face position
+     + sky camera +0x13d4 .. +0x13dc). But with the lump's sky_camera origin it gives (-882.8, -1175.6, -1702.4), not
+     the capture's; the capture implies a runtime sky camera origin of (-738.94, -1207.84, -2576.78), (109.47,
+     -48.41, 22.22) off the lump's, and no entity sits at the other reading. So the skybox world group's placement
+     (skybox_reference's load) moves it: read that before porting (not fitted).
+   - light block: +80 / +84 g_vScreenSpaceDitherParams.xy (per-frame random, not a port gap); **+308 / +312
+     g_vLightCullParams 16384 and 1** where ours is 8192 and 0, and +320 .. +340 (environment map and volume cull
+     params) set: the face bins **one light and environment maps**, so BarnLightsNone and the empty binner are
+     wrong here. binner CullParams_t: 21 of 40 words (the light and env map counts). Also +31132 0.043 against our
+     0.04 and +31152 0 against our 1 (shadow terms, not read yet).
+   - Csgo: +64 .. +108 are bindless indices; of those only +68 (a 64 x 64 x 3 RGBA16F array, an LTC-like table:
+     slice 0 starts (1, 0, 0, ...)) and +72 / +76 / +80 are read in face 0; the table is not in the DLLs as halves.
+   - cascades: one block per cascade has +64 .. +127 (g_matProjectionToWorld) empty on our side; the other blocks
+     per tile are other lights' views (item 5).
+   Next for the lights: the barn light's GPU record. scenesystem 1800cd8c0 creates barn light objects (as
+   1800cd300 does probe volumes; vfunc 0xb8 of CBarnLightObjectDescGPU, vftable 1805fe140, reached through
+   1800d5aa0). **Watch runs 2026-10-30 (tools/cubehost/barn_records.js).** The first six runs failed through the
+   agent, not the game: (1) it read words it had put read/write watchpoints on (to log the object), which traps
+   inside Frida and killed the host (runs 1 to 4: no "armed" message ever reached the log); (2) the objects it
+   watched were destroyed (atixref creates 29 at load and keeps creating and destroying them, 50 to 157 per run),
+   and a watchpoint left on freed memory traps on every allocation there, so the build stalled (run 5, 25 min).
+   The agent now never reads a watched word, tracks 1800cdae0 (the desc's destroy) to drop a dead object's
+   watchpoints, and gives up past 200,000 traps. Run 7 built all 42 cubes (run 6's post-quit crash is cubehost's
+   own shutdown crash, worldrenderer 1800205c6, in every dump since 10-27).
+   Watchpoints on +0x30 (the transform) of four live objects named the reader: **18019fe30**, called from the GPU
+   desc's vfunc 0x30 (1801c1e50) on job threads, per light and view. It returns early when +0x1a8 / +0x1ac are 0,
+   when +0x78 fails the view's layer masks (+0x490 all set, +0x498 none), on a byte table bit (180921fc8[+0x9b]
+   & 8) or when the light's world (+0xb8) is not in the view's list (+0xca8); else fades (+0x260 - d) * +0x264
+   and (+0x268 - d) * +0x26c clamped to [0, 1] (d = view +0x1c), copies +0x30 .. +0x5f and the oriented box
+   (+0xf0) into a 0x640-byte CPU light entry and appends it to one of four hash-bucketed lists (1801c9a40). The
+   g_BarnLights words are packed from those entries later:
+   **The chain to the GPU record (2026-10-30, tools/cubehost/barn_entries.js + decompile).** A watchpoint on a
+   gathered entry saw 1801c9a40 copy it on at 1801a95d4 (two more traps found doing it: an entry copied to the
+   STACK, 1801a222f, must not be watched, the handler's own frames land on it; and the bucket arrays reallocate,
+   1801c80c7, which strands a watchpoint on freed heap). Then statically:
+   - 1801a9410 (binner vtable 1805fe688 slot 0x8, per view) moves the four buckets into one list (count binner
+     +0xe3a8, 0x640-byte entries at +0xe3b0), sorts it (1801cc930), trims it to min(convar at 180923b68 if
+     >= 0, 315), then 1801a3980 (shadows; drops entries) and 1801a7fd0 (moves one entry to +0xe590);
+   - 1801b2450 (from slot 0x28, 1801b4530) writes **one 0x1e0-byte record per entry** through the binner's own
+     vfunc 0x70 (1801b14a0 -> **1801b14b0**, ~500 lines) and uploads count x 0x1e0 bytes to the buffer at
+     binner +0xe558 (render context vfunc 0x380).
+   1801b14b0 is the record to port next: transforms (+0x00 .. +0x7f from the entry's matrices), colour times
+   intensity (+0xa0 .. +0xa8), the shadow and cookie terms, a falloff block (+0x140 .. +0x18c, 1 / +0x14c at
+   +0x18c) and the flags word at +0x108 (the entry's +0x1fc << 16 | type bits).
+   **Ported 2026-10-30: Cubemaps/BarnLightRecords.cs**, bit for bit on 64 (entry, record) pairs captured with
+   tools/cubehost/barn_record_io.js (a plain hook on 1801b14b0, no watchpoints; atixref, the cube view's camera;
+   BarnLightRecordsTests, `CUBEBARN=%TEMP%/cubehost_run/atixref_barn_io1/frida.jsonl`). 1804a65f0 copies the
+   description at entry +0x18 and moves only its spatial fields into camera-relative space (helpers read from
+   the disassembly: 18049b3b0 rigid inverse, 180499080 4 x 4, 180499f90 3 x 4, 18049c360 rotate, 18049d420
+   matrix to quaternion), so most of the record is that block's other fields copied. Covered: shape types 0, 1, 2,
+   with and without an illumination volume. Refused: types 3 to 5 (18049d390), a shadow-mapped light, entry +0x207
+   and a cookie (a bindless index), none captured. One trap: the illumination translation is
+   cross(q, t) + (v + w t) (vectorised, 1801b1a94); the decompile prints (cross + v) + w t, one ulp off on 8 pairs.
+   Still to do: the entry itself (18019fe30 from the light object, which client.dll fills from the entity), the
+   merge's sort and trim, and the binner's CullParams for the light count.
+   **The entry, static reading so far (2026-10-30, CS2 open).** The 64 captured entries are 9 of atixref's lights,
+   matched to entities by the entry's +0x144 translation at distance 0 (EntityKeyDump, `ENTDUMP=<vpk>|^light_`):
+   7 light_barn and 2 light_omni2, the omni lights as shape-0 barn records. In 18019fe30 the entry is
+   +0x18 the object's +0xf0 description (18008d010), +0x144 the object's +0x30 .. +0x5f, +0x1b8 a distance fade
+   1 - clamp((obj +0x260 - d) obj +0x264) and +0x1e0 / +0x1e4 the shadow fade from +0x268 / +0x26c (d = the
+   view's +0x1c): so the entry depends on the VIEW (one light's +0x1e0 is 0.99382 in one view, 1 in another).
+   The rest comes from the light's render attributes by hash (18004d390 on 18008bb20(object): 0xfd982dcb,
+   0xdee74b50, 0xc8c4099d, 0xdf408d62, 0xedc61ed4, 0xf4cb136, 0xebbff45a, 0x1776771, 0x6076c0ed, 0xbc725fcf,
+   0xd59b1248, 0xf69dd08a, ...), past what was decompiled (ReVa went down). Next, statically: the rest of
+   18019fe30, then client.dll's light entity update that fills the object and its attributes from the keys.
+   **The attributes are entity keys, and client.dll writes them (2026-10-30, static).** The hashes are
+   MurmurHash2 (seed 0x31415926) of lowercase names; hashing every key of atixref's lights and every identifier in
+   the game's DLLs names: 0x1776771 fog, 0xe615a6e8 fogscale, 0x266c41fb bouncescale, 0xbc725fcf shadowpriority,
+   0xc8c4099d contactshadow, 0xd59b1248 bakedshadowindex, 0xdf408d62 forceshadowsenabled, 0xf69dd08a
+   shadowmapsize, 0x4211a56 precomputed_shadowmap, 0x29c8655f precomputed_depth_pyramid. Not named (no plain
+   identifier hashes to them): 0xfd982dcb, 0xdee74b50, 0xedc61ed4, 0xf4cb136, 0xebbff45a, 0x6076c0ed, 0x3d81da66,
+   0x69a26332. The installed client.dll uses nine of them in ONE place, 180d8ee3e .. 180d8f0e9 (a pdata fragment
+   starting 180d8e74f, beside the 180d80b63 / 180d8e7f8 that touched barn objects in watch run 6), per scene
+   object of the light entity (rsi; count +0x1340): attributes at object +0x110 through 18016aaf0 (int) /
+   18016af20 (vector): fog (+0x7a8 frame byte), contactshadow (+0x11e0 != 0), forceshadowsenabled (+0x11e1),
+   bouncescale (+0x11e8, when +0x11e4 is 2, with 0xedc61ed4 = 1), bakedshadowindex (+0x10b4 unless -1),
+   shadowpriority (+0x11dc unless -1), shadowmapsize (a local, when > 0), 0xfd982dcb (+0x1340), 0x230dbc02
+   (+0x11ec), 0x64ea448f (+0x11fc times +0x11f0 .. +0x11f8, when +0x11fc is not 0); and the fades the gather
+   reads: object +0x260 = entity +0x1210, +0x264 = 1 / max(0.0001, +0x1210 - +0x1214) (1801b9d30 is maxss),
+   +0x268 / +0x26c the same from +0x1218 / +0x121c, object +0xd0 = entity +0x10b8 / +0x10bc. Next: the entity
+   fields' names (the schema: fade_size_start / end and shadowfade_size_start / end by their use), the rest of
+   this function (the description at object +0xf0), and 18019fe30's remaining attribute reads.
+   **The description from the keys: ported (2026-10-30, static, CS2 open).** client.dll's schema (field entries
+   {name, type, offset at +0x10}, 0x20 apart) names C_BarnLight's fields: +0x1210 m_flFadeSizeStart, +0x1214
+   m_flFadeSizeEnd, +0x1218 / +0x121c m_flShadowFadeSize*, +0x10b4 m_nBakedShadowIndex, +0x11dc m_nShadowPriority,
+   +0x11e0 m_bContactShadow, ... (the whole table from 1098 m_bEnabled to 13b0). The update above is 10-15
+   180d8c0f0 (Ghidra's /client_20261015.dll; NOT /client.dll, another build); it copies one description per
+   scene object from C_BarnLight vfunc 0x7d8 (180d81100) into object +0xf0. Cubemaps/BarnLightDescriptions.cs
+   ports 180d81100 and its helpers (1817658a0, 181747480, 181747070, 181763bf0, 181764b10, 181765700,
+   181765730, 181765820, 181764c90, 181764480, 1817642b0, vfunc 0x7f0 180d87da0 with V_exp2f / V_powf / V_tanf
+   from the existing CrtMath / LightPow / LightCrt ports) and the transform (AngleMatrix of angles, origin):
+   BarnLightDescriptionsTests (CUBEBARN, CUBEBARN_VPK) finds every light_barn of the 64 captured entries by its
+   transform and matches all 7 descriptions bit for bit (every word but the +0xed flags byte, whose writer is not
+   this function). The keys ARE the networked fields (no server conversion on any of them). Refused: cookies,
+   light styles, colormode 1, disabled lights. Next: the entry's other fields (the gather 18019fe30 and the
+   attributes) and light_omni2's description (C_OmniLight's vfunc 0x7d8).
+   **The entry's other fields, mapped (entry +X is 18019fe30's local_(0xab8 - X)).** Vector attributes are
+   looked up by broadcast hashes: 0x89af0fd4 `scale`, 0x230dbc02 `minroughness`, 0x64ea448f `altcolor`.
+   +0x1b8 the distance fade and +0x1e0 / +0x1e4 the shadow fade (object +0x260 .. +0x26c, i.e. the keys
+   fade_size_* / shadowfade_size_*, against d), +0x1bc d itself (the view's +0x1c), +0x1c0 `scale` (default 1),
+   +0x1c4 `fogscale`, +0x1e8 `shadowpriority`, +0x1ea `bakedshadowindex` clamped to -1 .. 4, +0x1ec .. +0x1f4
+   `altcolor` (m_vAlternateColor x m_fAlternateColorBrightness), +0x1f8 0xdee74b50 (client: castshadows),
+   +0x1fc 0x3d81da66, +0x201 18044a4ee0 of the description, +0x210 `minroughness` (m_flMinRoughness),
+   +0x214 bit 8 when the illumination volume is used (object +0x220 .. +0x24f, client from the precomputed OBB
+   fields at entity +0x123c ..). Not yet traced: d (the view's metric for the light), +0x174 .. +0x183 and
+   +0x1dc (shadow-pass values from 1801a3980, view dependent), +0x206 / +0x208 (record flag bits 1 and 4; +0x208
+   is 1 on atixref's rectangle lights). None of these needs a capture yet: the 64 pairs already hold every
+   field's value for 9 lights in 8 views, so each can be checked statically as it is ported.
+   **d is the light's screen size, from integer-snapped bounds.** The light's bounds (desc vfunc 0x10, 1800ce950)
+   are the world AABB of its frustum (1804a2480: the transform x the description's +0x40 over the clip box),
+   intersected with the illumination OBB (18049e080) when there is one; CSceneSystem vfunc 0xe0 (1800d5410)
+   snaps every new box outward to whole units ((x + 2^23) - 2^23, then mins down, maxs up). d =
+   AggregateCulling.ScreenSize(camera, 1, the snapped box's centre, its half diagonal): within 2.2e-4 relative on
+   all 64 captured entries, rsqrtss's own error (measured in numpy without the illumination clip, which none of
+   atixref's lights is small enough to trigger). So both fades are portable without a capture.
 7. **Render face 0 and compare.** `CubeWithNoDumpMakesTheGamesExr` needs a per-face mode for a map whose other
    faces have no dump. Compare the colour against readback_0 (and the intermediate targets: atlas, face depth).
    Then faces 1 to 5 against readback_1..5 (no dumps needed), then cube 0's EXR (env_cubemap_245678519.exr).
@@ -900,13 +1194,30 @@ build varies run to run (ledger 144, item D).
 
 ### C. Into the compile
 
-1. **Move the remaining inputs out of the tests.** The renderer's callers still use two test helpers:
-   `AggregateCullingCaptureTests.Aggregates` (fragments, LODs, OwnTransforms from the world nodes) and
-   `CubemapLayerFlagsCaptureTests.Memberships` (the layer and draw call flags, with the material attribute store).
-   Both read only the package and the game's content; move them into Source2.Compiler (Cubemaps).
-2. **compile-map renders the cubes.** For each `CubemapFaceBlocks.FromPackage` cube: six faces through the
-   renderer, `CubemapFaceExr`, then `CubemapArrayVtex.Build` and the package's .vtex / .vtex_c, as Hammer's
-   build cubemaps step. Check: probe01's whole package against Valve's (ParityReport), then the service's presets.
+1. **Done 2026-10-29: the inputs left the tests.** `CubemapPackageAggregates` (Source2.Compiler, Cubemaps) reads
+   the world nodes' aggregates (`Read`: fragments, LODs, OwnTransforms) and their layer-selection inputs
+   (`LayerInputs` with a GameContent and a ShaderLibrary, then `Memberships`). The two test helpers wrap it. After
+   the move: probe01's cubes 0 and 1 from no dump (twelve faces, both EXRs, every program a module of the
+   capture), probe01's draw list and layer flags, and atixref's programs and instance records all pass.
+   **atixref's layer flags fail, and they failed the same way before the move** (checked on the old code). Against
+   atixref_members (captured 10-27 on 1.41.9.2): 255 objects matched, and on most of them object +0x80 differs by
+   bit 41 (0x200062d1.. captured, 0x200060d1.. ours), plus attributes 0x287bcc3c and 0x7efb34e8 at 4294967295
+   captured against -1 ours. The shader package the test reads changed with 1.41.9.3 (10-29), so it may be that
+   update; that is not checked. The -1 against 4294967295 may be only how the two values are compared (signed
+   against unsigned); also not checked.
+2. **Done 2026-10-29 on probe01: the CLI builds the cubes.** `Gpu/CubemapBuild.cs` renders every
+   `CubemapFaceBlocks.FromPackage` cube (six faces), writes each EXR at gameinfo's EnvironmentMapFaceSize (CS2's
+   gameinfo quotes that key), then the .vtex source and `CubemapArrayVtex.Build`. `s2c build-cubemaps <package>`
+   puts the array at `maps/<map>/cubemaps/env_cubemap_array.vtex_c`, Valve's path in probe01's package. It is a
+   command of its own, not part of compile-map, because resourcecompiler never builds cubemaps (Hammer's step runs
+   the game). Valve's probe01.vmap_c does not list the array, so the map root is left as it is.
+   - `CubemapBuildTests.BuildMakesTheGamesFiles` (`CUBEBUILD_VPK`, `CUBEBUILD_GAME` = the game's intermediates):
+     on probe01_cube1 (10-26, 1.41.9.2) both EXRs, the .vtex and the 945,838-byte array are the game's, byte for
+     byte, in 18 s with no dump read. Through the CLI on a copy of that package, all 26 entries keep their CRC and
+     size, and the --intermediates files equal the game's.
+   - Not read: the game's cube order in the .vtex. FromPackage's order is used; on probe01 it equals the EXRs' name
+     order, which is what the game's file shows. Not done: the service's presets, and the build state
+     (`--no-scripted-camera`; roadmap 0e) as a decision. The renderer still refuses what A, B and D list.
 3. **The parity matrix map** (memory parity-matrix-rule): every compile preset and switch, our everything-Hammer map.
 
 ### D. Animated maps
@@ -914,6 +1225,33 @@ build varies run to run (ledger 144, item D).
 atixref's build differs run to run in Valve's own tool (ledger 144). Before atixref's EXRs can be a reference: the
 roadmap below, 0a to 0e (what the build's state depends on, pin it in cubehost, then port the time-dependent
 inputs and choose the time our compile renders at).
+
+**0a / 0b, 2026-10-30 / 31 (GROUND_TRUTH 187): the variance taken apart, input by input.** `tools/cubehost/
+time_pin.js` (run_probe.py --frida) pins, each measured by comparing two runs' 42 EXRs:
+
+| pinned | identical | differing pixels |
+|---|---|---|
+| nothing (settle 20) | 0 | 651,642 |
+| game time, wind attributes, light block dither | 0 | 642,147 |
+| + scenesystem real time (FinishRenderingViews given a fixed time, not FLT_MAX): the fast_strobe styles | 2 | 519,884 |
+| + tier0 RandomFloat / RandomInt fixed per call site for client.dll and server.dll | 3 | 210,040 |
+| + every layer sort redone without addresses (objects by transform, materials by name) | 3 | 135,760 |
+
+- The strobes run on scenesystem's real time, not the client's game time: freezing the client's getter
+  (18075e820) for every caller moved nothing, and the client light component's per-frame style path (1801e4880)
+  never runs in cubehost.
+- With everything above pinned, two RenderDoc captures of one cube (index 37) issue the same 11,058 draws in a
+  different order: the material heap order (156). The re-sort pin takes that out; the last 135,760 pixels are
+  not localised (candidates: the sorts' input order, the dropped +0x28 / +0x48 keys, other passes).
+- Not the lever (each measured worse): `host_framerate`, `r_light_flickering_enabled 0`, `+phys_timescale 0`,
+  `lb_dynamic_shadow_resolution 0` / `lb_time_sliced_shadow_map_rendering_enable 0`; `-threads 1` stops the map
+  loading.
+- Traps, each cost runs: a Frida callback on a tier0 random function must not call Process.findModuleByAddress
+  (loader lock, the run stalls at start-up); install those replacements once client.dll is up; atixref's host
+  crashes on shutdown (worldrenderer +0x205c6) with or without Frida, after the EXRs are written; run_probe does
+  not clear its output folder.
+- The wind port (`CubemapWind`, ledger 177's) is on the unmerged branch feat/cube-nodump (a2ecbce); its logging
+  agent time_inputs.js is ported here to the 10-29 DLLs.
 
 ### E. Measured, not read (GROUND_TRUTH 162, 163)
 
@@ -930,10 +1268,90 @@ port done:
 - BakedLightingConstantBuffer_t's lightmap size (the irradiance texture's) and the instance and transform buffers'
   own layout (ours is output-equivalent, not the allocator's).
 
+### F. ze_hold_em_p: a lit ZE map with no sun and no sky (2026-11-01, ledger 192)
+
+Why this map: it is a real ZE map, fully baked, and Valve's build of its 8 cubes is reproducible (holdem_order1 and
+_2 on 10-27 gave the same package; on 1.41.9.4 cubes 1 to 7 are still byte for byte those, only the RenderDoc-captured
+cube 0 differs). So unlike atixref (item D) its EXRs are a fixed reference. It has 37 light_barn, 8
+env_combined_light_probe_volume (the cubes), no light_environment, no env_sky, no env_cubemap_fog.
+
+Capture: `run_probe.py --map ze_hold_em_p --renderdoc 0 --settle 20 --keep-intermediates --out holdem_rdc0`
+(%TEMP%/cubehost_run/holdem_rdc0: the .rdc, summary.txt, actions.txt from rdc_actions.py, passes.jsonl, readback/,
+spirv/, replay_face0 .. 5 from rdc_replay.py with RDC_DUMP=1 over 146-547, 548-944, 945-1286, 1287-1623, 1624-1930,
+1931-2237). The game's 8 EXRs of that run are in intermediates/ (cube 0's is the capture's own frame).
+
+Done (ledger 192):
+- The scene without a sun or sky: `CubemapFaceBlocks.Scene.HasSun`, `FromPackage` with an optional env_sky (sky
+  material null), `Build` with no cascades, the draw list with no cascade views, the renderer with no sky draw.
+- The light block's sunless branches and its cull params from the binner's counts (any light, env map and volume
+  count), the light entry count words; the Csgo block's cube fog flag; +644's exact bits.
+- The csgo_ shaders' bindless lightmaps: BakedLightingConstantBuffer_t +16 .. +28 hold our indices of irradiance,
+  directional_irradiance, direct_light_shadows and debug_chart_color (`CubemapFaceRenderer.BakedWithIndices`).
+- Checks: every block by role against all six faces (PackageBlocksAgainstTheCapture: the world, Csgo, baked and light
+  blocks differ only in bindless indices, the per-frame dither, the inverse projection's float noise and what the
+  barn lights drive); our blocks in the capture's own draws (PackageBlocksInTheCapturesDraws: world, Csgo and baked
+  keep every world draw the game's; the light block changes only light-binned pixels); every program a module of the
+  capture. probe01 and s2c_l5probe unchanged.
+
+Where the dump-free render stands (CubeWithNoDumpMakesTheGamesExr on cube 0): face 4 within 0.0072 of the readback
+(945 pixels over 1/256); faces 2 and 3 about 350k pixels over 1/256 (largest 0.12); faces 0, 1 and 5 lit areas much
+darker than the game's. Next, in order:
+1. **The barn lights** (ledger 193). Faces 0 to 5 bin 22, 4, 3, 3, 1 and 2 of the 37 light_barns.
+   Done and checked against cubehost captures: records (the baked shadow slot; 218 pairs byte for byte), the
+   lights' bounds (BarnLightBounds, 37 boxes), the screen size d (measured formula, 218 values) and both fades
+   (218). Read, not ported: the sort's comparator, the trim, the binner item (frustum and illumination-box
+   footprints through 1801abf30; LightBinnerItems.Pack needs the two-run light record). Which lights reach a face
+   is reproduced on all six faces (BarnLightFacesProbe, CUBELIGHTFACES_VPK: box test, fade, both footprints, sort;
+   the box test's function for lights is measured, not identified). Still open: the entry's other fields (the illumination box at +0x340 from precomputedobb*, +0x214, the constants),
+   +0x174 (a shadow atlas tile rect, writer not found) and +0x1dc (1801a2720, from a time-smoothed shadow size):
+   neither reaches a pixel (swapping the captured terms in changes no face). In the renderer since 0db0f68:
+   g_BarnLights, the light items ahead of the volumes, the counts, the shadow atlas index; CullParams_t and the
+   edges are the game's on all six faces, pixels over 1/256 now 195,611 / 126,101 / 22,899 / 21,588 / 945 /
+   367,762. The light items are exact since 6946e08 (the box footprint only with a silhouette; ledger 193).
+   **Done 2026-11-02 (ledger 195): residency and the BRDF lookup.** The renderer uploads every texture from the
+   preload level (GpuTextures.PreloadLevel, 512; S2C_CUBE_MAXTEXTURE overrides, 0 none) and writes Csgo +68, the
+   BRDF lookup (textures/dev/brdf_lut.vtex, the captured image byte for byte). ze cube 0 against Valve's EXR: 1 / 0 /
+   0 / 0 / 0 / 0 pixels over 1/256 (face 5 equals the readback); all 8 cubes at most 10 pixels over 1/256 a face.
+   Compare EXRs with tools/cubehost/exr_diff.py; Valve's reference EXRs of all 8 cubes are in
+   cubehost_run/holdem_cvars/intermediates (no RenderDoc; cube 0 there differs from holdem_rdc0's in 76 pixels).
+   **Then (ledger 196): the colour matrix expressions** (Gpu/ColorMatrices.cs: MatrixMultiply, MatrixColorTint2,
+   MatrixColorCorrect2 from materialsystem2; $Globals holds a 4 x 4 transposed). Now faces 2 to 5 of all 8 cubes
+   and the whole of cube 7 are Valve's EXRs byte for byte; cube 0 faces 2 to 5 equal the readbacks. **What is left
+   on this map** is faces 0 and 1 of cubes 0 to 6 (16 to 34 pixels each): skinned agent models of the team intro
+   (terrorist_team_intro, counterterrorist_team_intro, team_select; CAnimatableSceneObjectDesc with
+   USES_CS_SKINNING; face 0's 6,696-index draw, 3 instances) and, in RenderDoc runs only, their AO proxy splat. That
+   needs the client's team intro scene and its pose at build time (roadmap 0e).
+   The paragraph below is the state before.
+   Was next: texture residency (ledger 194). The game's material maps in this build are resident at 512 at most;
+   with S2C_CUBE_MAXTEXTURE=512 faces 4 and 5 are within 1/256 everywhere and faces 0 / 1 / 2 / 3 are left with
+   100,981 / 85,873 / 301 / 85 pixels over 1/256. Read the rule (rendersystemvulkan's texture budget convars, the
+   video config's texture detail) and re-capture probe01 on 1.41.9.4 to see whether its 2048 maps are now capped.
+   Then the tiny rest everywhere (all halves differ by up to 1/256 even on faces 4 and 5: the Csgo block's
+   bindless indices +64 .. +128, which we leave 0, are the first suspect), face 0's entity model (F.2) and face 1's
+   AO splat (F.3). light_omni2 and cookie lights are not gathered yet (no s2c_l5probe face bins one). Captures: holdem_barn_io (pairs),
+   holdem_radius (boxes); tests BarnLightRecordsTests, BarnLightDescriptionsTests, BarnLightBoundsTests,
+   BarnLightSizeProbe (CUBEBARN, CUBEBARN_VPK, CUBELIGHTBOX). The shadow atlas has no draw here (baked shadows:
+   direct_light_shadows), so no shadow views are needed for this map.
+2. **Entity models as their own scene objects.** Face 0 draws one non-aggregate object in the prepass and in a colour
+   pass of its own (6,696 indices, 3 instances, a Csgo block with g_bOtherFxEnabled.x 0 and +256 / +260 1, 1); the
+   later faces' annotations name CAnimatableSceneObjectDesc and CBaseSceneObjectDesc batches (the func_door /
+   func_breakable / func_physbox / func_tracktrain models), see item A.4.
+3. **AO proxies.** A later face splats CAmbientOcclusionProxySceneObjectDesc boxes (aoproxy_splat.vmat, 36 indices, 2
+   instances) into the AO target, which the renderer leaves white.
+4. The g_sBilinearClamp index at lightmappedgeneric's $Globals +4 (the game writes 1, ours 0: the program's write
+   sequence does not list it), g_mTextureColorAdjust1's float noise (csgo_environment), g_vShaderIDColor 0.1 on
+   csgo_simple_2way_blend (cmp_globals.py).
+
 ### Tests and switches
 
     CUBENODUMP_VPK, CUBENODUMP_CUBE, CUBEREADBACK, CUBEREADBACK_EXR [CUBEREPLAY_SPIRV, CUBEREPLAY_EXR_OUT, CUBEREPLAY_SCRIPTEDCAMERA=0]
+                 [CUBENODUMP_TRACE=1 per action, CUBENODUMP_FACES_OUT=<dir> our faces, prepass depth, instances, draw list, models]
         CubemapFaceRendererTests.CubeWithNoDumpMakesTheGamesExr   the dump-free cube against readbacks and the EXR
+    CUBEBLOCKCMP=<face dump>, CUBEBLOCKCMP_VPK [CUBEBLOCKCMP_FACE, CUBEBLOCKCMP_ALL=1]
+        CubemapFaceReplayTests.PackageBlocksAgainstTheCapture     every block from the package against the capture's, by role
+    CUBEBLOCKCMP, CUBEBLOCKCMP_VPK, CUBEREPLAY_SPIRV [CUBEBLOCKSWAP=<role,...>]
+        CubemapFaceReplayTests.PackageBlocksInTheCapturesDraws    our blocks in the capture's draws, one role at a time
+    S2C_CUBE_TRACE=1 (renderer)                                   each colour draw's programs and pipeline state
     CUBEPROGS=<capture dir>      CubemapFaceProgramsTests           every world draw's programs against the capture's modules
     CUBEINST=<capture dir>       CubemapInstanceRecordsTests        instance tints and transforms against the capture's
     CUBECULL=<capture dir>       AggregateCullingCaptureTests       the draw list
