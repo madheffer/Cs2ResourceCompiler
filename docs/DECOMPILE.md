@@ -25,9 +25,8 @@ page's `subtasks` source at the new upload with `updated` set.
 
 This is the entry point. The sections after it are the dated working notes behind each line here.
 Branch `research/vmap-decompile` (worktree `D:\_cursor projects\source2-compiler-wt-decompile`),
-nothing pushed. Tracker **77.0%** (82.4 of 107 weighted points; 10-31: brush entity render meshes,
-runtime prefabs, nav settings, Hammer re-saves; "Brush entity render meshes" and "CS2-closed window
-10-31" below).
+nothing pushed. Tracker **78.0%** (83.5 of 107 weighted points; 11-13: research/map-authoring merged
+in, the workshop sweep and its three crashes, navs with ladders; "Workshop sweep 11-13" below).
 
 ### Start here (next agent)
 
@@ -127,8 +126,11 @@ Brush entities:
    it misses, `ENTFILTER=s2c_rc_probe|atixref|123`), render meshes inside prefabs and copies (the
    forward moves them by the placement), drawn faces back as polygons (they stay triangles), Hammer's
    texture axes. Triangle-mesh physics shapes (0%).
-8. The 4 hulls left: one corner and one vertex order on ze_doom (search budget), two in
-   s2c_prefabprobe2's prefab (placement not modelled by the one-mesh chain).
+8. The 4 hulls left: one corner and one vertex order on ze_doom, two in s2c_prefabprobe2's prefab
+   (placement not modelled by the one-mesh chain). The order (teleportlab_4) is not a budget issue:
+   200000 seeded tries (`DECOMPILE_HULL_BUDGET=200000`, 13.5 min) do not find it either, so it needs
+   an order built from the shipped hull (its first tetrahedron, then points in add order) rather than
+   a shuffle.
 
 Map file:
 9. **[closed] Hammer re-saves of the large decompiles.** Recipe (Steam and CS2 closed; cs2.exe -tools
@@ -170,14 +172,17 @@ Other map data:
     variable set's type names and variableAndChoiceOrder with what VmapBuilder writes). Left: choice
     groups, the vector transform (prefab flag +0x55f).
 16. **Nav settings: done 10-31** (ledger 191): the .nav's generation parameters back into a CMapNavData,
-    our forward on it = Valve's block on five maps. Left: navs with ladders, hiding spots or transformed
-    bounds (Decompile.NavSettings stops there and notes it). Nav markup entities already round trip.
+    our forward on it = Valve's block on five maps; 11-13 navs with ladders too (s2c_prefabprobe3 and 4,
+    seven maps). Left: hiding spots or transformed bounds (Decompile.NavSettings stops there and notes
+    it). Nav markup entities already round trip.
 17. TypeScript sources (PanoramaTypescript): read the same way, but no example checks it.
 
 Verification:
 18. A whole-package parity report per map: decompile, compile the decompile, compare every file
     of the package with Valve's (the ParityReport the compiler already has).
-19. A workshop corpus sweep: decompile every subscribed map and count what fails or is left out.
+19. **Workshop corpus sweep: tool done 11-13** ("Workshop sweep 11-13" below). Left: read the full run's
+    report (`tools/map-survey/out/sweep_20261113b.jsonl`, untracked), the maps that run past 900 s, and
+    the older lump format (most workshop maps; needs the user's decision, see there).
 
 After each milestone: update `tools/map-survey/decompile_progress.json`, upload it as an asset of the
 tracker page and point `datasets/subtasks` at it (Progress tracker above), then update this section.
@@ -1249,6 +1254,48 @@ Run with Steam and CS2 closed, every job through `tools/re/heavy.py`.
   Not read: navs with ladders, hiding spots or transformed bounds (noted).
 - Unrelated and older than this work: five NavCompileTests (CompileMapWritesNavAndBombDamage, NavAndBombDamageMatchValve
   on probe01, cardtest, s2c_navmarkup) fail at c03c510 too.
+
+### Workshop sweep 11-13 (CS2 open)
+
+research/map-authoring merged in first (423c62b; main itself diverged from this branch's base, 40
+conflicts, while map-authoring holds all of main but 0fb728a, whose content it has as a0b428d).
+MapDecompilerTests after the merge: 50 passed, the 2 known failures.
+
+`s2c decompile-sweep <workshop content/730> --report <out.jsonl>` decompiles every map of every item:
+the map's nested maps/<map>.vpk read in memory, the item's own .vmat_c names added to the material hash
+table (custom materials live in the outer package), one JSON line per map (status, seconds, entity,
+placeholder and prefab counts, notes grouped by kind, the lump format). It resumes from the report; a
+map past `--timeout` (900 s) is written as a timeout and the process exits 3 (a hung thread cannot be
+stopped); a hard crash leaves the map in `<report>.current`. `tools/map-survey/decompile_sweep.py`
+restarts it, `--heavy tools/re/heavy.py` takes the heavy queue a chunk of 20 items at a time (other
+sessions run between chunks), `--summary` tallies a report. Start it with `start /low /affinity 3`.
+These maps have no Hammer source: the sweep shows that the decompile runs and what it leaves out, never
+that it is right.
+
+First run (147 of 315 items, 269 maps, stopped to fix the crashes):
+- **208 maps ship an older lump format**: every entity has hammerUniqueId and no compile_source_id
+  (worldspawn adds worldname and mapUsageType; placement keys follow classname). Today's
+  resourcecompiler writes compile_source_id with no condition (rc 180f26160: after the key table, from
+  node +0x17ec), and so does every archived build back to 09-23, so these maps come from an older
+  compiler whose rules we have no binary for. EntityLumpAuthor.Unbuild stops at the missing key. Reading
+  them would mean inverting a compiler we cannot run or decompile: the user's call. A map and its
+  skybox can differ (ze_biohazard2_rpd_004_p new, its skybox old).
+- 23 new-format maps decompiled (22,307 entities; median 22 s, slowest 660 s), 8 ran past 900 s
+  (ze_purification_a1_skybox, ze_boatescape888, ze_onahole_p, ...; not looked at yet).
+- Three crashes, fixed (4615ba8): a path with no nodes ships pathNodes "[  ]" (Kv3Rows, as our forward
+  writes it), which Rows read as one empty row (ze_ratatouille's cable_dynamic 4721,
+  ze_biohazard2_rpd_004_p's path_particle_rope_clientside 1172); that cable's model has no mesh
+  (CableSettings: factory settings and a note); two render pieces of one mesh in one material
+  (ze_visualizer, 20 meshes): Rebuild and CornerStreams pair faces with pieces by material, so such a
+  mesh keeps its hulls with a note until the split rule is measured.
+
+The full run with the fixes is `tools/map-survey/out/sweep_20261113b.jsonl` (started 11-13 04:23).
+
+Navs with ladders (same day): the .nav's ladder records (68 bytes each, 1818e71b0) are skipped to the
+generation parameters; s2c_prefabprobe3 and s2c_prefabprobe4 (one ladder each) now give their CMapNavData
+back, our forward on it = the shipped block on all seven maps that ship one. A first try lost the count's
+own 4 bytes (`p += 68 * U32()`: C# reads p before U32 moves it) and every map then "passed" on the note;
+the test now fails when the reader lands on "of another version" or "ends early".
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's

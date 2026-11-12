@@ -6608,3 +6608,13 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        (c) not compiled yet: constant `[r g b]` texture inputs (named `<material>_<variable>`), image `.txt`
        settings, cube textures (sky.vfx `g_tSkyTexture`), dynamicparams, csgo_lightmapped_4wayblend's two extra
        default children in RED2 (blendproddirtgrass).
+
+265. **compile_source_id is written for every entity; lumps without it are an older compiler's** (2026-11-13;
+     rc decompile of 180f26160 in the cs2 Ghidra project, the only referrer of the string 182343a48):
+     - After the entity's key table (the loop over node +0x588's KV3 arena) the function writes
+       `compile_source_id` = node +0x17ec with no condition, then 180f7acf0. Every archived
+       resourcecompiler (tools/re/binaries, 0923 to 1103) holds the string.
+     - So a lump with hammerUniqueId and no compile_source_id is not a compile option: 208 of 269 workshop
+       maps swept on 11-13 ship that form (worldspawn ends with hammerUniqueId, worldname, mapUsageType;
+       placement keys follow classname), from a resourcecompiler older than any we have. Not read by the
+       decompiler (EntityLumpAuthor.Unbuild stops, docs/DECOMPILE.md "Workshop sweep 11-13").

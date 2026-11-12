@@ -116,7 +116,7 @@
   "subtask": "Hull vertex order (exact solver)",
   "weight": 3,
   "done": 0.95,
-  "evidence": "10-29: face order + first corner searched through the forward's one-mesh chain; 77 of 78 same-point-set models now exact (449/455 brush models), 1 left on ze_doom (budget)"
+  "evidence": "10-29: face order + first corner searched through the forward's one-mesh chain; 77 of 78 same-point-set models now exact (449/455 brush models), 1 left on ze_doom (budget); 11-13: ze_doom teleportlab_4 not found at 200000 tries either (DECOMPILE_HULL_BUDGET), so not a budget issue: needs a constructive order solve"
  },
  {
   "module": "Brush entities",
@@ -248,8 +248,8 @@
   "module": "Other map data",
   "subtask": "Nav settings and markup",
   "weight": 2,
-  "done": 0.85,
-  "evidence": "10-31 (ledger 191): the .nav keeps the generation parameters the build used; Decompile.NavSettings reads them back into a CMapNavData. Our forward on the decompile gives Valve's block on probe01, probe_classes, s2c_prefabprobe9, s2c_navprobe (own settings) and s2c_navprobe2 (hull preset); the fixed empty nav gets no node. Found on the way: a map hull without crawl arrays takes the default hull's crawl (forward fixed). Markup entities already round trip. Left: navs with ladders, hiding spots or transformed bounds (the reader stops), the block's last byte"
+  "done": 0.9,
+  "evidence": "10-31 (ledger 191): the .nav keeps the generation parameters the build used; Decompile.NavSettings reads them back into a CMapNavData. Our forward on the decompile gives Valve's block on probe01, probe_classes, s2c_prefabprobe9, s2c_navprobe (own settings) and s2c_navprobe2 (hull preset); the fixed empty nav gets no node. Found on the way: a map hull without crawl arrays takes the default hull's crawl (forward fixed). Markup entities already round trip. 11-13: navs with ladders read (the 68-byte records skipped): s2c_prefabprobe3 and 4 exact too, 7 maps. Left: hiding spots, transformed bounds (the reader stops), the block's last byte"
  },
  {
   "module": "Other map data",
@@ -304,7 +304,7 @@
   "module": "Verification",
   "subtask": "Workshop corpus sweep",
   "weight": 2,
-  "done": 0,
-  "evidence": "not started"
+  "done": 0.5,
+  "evidence": "11-13: s2c decompile-sweep (+ decompile_sweep.py, heavy queue in chunks). First run, 147 of 315 items: 208 maps ship the older lump format (hammerUniqueId, no compile_source_id; not read), 23 new-format maps decompile, 8 time out at 900 s, 3 crashes fixed (empty path \"[  ]\", cable model without a mesh, two render pieces in one material). Left: the full run (overnight 11-13), the timeouts, the old lump format (needs an old resourcecompiler or a user decision)"
  }
 ]
