@@ -1328,8 +1328,14 @@ parentname...), differ, missing. "%f" strings compare with what our float prints
   mesh, a face per triangle in its order, noted (the source's polygons are not recovered). Missing went
   to 0 on namviet, sisyphus and aztecnoob, and sisyphus' _template_lump_ent_index shift went with it
   (the template's earlier member was one of them).
-- Open: point_teleport angles off by 1e-5, and ze_por_island_p's forward stops on an exp2f argument it
-  does not port.
+- Template copies off by 1e-5 (sisyphus' point_teleport 857, namviet's prop_dynamic_override 7253 and
+  17 other members whose placement fell back to the matrix inverse), fixed the same day: those lumps print
+  a copy's placement as "%f" strings, so the decimals past six are gone and no candidate could land on the
+  parsed value's bits. TemplatePlacement.Solve now takes the printed words and lands a candidate whose
+  forward prints to them (SettleWorld.Fixed6). And an angle a turn away is a candidate too (180 and
+  -180): in floats sin(pi) keeps its sign's rounding, and under 858's yaw 180 only one of them prints
+  -0.000000 0.000000 0.000000 (TemplatePlacementTests). No placement diffs left on namviet or sisyphus.
+- Open: ze_por_island_p's forward stops on an exp2f argument it does not port.
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's

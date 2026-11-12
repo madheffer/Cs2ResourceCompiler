@@ -2455,7 +2455,8 @@ public static class MapDecompiler
         keys.RemoveAll(k => k.Key.EqualsAscii("_template_lump_ent_index"));
         if (template is not null && template.Entity.ClassName.EqualsAscii("point_template"))
         {
-            if (TemplatePlacement.Solve(template.Entity.Origin, template.Entity.Angles, origin, angles) is { } placed)
+            if (TemplatePlacement.Solve(template.Entity.Origin, template.Entity.Angles, origin, angles,
+                                        PrintedPlacement(copy.Raw, "origin"), PrintedPlacement(copy.Raw, "angles")) is { } placed)
                 (origin, angles) = placed;
             else
             {
@@ -2469,6 +2470,13 @@ public static class MapDecompiler
             notes.Add($"{e.ClassName} {copy.IdPath}: only a copy in {Path.GetFileName(lump)} survives, and that template places it at the origin; its placement is lost");
         return copy with { Entity = e with { Keys = keys, Connections = connections, Origin = origin, Angles = angles } };
     }
+
+    /// <summary>A placement key the lump wrote as a "%f %f %f" string (an older compile), as its three
+    /// words; null when it is today's float array or absent.</summary>
+    private static string[]? PrintedPlacement(KVObject? raw, string key)
+        => raw is not null && raw.TryGetValue("keyValues3Data", out var kv) && kv.TryGetValue("values", out var values)
+           && values.TryGetValue(key, out var v) && !v.IsArray
+           && EntityLumpAuthor.Plain(v).Split(' ', StringSplitOptions.RemoveEmptyEntries) is { Length: 3 } words ? words : null;
 
     /// <summary>What the map loads that is not built into it (memory of the FGD survey, 10-20): a
     /// skybox_reference's targetMapName and an info_spawngroup_load_unload's mapname are levels of
