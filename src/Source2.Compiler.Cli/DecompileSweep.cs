@@ -32,6 +32,7 @@ internal static class DecompileSweep
         var cs2 = Opt(a, "--cs2") ?? Environment.GetEnvironmentVariable("CS2_DIR") ?? throw new ArgumentException("--cs2 <CS2 dir> (or CS2_DIR)");
         var timeout = TimeSpan.FromSeconds(double.Parse(Opt(a, "--timeout") ?? "900"));
         var only = Opt(a, "--only")?.Split(',').ToHashSet();
+        var roundTrip = a.Contains("--roundtrip");
         var game = Path.Combine(cs2, "game");
 
         var done = new HashSet<string>();
@@ -80,12 +81,14 @@ internal static class DecompileSweep
                 File.WriteAllText(current, key);
                 var row = new Dictionary<string, object?> { ["key"] = key, ["item"] = item, ["entry"] = mapEntry, ["addonMaterials"] = addonMaterials.Count };
                 var clock = Stopwatch.StartNew();
+                Dictionary<string, byte[]>? files = null;
+                string? map = null;
                 var task = Task.Run(() =>
                 {
-                    var files = read();
+                    files = read();
                     row["files"] = files.Count;
                     row["packageBytes"] = files.Values.Sum(f => (long)f.Length);
-                    var map = Maps.Decompile.MapDecompiler.MapNameOf(files);
+                    map = Maps.Decompile.MapDecompiler.MapNameOf(files);
                     row["map"] = map;
                     row["lumpFormat"] = LumpFormat(files);
                     row["compileTimestamp"] = CompileTimestamp(files, map);
@@ -110,6 +113,8 @@ internal static class DecompileSweep
                     row["prefabs"] = result.Prefabs.Count;
                     row["vmapBytes"] = result.Vmap.Length;
                     row["notes"] = result.Notes.Count;
+                    if (roundTrip)
+                        row["roundTrip"] = RoundTrip(result, files!, map!, schema);
                     row["noteGroups"] = result.Notes
                         .GroupBy(NoteKind)
                         .OrderByDescending(g => g.Count())
@@ -129,6 +134,189 @@ internal static class DecompileSweep
         }
         File.Delete(current);
         return 0;
+    }
+
+    /// <summary>
+    /// The decompiled map's entities compiled again by our forward author (EntityLumpSet, matched
+    /// byte for byte with resourcecompiler on our probes) beside the package's, entity by entity
+    /// under hammerUniqueId: how many come back alike, and the first key that differs on the rest.
+    /// Compared as text: compile_source_id, value types, placement as a string or an array and a
+    /// brush model's slashes are what an older lump writes differently (GROUND_TRUTH 265), so they
+    /// are not compared. Not settled (props a settle moved differ) and no smart prop locators.
+    /// </summary>
+    private static Dictionary<string, object> RoundTrip(Maps.Decompile.MapDecompiler.Result result, Dictionary<string, byte[]> files,
+                                                        string map, FgdSchema schema)
+    {
+        try
+        {
+            var document = Maps.MapNodeAngles.Apply(DmxBinary.Read(result.Vmap));
+            Maps.MapPrefabs.Attach(document, path => result.Prefabs.TryGetValue(path.Replace('\\', '/'), out var bytes)
+                ? Maps.MapNodeAngles.Apply(DmxBinary.Read(bytes)) : null);
+            Maps.MapDeformers.Apply(document, schema);
+            var lumps = EntityLumpSet.Author(MapEntities.From(document), schema, map, MapEntities.FixupEntityNames(document), document);
+            var shipped = Shapes(files.Where(f => f.Key.EndsWith(".vents_c", StringComparison.OrdinalIgnoreCase)
+                                                  && f.Key.StartsWith($"maps/{map}/", StringComparison.OrdinalIgnoreCase)).Select(f => (f.Key, f.Value)));
+            var ours = Shapes(lumps.Select(l => (l.Path + "_c", l.Bytes)));
+            // exact: the same lines in the same order. keys: every key both sides have holds the same
+            // value and Valve's lump has no key ours lacks (ours may have more: today's FGD fills keys
+            // an older FGD did not declare, and fills in its own order). Otherwise the entity differs:
+            // a value, a key only Valve's has, or its connections.
+            int exact = 0, keysAlike = 0, differ = 0, missing = 0;
+            var valueDiff = new Dictionary<string, (int Count, string Example)>();
+            var valveOnly = new Dictionary<string, (int Count, string Example)>();
+            var oursOnly = new Dictionary<string, (int Count, string Example)>();
+            var missingClasses = new Dictionary<string, (int Count, string Example)>();
+            static void Count(Dictionary<string, (int Count, string Example)> d, string key, string example)
+                => d[key] = d.TryGetValue(key, out var k) ? (k.Count + 1, k.Example) : (1, example);
+            static (string Key, string Value) Split(string line)
+            {
+                if (line.StartsWith('@'))
+                    return (line, "");
+                var at = line.IndexOf('=');
+                return (line[..at], line[(at + 1)..]);
+            }
+            foreach (var (id, theirs) in shipped)
+            {
+                var mine = ours.GetValueOrDefault(id) ?? [];
+                foreach (var t in theirs)
+                {
+                    var match = mine.FindIndex(m => m.SequenceEqual(t));
+                    if (match >= 0)
+                    {
+                        exact++;
+                        mine.RemoveAt(match);
+                        continue;
+                    }
+                    var cls = t.FirstOrDefault(l => l.StartsWith("classname=", StringComparison.Ordinal));
+                    var pick = mine.FindIndex(m => m.Contains(cls ?? ""));
+                    if (pick < 0)
+                    {
+                        missing++;
+                        Count(missingClasses, cls ?? "?", $"{id}: {string.Join(" ", t.Take(4))}");
+                        continue;
+                    }
+                    var m0 = mine[pick];
+                    mine.RemoveAt(pick);
+                    var v = t.Select(Split).GroupBy(x => x.Key).ToDictionary(g => g.Key, g => g.First().Value);
+                    var o = m0.Select(Split).GroupBy(x => x.Key).ToDictionary(g => g.Key, g => g.First().Value);
+                    var alike = true;
+                    var name = (cls ?? "?")["classname=".Length..];
+                    foreach (var (key, value) in v)
+                    {
+                        if (!o.TryGetValue(key, out var ov))
+                        {
+                            alike = false;
+                            Count(valveOnly, key.StartsWith('@') ? "(connection)" : key, $"{name} {id}: {key}={value}");
+                        }
+                        else if (ov != value && !Rounded(value, ov))
+                        {
+                            alike = false;
+                            Count(valueDiff, key, $"{name} {id}: valve {value} | ours {ov}");
+                        }
+                    }
+                    foreach (var key in o.Keys.Where(k => !v.ContainsKey(k)))
+                        Count(oursOnly, key.StartsWith('@') ? "(connection)" : key, $"{name} {id}: {key}={o[key]}");
+                    if (alike)
+                        keysAlike++;
+                    else
+                        differ++;
+                }
+            }
+            static List<Dictionary<string, object>> Top(Dictionary<string, (int Count, string Example)> d)
+                => [.. d.OrderByDescending(k => k.Value.Count).Take(12)
+                        .Select(k => new Dictionary<string, object> { ["key"] = k.Key, ["count"] = k.Value.Count, ["example"] = k.Value.Example })];
+            return new()
+            {
+                ["exact"] = exact, ["keysAlike"] = keysAlike, ["differ"] = differ, ["missing"] = missing,
+                ["extra"] = ours.Values.Sum(l => l.Count),
+                ["valueDiff"] = Top(valueDiff), ["valveOnly"] = Top(valveOnly), ["oursOnly"] = Top(oursOnly),
+                ["missingClasses"] = Top(missingClasses),
+            };
+        }
+        catch (Exception e)
+        {
+            return new() { ["error"] = $"{e.GetType().Name}: {e.Message}", ["at"] = e.StackTrace?.Split('\n').Take(4).Select(x => x.Trim()).ToList() ?? [] };
+        }
+    }
+
+    /// <summary>
+    /// Valve's value is a "%f" string (six decimals, as a lump that writes placement and some floats
+    /// as strings does) and ours, a float or floats, prints to it under "%f": the same value.
+    /// </summary>
+    private static bool Rounded(string valve, string ours)
+    {
+        var v = valve.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var o = ours.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (v.Length != o.Length || v.Length == 0)
+            return false;
+        var c = System.Globalization.CultureInfo.InvariantCulture;
+        for (var i = 0; i < v.Length; i++)
+        {
+            var dot = v[i].IndexOf('.');
+            if (dot < 0 || v[i].Length - dot - 1 != 6
+                || !float.TryParse(o[i], System.Globalization.NumberStyles.Float, c, out var f)
+                || Zero(f.ToString("F6", c)) != Zero(v[i]))
+                return false;
+        }
+        return true;
+
+        // "%f" prints a negative zero "-0.000000"; the float's sign is not what is compared.
+        static string Zero(string t) => t == "-0.000000" ? "0.000000" : t;
+    }
+
+    /// <summary>Each lump entity as "key=value" lines (and its connections), grouped by hammerUniqueId.</summary>
+    private static Dictionary<string, List<List<string>>> Shapes(IEnumerable<(string Path, byte[] Bytes)> lumps)
+    {
+        var all = new Dictionary<string, List<List<string>>>(StringComparer.Ordinal);
+        foreach (var (path, bytes) in lumps)
+        {
+            using var resource = new ValveResourceFormat.Resource { FileName = Path.GetFileName(path) };
+            resource.Read(new MemoryStream(bytes));
+            if (resource.DataBlock is not EntityLump lump)
+                continue;
+            foreach (var entity in lump.Data.GetArray("m_entityKeyValues"))
+            {
+                if (entity.GetSubCollection("keyValues3Data")?.GetSubCollection("values") is not { } values)
+                    continue;
+                var lines = new List<string>();
+                var id = "";
+                foreach (var kv in values.Children)
+                {
+                    if (kv.Key == "compile_source_id")
+                        continue;
+                    var text = Text(kv.Key, kv.Value);
+                    if (kv.Key == "hammerUniqueId")
+                        id = text;
+                    lines.Add($"{kv.Key}={text}");
+                }
+                foreach (var c in entity.GetArray("m_connections"))
+                    lines.Add($"@{c.GetStringProperty("m_outputName")}>{c.GetStringProperty("m_targetName")}.{c.GetStringProperty("m_inputName")}" +
+                              $"({c.GetStringProperty("m_overrideParam")}) {Text("", (c.TryGetValue("m_flDelay", out var delay) ? delay : null))} {Text("", (c.TryGetValue("m_nTimesToFire", out var times) ? times : null))}");
+                if (!all.TryGetValue(id, out var list))
+                    all[id] = list = [];
+                list.Add(lines);
+            }
+        }
+        return all;
+
+        static string Text(string key, KVObject? v)
+        {
+            if (v is null)
+                return "";
+            var c = System.Globalization.CultureInfo.InvariantCulture;
+            if (v.IsArray)
+                return string.Join(" ", v.Values.Select(x => Number(x.ToString(c) ?? "")));
+            var s = v.ToString(c) ?? "";
+            if (key is "origin" or "angles" or "scales")
+                return string.Join(" ", s.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            if (key == "model")
+                return s.Replace('\\', '/');
+            return Number(s);
+        }
+
+        static string Number(string s)
+            => !s.Any(char.IsLetter) && !Regex.IsMatch(s, @"\.\d{6}$") && double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d)
+                ? ((float)d).ToString("R", System.Globalization.CultureInfo.InvariantCulture) : s;
     }
 
     /// <summary>Which id key the map's lumps carry: "compile_source_id" (today's resourcecompiler),

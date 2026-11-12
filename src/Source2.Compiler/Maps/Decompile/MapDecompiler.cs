@@ -130,9 +130,19 @@ public static class MapDecompiler
         var layerOf = new Dictionary<EntityLumpAuthor.SourceEntity, string>();
         var fileOf = new Dictionary<EntityLumpAuthor.SourceEntity, string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        // A lump from an older compiler carries no compile_source_id (GROUND_TRUTH 265), so the walk
+        // index of each node is not in the package. The nodes are written in lump order instead
+        // (world 0, the rest from 1): a choice of the decompile, which states nothing about the
+        // older compiler's walk, and leaves no positions for placeholders.
+        var older = raw.Count > 0 && raw.All(r => SourceIdOf(r.Entity) < 0);
+        var lumpOrder = 1;
+        if (older)
+            notes.Add("older lump format (no compile_source_id): nodes in lump order, the walk itself not known; read with the current layout, not verified against the compiler that built it");
         foreach (var (lump, e) in raw)
         {
             var source = EntityLumpAuthor.Unbuild(e, schema, FixupOf(IdPath(e)));
+            if (older)
+                source = source with { SourceId = source.Entity.IsWorld ? 0 : lumpOrder++ };
             if (IsTemplateLump(lump) && !seen.Contains(source.IdPath))
                 source = FromTemplateCopy(source, lump, entities, notes);
             // A template lump (<id>#entitylumpname) holds a copy of every entity a
@@ -316,9 +326,16 @@ public static class MapDecompiler
 
         var main = scopes[""];
         main.Builder = new VmapBuilder(mapName);
-        // The lump's mapUsageType is the literal the compile writes for every map (BuildEntity),
-        // so it says nothing of the source's.
-        main.Builder.SetWorld(world.Entity.NodeId, world.Entity.Keys, world.Entity.Connections, mapFixup, "standard");
+        // The lump's mapUsageType is the world's, as the export's table names it (EntityLumpAuthor
+        // .MapUsageTypeName, GROUND_TRUTH 266): a name of the table compiles to itself.
+        var usage = world.Raw is { } rawWorld && rawWorld.TryGetValue("keyValues3Data", out var kv3) && kv3.TryGetValue("values", out var worldValues)
+                    && worldValues.TryGetValue("mapUsageType", out var u) ? EntityLumpAuthor.Plain(u) : null;
+        if (usage is not null && !EntityLumpAuthor.MapUsageTypes.Contains(usage))
+        {
+            notes.Add($"worldspawn: mapUsageType {usage} is not a name the export writes; standard");
+            usage = null;
+        }
+        main.Builder.SetWorld(world.Entity.NodeId, world.Entity.Keys, world.Entity.Connections, mapFixup, usage ?? "standard");
 
         var placeholders = 0;
         var at = 1;

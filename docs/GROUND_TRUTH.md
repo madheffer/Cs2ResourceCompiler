@@ -6616,5 +6616,21 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        resourcecompiler (tools/re/binaries, 0923 to 1103) holds the string.
      - So a lump with hammerUniqueId and no compile_source_id is not a compile option: 208 of 269 workshop
        maps swept on 11-13 ship that form (worldspawn ends with hammerUniqueId, worldname, mapUsageType;
-       placement keys follow classname), from a resourcecompiler older than any we have. Not read by the
-       decompiler (EntityLumpAuthor.Unbuild stops, docs/DECOMPILE.md "Workshop sweep 11-13").
+       placement keys follow classname), from a resourcecompiler older than any we have. Read since 11-13
+       (user's call) with the current layout, the table ending at origin, nodes in lump order; what that
+       compiler did is not known, so those maps are checked only by the entity round trip
+       (decompile-sweep --roundtrip, docs/DECOMPILE.md "Workshop sweep 11-13").
+
+266. **worldspawn's mapUsageType is the world's, through a five-name table** (2026-11-13; resourcecompiler
+     20261103, capstone disassembly via tools/re/disasm.py, string xrefs via tools/re/strxref.py):
+     - CMapWorld's constructor (180fc21a0) declares `mapUsageType` a string (type 5) at +0x2bb8 through the
+       attribute adder 180ce0960 and sets it to "standard" (1822c05c0) through 180ce9ef0.
+     - The worldspawn export (180fc2760, the third referrer of "mapUsageType" 1822c05d0) reads +0x2bb8 and
+       compares it with V_stricmp_fast (tier0 import) against the names of the table at 1830169f0 (32-byte
+       entries: value, name, display name): 0 standard, 1 background, 2 skybox, 3 minigame, 4
+       sharedenvironment. The first match's table name is written (key hash 0x102e9e21 through
+       180fa9df0); no match gives entry 0, "standard".
+     - Was: our forward wrote "standard" for every map, the decompile likewise. Workshop skyboxes
+       (ze_namviet_p_skybox, ze_inboxed_p_skybox, ze_sisyphus_skybox) ship "skybox".
+     - Now: `EntityLumpAuthor.MapUsageTypeName` from `MapEntities.Entity.MapUsageType` (the CMapWorld's), and
+       the decompiler writes the lump's value back on the world.

@@ -1277,8 +1277,8 @@ First run (147 of 315 items, 269 maps, stopped to fix the crashes):
   (worldspawn adds worldname and mapUsageType; placement keys follow classname). Today's
   resourcecompiler writes compile_source_id with no condition (rc 180f26160: after the key table, from
   node +0x17ec), and so does every archived build back to 09-23, so these maps come from an older
-  compiler whose rules we have no binary for. EntityLumpAuthor.Unbuild stops at the missing key. Reading
-  them would mean inverting a compiler we cannot run or decompile: the user's call. A map and its
+  compiler whose rules we have no binary for. EntityLumpAuthor.Unbuild stopped at the missing key; read since
+  (below). A map and its
   skybox can differ (ze_biohazard2_rpd_004_p new, its skybox old).
 - 23 new-format maps decompiled (22,307 entities; median 22 s, slowest 660 s), 8 ran past 900 s
   (ze_purification_a1_skybox, ze_boatescape888, ze_onahole_p, ...; not looked at yet).
@@ -1296,6 +1296,32 @@ generation parameters; s2c_prefabprobe3 and s2c_prefabprobe4 (one ladder each) n
 back, our forward on it = the shipped block on all seven maps that ship one. A first try lost the count's
 own 4 bytes (`p += 68 * U32()`: C# reads p before U32 moves it) and every map then "passed" on the note;
 the test now fails when the reader lands on "of another version" or "ends early".
+
+Older lump format, read (11-13, the user's call): the table ends at origin where compile_source_id is
+missing (its entities are otherwise laid out as today's: table, bone pose, game keys, origin, angles,
+scales, hammerUniqueId), the nodes go in lump order (world 0, then 1, 2, ...: the decompile's choice, no
+walk is known, so no placeholders), a brush model is a plain string with backslashes, and an older hull
+holds its positions as m_Vertices (12 bytes a vertex) with no m_VertexPositions. Each such map gets a note
+saying it is read with the current layout and not checked against the compiler that built it. 11 of 12
+old-format maps decompiled on the first try; the twelfth (ze_por_island_skybox, the m_Vertices hull)
+does since. Their .navs are another version and are not read.
+
+`decompile-sweep --roundtrip` is the check these maps can have: the decompiled .vmap's entities go through
+our forward author (EntityLumpSet, no settle, no smart prop locators) and are compared with the shipped
+lumps key by key under hammerUniqueId: exact, keysAlike (every shared key equal and no key only Valve's;
+ours may hold more, because today's FGD declares keys an older one did not: vscripts, local.*,
+parentname...), differ, missing. "%f" strings compare with what our float prints under %f. First results:
+- ze_aztecnoob_p (old): 253 of 294 alike; the 41 left are lighting outputs an unlit forward does not write
+  (lightprobetexture, light_probe_atlas_*, precomputed*, bakedshadowindex) and 8 brush models whose old
+  compile kept the name's case (Nuke_54.vmdl; today's lowercases it).
+- ze_namviet_p, ze_inboxed_p, ze_sisyphus (new): 871 of 963, 344 of 370, 312 of 347 alike.
+- Fixed from it: worldspawn's mapUsageType is the world's through a five-name table (ledger 266; skyboxes
+  ship "skybox", we wrote "standard" for every map), and an info_world_layer's layerName loses the
+  "world_layer_" the forward adds (it came back doubled).
+- Open: brush entities missing from our side (namviet 49, sisyphus 75: func_breakable, trigger_*,
+  func_button...), _template_lump_ent_index shifted under a template whose earlier member is one of those
+  (sisyphus 582's point_soundevent 850: 3 in Valve's, 1 in ours), point_teleport angles off by 1e-5, and
+  ze_por_island_p's forward stops on an exp2f argument it does not port.
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's

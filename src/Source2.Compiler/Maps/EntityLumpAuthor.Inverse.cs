@@ -48,9 +48,14 @@ public static partial class EntityLumpAuthor
         // The table is written backwards between the compile's own keys: worldspawn
         // leads with compile_source_id, every other entity follows its table with it,
         // and origin always follows (BuildEntity). Placement never sits in the table.
+        // A lump from an older compiler (GROUND_TRUTH 265) writes no compile_source_id at all; its
+        // entities are otherwise laid out alike (table, bone pose, game keys, then origin), so the
+        // table ends at origin there. Read, not verified against that compiler (DECOMPILE.md).
         var end = keys.FindIndex(k => k.Key.EqualsAscii(isWorld ? "origin" : "compile_source_id"));
+        if (end < 0 && !isWorld)
+            end = keys.FindIndex(k => k.Key.EqualsAscii("origin"));
         if (end < 0)
-            throw new InvalidDataException($"{className}: no {(isWorld ? "origin" : "compile_source_id")} in the lump entity");
+            throw new InvalidDataException($"{className}: no compile_source_id or origin in the lump entity");
         var start = isWorld && keys.Count > 0 && keys[0].Key.EqualsAscii("compile_source_id") ? 1 : 0;
         var region = keys.GetRange(start, end - start);
         // What follows the table and precedes the compile's id: the node's bone pose,
@@ -127,6 +132,10 @@ public static partial class EntityLumpAuthor
                 && text.StartsWith("maps/", StringComparison.Ordinal)
                 && text.EndsWith($"/particle_snapshots/node_{mesh}.vsnap", StringComparison.Ordinal))
                 text = "";
+            // An info_world_layer's layerName gains the lump's "world_layer_" prefix (BuildEntity).
+            if (className.EqualsAscii("info_world_layer") && key.EqualsAscii("layername")
+                && text.StartsWith("world_layer_", StringComparison.Ordinal))
+                text = text["world_layer_".Length..];
             sourceKeys.Add(new(key, text));
         }
 
@@ -148,8 +157,12 @@ public static partial class EntityLumpAuthor
             dropped.Add("hammerUniqueId (source key)");
         var sourceId = (int)(Number(keys.FirstOrDefault(k => k.Key.EqualsAscii("compile_source_id")).Value) ?? -1);
 
-        var model = keys.FirstOrDefault(k => k.Key.EqualsAscii("model") && k.Value.Flag == KVFlag.ResourceName && keys.IndexOf(k) > end);
-        string? brushModel = model.Value is { } m && Plain(m).Contains("/entities/", StringComparison.Ordinal) ? Plain(m) : null;
+        // The older lump writes the brush model as a plain string with backslashes
+        // (maps\<map>\entities\<name>_<id>.vmdl); the package holds it under forward slashes.
+        var older = sourceId < 0 && !isWorld;
+        var model = keys.FirstOrDefault(k => k.Key.EqualsAscii("model") && (k.Value.Flag == KVFlag.ResourceName || older) && keys.IndexOf(k) > end);
+        var modelPath = model.Value is { } mv ? (older ? Plain(mv).Replace('\\', '/') : Plain(mv)) : null;
+        string? brushModel = modelPath is not null && modelPath.Contains("/entities/", StringComparison.Ordinal) ? modelPath : null;
 
         var entity = new MapEntities.Entity(
             className, nodeId, sourceKeys,

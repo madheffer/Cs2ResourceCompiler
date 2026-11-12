@@ -3642,6 +3642,10 @@ RESOURCECOMPILER_1103 = [
     ("1812bcd80", "meshopt_encodeIndexBufferBound", WN, ""),
     ("1812bcde0", "meshopt_encodeIndexSequence", WN, ""),
     ("1812bcee0", "meshopt_encodeIndexSequenceBound", WN, ""),
+    # Ledger 266: worldspawn's mapUsageType (capstone, strxref on "mapUsageType" 1822c05d0).
+    ("180fc21a0", "CMapWorld_Ctor", ENT, "declares mapUsageType a string at +0x2bb8 (adder 180ce0960, type 5) set to \"standard\" (180ce9ef0)"),
+    ("180fc2760", "CMapWorld_ExportToLump", ENT, "worldspawn's keys; mapUsageType: +0x2bb8 matched with V_stricmp_fast against the 5 names of 1830169f0, the match's name written (key hash 0x102e9e21, 180fa9df0), none gives standard"),
+    ("1830169f0", "g_MapUsageTypes", ENT, "5 x 32 bytes {int value, char *name, char *display}: standard, background, skybox, minigame, sharedenvironment"),
 ]
 
 RESOURCECOMPILER_1023 = [

@@ -36,6 +36,17 @@ def summary(report):
         secs = sorted(r["seconds"] for r in ok)
         print(f"ok: {sum(r['entities'] for r in ok):,} entities, {sum(r['placeholders'] for r in ok):,} placeholders, "
               f"median {secs[len(secs) // 2]} s, max {secs[-1]} s, total {sum(secs) / 60:.0f} min")
+    trips = [r["roundTrip"] for r in ok if isinstance(r.get("roundTrip"), dict) and "exact" in r["roundTrip"]]
+    if trips:
+        tot = {k: sum(t[k] for t in trips) for k in ("exact", "keysAlike", "differ", "missing")}
+        failed = sum(1 for r in ok if isinstance(r.get("roundTrip"), dict) and "error" in r["roundTrip"])
+        print(f"round trip ({len(trips)} maps, {failed} forward errors): " + ", ".join(f"{k} {v:,}" for k, v in tot.items()))
+        for part in ("valueDiff", "valveOnly", "missingClasses"):
+            c = collections.Counter()
+            for t in trips:
+                for d in t.get(part, []):
+                    c[d["key"]] += d["count"]
+            print(f"  {part}: " + ", ".join(f"{k} {n}" for k, n in c.most_common(10)))
     errors = collections.Counter()
     examples = {}
     for r in rows:
@@ -73,6 +84,7 @@ def main():
     ap.add_argument("--heavy", help="tools/re/heavy.py: run chunk by chunk through the heavy queue")
     ap.add_argument("--chunk", type=int, default=20)
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--roundtrip", action="store_true", help="compile each decompile's entities again and compare (s2c --roundtrip)")
     a = ap.parse_args()
     if a.summary:
         summary(a.summary)
@@ -87,7 +99,7 @@ def main():
                                     "--what", f"decompile-sweep-{start}", "--allow-cs2", "--",
                                     sys.executable, os.path.abspath(__file__), "--s2c", a.s2c, "--report", a.report,
                                     "--workshop", a.workshop, "--cs2", a.cs2, "--timeout", a.timeout,
-                                    "--only", chunk, "--quiet"])
+                                    "--only", chunk, "--quiet"] + (["--roundtrip"] if a.roundtrip else []))
             if code != 0:
                 print(f"chunk at {start} exited {code}; stopping", file=sys.stderr)
                 return code
@@ -98,6 +110,8 @@ def main():
         cmd = [a.s2c, "decompile-sweep", a.workshop, "--report", a.report, "--cs2", a.cs2, "--timeout", a.timeout]
         if a.only:
             cmd += ["--only", a.only]
+        if a.roundtrip:
+            cmd += ["--roundtrip"]
         code = subprocess.call(cmd)
         if code == 0:
             break

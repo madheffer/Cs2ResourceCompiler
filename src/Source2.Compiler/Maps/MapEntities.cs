@@ -68,6 +68,10 @@ public static class MapEntities
         /// </summary>
         public string? BoneTransforms { get; init; }
 
+        /// <summary>The CMapWorld's mapUsageType string (worldspawn only; null when the node has none),
+        /// which the export writes through <see cref="EntityLumpAuthor.MapUsageTypeName"/>.</summary>
+        public string? MapUsageType { get; init; }
+
         /// <summary>A CMapNavLink's own fields (<see cref="NavLinkFields"/>); null for every other node.</summary>
         public NavLinkFields? NavLink { get; init; }
 
@@ -223,7 +227,7 @@ public static class MapEntities
         // the tree does while the file lists those elements far apart.
         var entities = new List<Entity>();
         if (Read(world, isWorld: true) is { } worldspawn)
-            entities.Add(Upgrade(worldspawn, document.FormatVersion));
+            entities.Add(Upgrade(worldspawn, document.FormatVersion) with { MapUsageType = world.Get<string>("mapUsageType") });
         Walk(world, entities, new HashSet<DmxBinary.Element>(), null, new Prefab([], [], HiddenNodes(document), false, null, null));
         return entities;
     }

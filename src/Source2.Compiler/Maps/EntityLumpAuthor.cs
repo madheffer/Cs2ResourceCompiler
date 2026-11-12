@@ -346,7 +346,7 @@ public static partial class EntityLumpAuthor
         {
             if (worldName is { Length: > 0 })
                 values.Add("worldname", new KVObject(worldName));
-            values.Add("mapUsageType", new KVObject("standard"));
+            values.Add("mapUsageType", new KVObject(MapUsageTypeName(entity.MapUsageType)));
         }
 
         // An info_world_layer names its layer's lump (FUN_180240a60): its
@@ -774,6 +774,22 @@ public static partial class EntityLumpAuthor
         var file = $"entities/{name.ToLowerInvariant()}_{idPath}".Replace('.', '_').Replace('+', '_');
         return $"maps/{worldName}/{file}.vmdl";
     }
+
+    /// <summary>
+    /// The map usage types worldspawn's export knows, in its table's order (rc 20261103 table
+    /// 1830169f0: value, name, display name; 0 standard "Standard", 1 background "UI Background",
+    /// 2 skybox "3D Skybox", 3 minigame "Minigame", 4 sharedenvironment "Shared Environment").
+    /// </summary>
+    public static readonly string[] MapUsageTypes = ["standard", "background", "skybox", "minigame", "sharedenvironment"];
+
+    /// <summary>
+    /// The mapUsageType worldspawn ships for the CMapWorld's (CMapWorld +0x2bb8, declared a string with
+    /// "standard" by its constructor, rc 20261103 180fc21a0): the export (180fc2760) matches it with
+    /// V_stricmp_fast against <see cref="MapUsageTypes"/> and writes the table's name for the first
+    /// match, "standard" for none (GROUND_TRUTH 266).
+    /// </summary>
+    public static string MapUsageTypeName(string? value)
+        => MapUsageTypes.FirstOrDefault(t => value is not null && value.EqualsAscii(t)) ?? MapUsageTypes[0];
 
     private static bool IsPlacement(string key)
         => Placement.Contains(key);

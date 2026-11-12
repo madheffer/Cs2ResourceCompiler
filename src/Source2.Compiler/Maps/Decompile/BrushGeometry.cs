@@ -94,7 +94,7 @@ public static class BrushGeometry
                     name = "";
                 }
                 var body = Child(hull, "m_Hull")!;
-                var positions = Floats(Blob(Child(body, "m_VertexPositions")));
+                var positions = Positions(body);
                 var vertices = Enumerable.Range(0, positions.Length / 3).Select(i => new Vector3(positions[i * 3], positions[(i * 3) + 1], positions[(i * 3) + 2])).ToArray();
                 pieces.Add(new Piece(name, HullFaces(body), (int)Number(Child(hull, "m_nCollisionAttributeIndex")), vertices));
             }
@@ -109,7 +109,7 @@ public static class BrushGeometry
     /// </summary>
     private static Vector3[][] HullFaces(KVObject hull)
     {
-        var positions = Floats(Blob(Child(hull, "m_VertexPositions")));
+        var positions = Positions(hull);
         var edges = Blob(Child(hull, "m_Edges"));
         var faces = Blob(Child(hull, "m_Faces"));
         var planes = Floats(Blob(Child(hull, "m_Planes")));
@@ -132,6 +132,14 @@ public static class BrushGeometry
         }
         return result;
     }
+
+    /// <summary>
+    /// A hull's vertex positions, three floats each. An older compile's hull (the older lump
+    /// format, GROUND_TRUTH 265) has no m_VertexPositions and holds them as m_Vertices, 12 bytes a
+    /// vertex (ze_por_island_skybox's unnamed_8: eight corners, 96 bytes).
+    /// </summary>
+    private static float[] Positions(KVObject hull)
+        => Child(hull, "m_VertexPositions") is { } positions ? Floats(Blob(positions)) : Floats(Blob(Child(hull, "m_Vertices")));
 
     private static Vector3 Newell(List<Vector3> loop)
     {

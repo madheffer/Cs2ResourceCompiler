@@ -542,4 +542,16 @@ public sealed class EntityLumpRulesTests : IDisposable
         Assert.False(ValuesOf(EntitiesOf(lumps["default_ents"])[1]).ContainsKey("entityLumpName"));
         Assert.Empty(EntitiesOf(lumps["50#entityLumpName"]));
     }
+
+    // Ledger 266: the world's mapUsageType through the export's table, matched without case;
+    // anything else is entry 0.
+    [Theory]
+    [InlineData(null, "standard")]
+    [InlineData("skybox", "skybox")]
+    [InlineData("SkyBox", "skybox")]
+    [InlineData("sharedenvironment", "sharedenvironment")]
+    [InlineData("3D Skybox", "standard")]
+    [InlineData("", "standard")]
+    public void MapUsageType_IsTheWorldsThroughTheTable(string? world, string shipped)
+        => Assert.Equal(shipped, EntityLumpAuthor.MapUsageTypeName(world));
 }
