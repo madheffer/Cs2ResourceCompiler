@@ -157,11 +157,17 @@ public static partial class EntityLumpAuthor
             dropped.Add("hammerUniqueId (source key)");
         var sourceId = (int)(Number(keys.FirstOrDefault(k => k.Key.EqualsAscii("compile_source_id")).Value) ?? -1);
 
-        // The older lump writes the brush model as a plain string with backslashes
-        // (maps\<map>\entities\<name>_<id>.vmdl); the package holds it under forward slashes.
-        var older = sourceId < 0 && !isWorld;
-        var model = keys.FirstOrDefault(k => k.Key.EqualsAscii("model") && (k.Value.Flag == KVFlag.ResourceName || older) && keys.IndexOf(k) > end);
-        var modelPath = model.Value is { } mv ? (older ? Plain(mv).Replace('\\', '/') : Plain(mv)) : null;
+        // The brush model the compile adds after its id key. Today's is a resource name; an older
+        // lump writes a plain string, with backslashes in the oldest (maps\<map>\entities\<name>_<id>.vmdl;
+        // ze_aztecnoob_p) and forward slashes in one that already has compile_source_id but still
+        // writes placement as strings (ze_namviet_p's door_heli_1744). The package holds it under
+        // forward slashes. Past the id key no key of the table stands, so the flag is not needed, but
+        // for a cable: its own model (the tube CMapCable exports, after pathNodes) is a plain string
+        // today (s2c_prefabinst's cable_dynamic 2348) and is not the entity's geometry.
+        var cableClass = schema?.IsCableClass(className) == true;
+        var model = keys.FirstOrDefault(k => k.Key.EqualsAscii("model") && keys.IndexOf(k) > end
+                                             && (!cableClass || k.Value.Flag == KVFlag.ResourceName));
+        var modelPath = model.Value is { } mv ? Plain(mv).Replace('\\', '/') : null;
         string? brushModel = modelPath is not null && modelPath.Contains("/entities/", StringComparison.Ordinal) ? modelPath : null;
 
         var entity = new MapEntities.Entity(

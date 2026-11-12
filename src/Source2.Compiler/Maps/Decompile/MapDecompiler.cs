@@ -630,7 +630,7 @@ public static class MapDecompiler
                         var node = builder.AddEntity(NewId(), t.Keys, g.Local[i].Origin, g.Local[i].Angles, t.Scales, t.Connections, parent: element);
                         if (copy.BrushModel is { } copyModel)
                             AddBrushGeometry(builder, node, copy with { Entity = copy.Entity with { Origin = g.Local[i].Origin, Angles = g.Local[i].Angles } },
-                                             copyModel, files, table, notes, NewId);
+                                             copyModel, files, table, notes, NewId, schema?.IsCableClass(copy.Entity.ClassName) == true);
                         at = g.SourceIds[i] + 1;
                     }
                     var trailing = g.Count - g.Slots[^1] - 1;
@@ -667,7 +667,7 @@ public static class MapDecompiler
                             var t = EntityLumpAuthor.Unbuild(copy.Raw!, schema, FixupOf(scope.Chain + ":0"), instanced: true).Entity;
                             var node = builder.AddEntity(NewId(), t.Keys, copy.Entity.Origin, copy.Entity.Angles, t.Scales, t.Connections, parent: group);
                             if (copy.BrushModel is { } copyModel)
-                                AddBrushGeometry(builder, node, copy, copyModel, files, table, notes, NewId);
+                                AddBrushGeometry(builder, node, copy, copyModel, files, table, notes, NewId, schema?.IsCableClass(copy.Entity.ClassName) == true);
                             at = copy.SourceId + 1;
                         }
                         else if (!slot.Walks)
@@ -712,7 +712,7 @@ public static class MapDecompiler
                 foreach (var v in scope.Variables.Where(v => v.Inner == inner))
                     VmapBuilder.Bind(entityNode, v.Key, v.Variable);
                 if (e.BrushModel is { } model)
-                    AddBrushGeometry(builder, entityNode, e, model, files, table, notes, NewId);
+                    AddBrushGeometry(builder, entityNode, e, model, files, table, notes, NewId, schema?.IsCableClass(x.ClassName) == true);
                 at = Math.Max(at, e.SourceId + 1);
             }
             RuntimeUpTo(int.MaxValue);
@@ -935,7 +935,7 @@ public static class MapDecompiler
     /// </summary>
     private static void AddBrushGeometry(VmapBuilder builder, DmxBinary.Element node, EntityLumpAuthor.SourceEntity e, string model,
                                          IReadOnlyDictionary<string, byte[]> files, IReadOnlyDictionary<uint, string> table,
-                                         List<string> notes, Func<int> newId)
+                                         List<string> notes, Func<int> newId, bool cable = false)
     {
         var label = $"{e.Entity.ClassName} {e.IdPath}";
         if (!files.TryGetValue(model + "_c", out var bytes))
@@ -1060,11 +1060,27 @@ public static class MapDecompiler
             notes.Add($"{label}: {off} mesh(es) with a corner no searched point places exactly");
         if (geometry.HasRender && !own)
             notes.Add($"{label}: inside a prefab or a copy, render mesh not read (texture coordinates and normals not recovered)");
-        if (geometry.TriangleMeshes > 0)
+        // A model with no hulls but triangle-mesh shapes (a mesh the compile kept concave): without
+        // geometry the forward drops a solid class entity outright (ReachesTheLump), so each shape
+        // comes back as one mesh, a face per triangle in the shape's order and winding, its corners
+        // landed as a hull's are. The source's polygons and the compile's own triangulation of them
+        // are not recovered; it keeps the entity, its collision shape and its I/O. A cable's model is
+        // its tube (CableSettings), not a mesh drawn under it: a cable not rebuilt as one keeps none.
+        if (geometry.Pieces.Count == 0 && geometry.Soups.Count > 0 && !cable)
+        {
+            foreach (var soup in geometry.Soups)
+            {
+                var corners = soup.Vertices.Select(Fit).ToArray();
+                var faces = soup.Triangles.Select(t => ((Vector3[])[corners[t.A], corners[t.B], corners[t.C]], 0)).ToList();
+                builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero, faces, [soup.Material], corners);
+            }
+            notes.Add($"{label}: {geometry.Soups.Count} triangle-mesh shape(s) rebuilt a face per triangle (the source's polygons not recovered)");
+        }
+        else if (geometry.TriangleMeshes > 0)
             notes.Add($"{label}: {geometry.TriangleMeshes} triangle-mesh shape(s) not read");
         if (geometry.UnknownMaterials.Count > 0)
             notes.Add($"{label}: {geometry.UnknownMaterials.Count} hull(s) with a material hash no known material has");
-        if (geometry.Pieces.Count == 0)
+        if (geometry.Pieces.Count == 0 && (geometry.Soups.Count == 0 || cable))
             notes.Add($"{label}: its model has no hulls; no geometry");
     }
 

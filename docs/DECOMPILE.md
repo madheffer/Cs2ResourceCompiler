@@ -1318,10 +1318,18 @@ parentname...), differ, missing. "%f" strings compare with what our float prints
 - Fixed from it: worldspawn's mapUsageType is the world's through a five-name table (ledger 266; skyboxes
   ship "skybox", we wrote "standard" for every map), and an info_world_layer's layerName loses the
   "world_layer_" the forward adds (it came back doubled).
-- Open: brush entities missing from our side (namviet 49, sisyphus 75: func_breakable, trigger_*,
-  func_button...), _template_lump_ent_index shifted under a template whose earlier member is one of those
-  (sisyphus 582's point_soundevent 850: 3 in Valve's, 1 in ours), point_teleport angles off by 1e-5, and
-  ze_por_island_p's forward stops on an exp2f argument it does not port.
+- Brush entities missing from our side (namviet 49, sisyphus 75), fixed the same day: a solid class
+  entity with no geometry does not ship (ReachesTheLump), and two readings left these without any.
+  (a) Their lumps are between the formats: compile_source_id, but placement as "%f" strings and the
+  brush model a plain string, not a resource name, which Unbuild required; any model past the id key is
+  now the brush model (none of the table stands there), except a cable's own tube model (s2c_prefabinst's
+  cable_dynamic 2348). (b) A model with only triangle-mesh shapes (a concave mesh: namviet's
+  func_tracktrain 924, sisyphus' func_movelinear 586) gave no geometry; each shape now comes back as one
+  mesh, a face per triangle in its order, noted (the source's polygons are not recovered). Missing went
+  to 0 on namviet, sisyphus and aztecnoob, and sisyphus' _template_lump_ent_index shift went with it
+  (the template's earlier member was one of them).
+- Open: point_teleport angles off by 1e-5, and ze_por_island_p's forward stops on an exp2f argument it
+  does not port.
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's

@@ -28,7 +28,15 @@ public static class BrushGeometry
     public sealed record Piece(string Material, Vector3[][] Faces, int CollisionAttribute, Vector3[] Vertices);
 
     /// <summary>What a model gives back: its pieces, and what it holds that is not read.</summary>
-    public sealed record Result(IReadOnlyList<Piece> Pieces, bool HasRender, int TriangleMeshes, IReadOnlyList<uint> UnknownMaterials);
+    public sealed record Result(IReadOnlyList<Piece> Pieces, bool HasRender, int TriangleMeshes, IReadOnlyList<uint> UnknownMaterials)
+    {
+        /// <summary>The model's triangle-mesh shapes (RnMesh: m_Vertices float triples, m_Triangles int
+        /// triples, entity space), each with its tool material's name ("" when no known material has it).</summary>
+        public IReadOnlyList<Soup> Soups { get; init; } = [];
+    }
+
+    /// <summary>One triangle-mesh shape: its vertices and triangles as the shape holds them.</summary>
+    public sealed record Soup(string Material, Vector3[] Vertices, (int A, int B, int C)[] Triangles);
 
     /// <summary>
     /// A table from tool material hash to material name over every name given (".vmat"
@@ -81,10 +89,27 @@ public static class BrushGeometry
         var pieces = new List<Piece>();
         var unknown = new List<uint>();
         var triangleMeshes = 0;
+        var soups = new List<Soup>();
         foreach (var part in Children(phys, "m_parts"))
         {
             var shape = Child(part, "m_rnShape");
-            triangleMeshes += Children(shape, "m_meshes").Count();
+            foreach (var mesh in Children(shape, "m_meshes"))
+            {
+                triangleMeshes++;
+                var hash = (uint)Number(Child(mesh, "m_nToolMaterialHash"));
+                if (!materials.TryGetValue(hash, out var name))
+                {
+                    unknown.Add(hash);
+                    name = "";
+                }
+                var body = Child(mesh, "m_Mesh");
+                var positions = Floats(Blob(Child(body, "m_Vertices")));
+                var indices = Blob(Child(body, "m_Triangles"));
+                var vertices = Enumerable.Range(0, positions.Length / 3).Select(i => new Vector3(positions[i * 3], positions[(i * 3) + 1], positions[(i * 3) + 2])).ToArray();
+                var triangles = Enumerable.Range(0, indices.Length / 12)
+                    .Select(k => (BitConverter.ToInt32(indices, k * 12), BitConverter.ToInt32(indices, (k * 12) + 4), BitConverter.ToInt32(indices, (k * 12) + 8))).ToArray();
+                soups.Add(new Soup(name, vertices, triangles));
+            }
             foreach (var hull in Children(shape, "m_hulls"))
             {
                 var hash = (uint)Number(Child(hull, "m_nToolMaterialHash"));
@@ -99,7 +124,7 @@ public static class BrushGeometry
                 pieces.Add(new Piece(name, HullFaces(body), (int)Number(Child(hull, "m_nCollisionAttributeIndex")), vertices));
             }
         }
-        return new Result(pieces, hasRender, triangleMeshes, unknown);
+        return new Result(pieces, hasRender, triangleMeshes, unknown) { Soups = soups };
     }
 
     /// <summary>

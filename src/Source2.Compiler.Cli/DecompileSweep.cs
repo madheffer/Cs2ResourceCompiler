@@ -153,7 +153,9 @@ internal static class DecompileSweep
             Maps.MapPrefabs.Attach(document, path => result.Prefabs.TryGetValue(path.Replace('\\', '/'), out var bytes)
                 ? Maps.MapNodeAngles.Apply(DmxBinary.Read(bytes)) : null);
             Maps.MapDeformers.Apply(document, schema);
-            var lumps = EntityLumpSet.Author(MapEntities.From(document), schema, map, MapEntities.FixupEntityNames(document), document);
+            var walked = MapEntities.From(document);
+            var walkedIds = walked.GroupBy(e => e.IdPath).ToDictionary(g => g.Key, g => string.Join(",", g.Select(e => e.ClassName)));
+            var lumps = EntityLumpSet.Author(walked, schema, map, MapEntities.FixupEntityNames(document), document);
             var shipped = Shapes(files.Where(f => f.Key.EndsWith(".vents_c", StringComparison.OrdinalIgnoreCase)
                                                   && f.Key.StartsWith($"maps/{map}/", StringComparison.OrdinalIgnoreCase)).Select(f => (f.Key, f.Value)));
             var ours = Shapes(lumps.Select(l => (l.Path + "_c", l.Bytes)));
@@ -192,7 +194,9 @@ internal static class DecompileSweep
                     if (pick < 0)
                     {
                         missing++;
-                        Count(missingClasses, cls ?? "?", $"{id}: {string.Join(" ", t.Take(4))}");
+                        var read = result.Entities.Where(e => e.IdPath == id).Select(e => e.Entity.ClassName).ToList();
+                        var left = string.Join(",", mine.Select(m => m.FirstOrDefault(l => l.StartsWith("classname=", StringComparison.Ordinal)) ?? "?"));
+                        Count(missingClasses, cls ?? "?", $"{id}: decompile read {(read.Count == 0 ? "none" : string.Join(",", read))}; walked {walkedIds.GetValueOrDefault(id) ?? "none"}; ours under the id: {(left.Length == 0 ? "none" : left)}");
                         continue;
                     }
                     var m0 = mine[pick];
