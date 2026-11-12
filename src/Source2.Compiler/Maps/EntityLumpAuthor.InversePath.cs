@@ -232,10 +232,16 @@ public static partial class EntityLumpAuthor
     private static string[] Words(string text)
         => [.. text.Trim().TrimStart('[').TrimEnd(']').Split(',').Select(w => w.Trim()).Where(w => w.Length > 0)];
 
-    /// <summary>The rows of pathNodes (<see cref="Kv3Rows"/>), nine floats each.</summary>
+    /// <summary>The rows of pathNodes (<see cref="Kv3Rows"/>), nine floats each. The rows are the
+    /// arrays inside the outer one: a path with no nodes ships "[  ]" (Kv3Rows), which has none.</summary>
     private static List<float[]> Rows(string text)
-        => [.. Regex.Matches(text, @"\[([^\[\]]*)\]").Select(m => Words(m.Groups[1].Value)
+    {
+        var inner = text.Trim();
+        if (inner.Length >= 2 && inner[0] == '[' && inner[^1] == ']')
+            inner = inner[1..^1];
+        return [.. Regex.Matches(inner, @"\[([^\[\]]*)\]").Select(m => Words(m.Groups[1].Value)
                 .Select(w => float.Parse(w, NumberStyles.Float, CultureInfo.InvariantCulture)).ToArray())];
+    }
 
     private static bool Same(ReadOnlySpan<float> a, Vector3 b)
         => BitConverter.SingleToInt32Bits(a[0]) == BitConverter.SingleToInt32Bits(b.X)

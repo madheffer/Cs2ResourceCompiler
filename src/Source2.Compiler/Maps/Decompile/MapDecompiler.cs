@@ -1209,6 +1209,14 @@ public static class MapDecompiler
                                  .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             int IndexOf(string material) => materials.FindIndex(x => string.Equals(x, material, StringComparison.OrdinalIgnoreCase));
             var pieces = meshes[m].Select(j => (render[j], IndexOf(render[j].Material))).ToList();
+            // Rebuild and CornerStreams pair a face with its piece by material: two pieces of one
+            // mesh in one material (ze_visualizer, workshop sweep 11-13) split by a rule not measured.
+            if (pieces.GroupBy(p => p.Item2).FirstOrDefault(g => g.Count() > 1) is { } shared)
+            {
+                failed.Add($"mesh {m}: {shared.Count()} render pieces share material {materials[shared.Key]} " +
+                           $"({string.Join(", ", shared.Select(p => p.Item1.Name))}; the split is not modelled)");
+                continue;
+            }
             var (faces, reason) = BrushRender.Rebuild(pieces, [.. hulls.Select(h => input[h])], [.. hulls.Select(h => IndexOf(input[h].Material))],
                                                       [.. hulls.Select(h => thickened[h])], x => !Draws(x), closed: !renderOnly.Contains(m));
             if (faces is null)

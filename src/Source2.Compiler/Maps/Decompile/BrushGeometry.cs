@@ -49,7 +49,10 @@ public static class BrushGeometry
 
     /// <summary><see cref="MaterialTable"/> over the game's materials: every .vmat_c in csgo's and
     /// core's pak01 under <paramref name="game"/> (the install's game folder).</summary>
-    public static Dictionary<uint, string> GameMaterials(string game)
+    public static Dictionary<uint, string> GameMaterials(string game) => MaterialTable(GameMaterialNames(game));
+
+    /// <summary>Every .vmat_c path in csgo's and core's pak01 under <paramref name="game"/>.</summary>
+    public static List<string> GameMaterialNames(string game)
     {
         var names = new List<string>();
         foreach (var pak in new[] { Path.Combine(game, "csgo", "pak01_dir.vpk"), Path.Combine(game, "core", "pak01_dir.vpk") })
@@ -60,7 +63,7 @@ public static class BrushGeometry
             package.Read(pak);
             names.AddRange((package.Entries.GetValueOrDefault("vmat_c") ?? []).Select(e => e.GetFullPath()));
         }
-        return MaterialTable(names);
+        return names;
     }
 
     /// <summary>Read a compiled entity model.</summary>

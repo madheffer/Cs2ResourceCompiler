@@ -39,6 +39,7 @@ try
         "reauthor" => Commands.Reauthor(args[1..]),
         "decompile-map" => Commands.DecompileMap(args[1..]),
         "decompile-scripts" => Commands.DecompileScripts(args[1..]),
+        "decompile-sweep" => DecompileSweep.Run(args[1..]),
         "selftest" => SelfTest.Run(args[1..]),
         // main's resource parity tools (merged 2026-11-05).
         "kv3-parity" => Kv3Parity.Run(args[1..]),
@@ -150,6 +151,11 @@ static void Usage()
                     --content, by default the folder holding the output's maps/),
                     instances and paths. World geometry is not rebuilt yet; what
                     is left out is listed (docs/DECOMPILE.md).
+
+      s2c decompile-sweep <workshop content/730 dir> --report <out.jsonl> [--cs2 <dir>] [--only <id,...>] [--timeout <s>]
+                    decompile-map over every map of every workshop item, one JSON
+                    line per map (ran or not, time, counts, notes grouped); resumes
+                    from the report; driver: tools/map-survey/decompile_sweep.py.
 
       s2c decompile-scripts <addon _dir.vpk | .vjs_c ...> --content <addon content dir>
                     The cs_script sources (.js) back from an addon's compiled

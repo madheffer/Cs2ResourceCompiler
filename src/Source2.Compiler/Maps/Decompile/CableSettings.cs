@@ -36,7 +36,15 @@ internal static class CableSettings
         using var resource = new Resource();
         resource.Read(new MemoryStream(model));
         var data = (Model)resource.DataBlock!;
-        var (mesh, _, _, _) = data.GetEmbeddedMeshesAndLoD().First();
+        // A cable with no nodes (pathNodes "[  ]") ships a model with no mesh (ze_ratatouille's
+        // cable_dynamic 4721, workshop sweep 11-13): nothing to read the settings from.
+        var embedded = data.GetEmbeddedMeshesAndLoD().ToList();
+        if (embedded.Count == 0)
+        {
+            notes.Add($"cable {cable.NodeId}: its model has no render mesh; factory settings, no material");
+            return VmapBuilder.Cable.Factory("") with { Collision = PhysicsVertices(resource) is not null };
+        }
+        var (mesh, _, _, _) = embedded[0];
         var call = mesh.Data.GetArray("m_sceneObjects")[0].GetArray("m_drawCalls")[0];
         var material = call.GetStringProperty("m_material") ?? "";
         var vb = mesh.VBIB.VertexBuffers[0];
