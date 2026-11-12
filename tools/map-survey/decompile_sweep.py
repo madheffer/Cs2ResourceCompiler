@@ -6,10 +6,11 @@ script records what is needed and starts the sweep again, which resumes from the
 
   python tools/map-survey/decompile_sweep.py --s2c <s2c.exe> --report <out.jsonl>
       [--workshop D:/Steam/steamapps/workshop/content/730] [--cs2 <CS2 dir>] [--timeout 900]
-      [--only id,id]
+      [--only id,id] [--heavy tools/re/heavy.py [--chunk 20]]
   python tools/map-survey/decompile_sweep.py --summary <out.jsonl>
 
-Run it through the heavy queue at low priority (tools/re/heavy.py); docs/DECOMPILE.md item 19.
+With --heavy it takes the heavy queue one chunk of items at a time (other sessions run between
+chunks); start it at low priority (cmd `start /low /affinity 3`). docs/DECOMPILE.md item 19.
 """
 import argparse
 import collections
@@ -69,9 +70,28 @@ def main():
     ap.add_argument("--timeout", default="900")
     ap.add_argument("--only")
     ap.add_argument("--summary")
+    ap.add_argument("--heavy", help="tools/re/heavy.py: run chunk by chunk through the heavy queue")
+    ap.add_argument("--chunk", type=int, default=20)
+    ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
     if a.summary:
         summary(a.summary)
+        return 0
+    if a.heavy:
+        # Through the heavy queue a chunk of items at a time, so other sessions' jobs get the
+        # lock between chunks instead of waiting out the whole sweep.
+        items = sorted(os.listdir(a.workshop)) if not a.only else a.only.split(",")
+        for start in range(0, len(items), a.chunk):
+            chunk = ",".join(items[start:start + a.chunk])
+            code = subprocess.call([sys.executable, a.heavy, "run", "--who", "decompile-sweep",
+                                    "--what", f"decompile-sweep-{start}", "--allow-cs2", "--",
+                                    sys.executable, os.path.abspath(__file__), "--s2c", a.s2c, "--report", a.report,
+                                    "--workshop", a.workshop, "--cs2", a.cs2, "--timeout", a.timeout,
+                                    "--only", chunk, "--quiet"])
+            if code != 0:
+                print(f"chunk at {start} exited {code}; stopping", file=sys.stderr)
+                return code
+        summary(a.report)
         return 0
     current = a.report + ".current"
     for attempt in range(1000):
@@ -93,7 +113,8 @@ def main():
             continue
         print(f"sweep exited {code} outside a map; stopping", file=sys.stderr)
         return code
-    summary(a.report)
+    if not a.quiet:
+        summary(a.report)
     return 0
 
 
