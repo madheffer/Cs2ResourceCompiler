@@ -842,6 +842,9 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
     // tools/map-survey/nav_settings_probe_map.py, full builds.
     [InlineData("s2c_rc_probe", "s2c_navprobe")]
     [InlineData("s2c_rc_probe", "s2c_navprobe2")]
+    // One ladder each in the .nav (Decompile.NavSettings skips the ladder records to the settings).
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe3")]
+    [InlineData("s2c_rc_probe", "s2c_prefabprobe4")]
     public void NavSettings_CompileAsTheSourceDoes(string addon, string map)
     {
         var source = MapFixtures.VmapSource(addon, map);
@@ -871,6 +874,9 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         {
             Assert.True(nav.AsSpan().SequenceEqual(Maps.NavFile.EmptyDefault()) || result.Notes.Any(n => n.StartsWith("nav:", StringComparison.Ordinal)),
                         "a generated nav with no CMapNavData rebuilt and no note");
+            // A reader that lost its place lands on these; a part it does not read names itself instead.
+            Assert.DoesNotContain(result.Notes, n => n.StartsWith("nav:", StringComparison.Ordinal)
+                                                     && (n.Contains("of another version", StringComparison.Ordinal) || n.Contains("ends early", StringComparison.Ordinal)));
             return;
         }
         var (shipped, _, why) = NavSettings.FromNav(nav);

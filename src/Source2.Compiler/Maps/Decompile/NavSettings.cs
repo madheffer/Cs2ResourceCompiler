@@ -86,9 +86,13 @@ internal static class NavSettings
                 var down = (int)U32();
                 p += 4 * down;
             }
+            // The ladders, 68 bytes each (1818e71b0, NavWriter.Write): id, width, top, bottom, length,
+            // direction and seven area ids. The settings follow them; the ladders themselves come from
+            // the map's ladder entities, which round trip as entities.
             stage = "ladders";
-            if (U32() != 0)
-                return (null, 0, "ladders (not read)");
+            // The count into a local first: `p += 68 * U32()` would lose U32's own advance.
+            var ladders = (int)U32();
+            p += 68 * ladders;
             if (U32() != 0)
                 return (null, 0, "transformed bounds (not read)");
             if (U32() != 13)

@@ -1030,7 +1030,7 @@ public static class MapDecompiler
             }
             var faces = piece.Faces.Select(f => f.Select(fit).ToArray()).ToArray();
             var vertexOrder = piece.Vertices.Select(fit).ToArray();
-            var order = HullOrder(faces, vertexOrder, piece, e.Entity, entityNode, origin, angles);
+            var order = HullOrder(faces, vertexOrder, piece, e.Entity, entityNode, origin, angles, HullOrderBudget);
             if (order is null)
                 unordered++;
             builder.AddMesh(node, newId(), origin, angles, [.. (order ?? faces).Select(f => (f, 0))], [piece.Material], vertexOrder);
@@ -1611,6 +1611,10 @@ public static class MapDecompiler
     /// plenty of. The faces as read first, then a seeded search over orders and rotations; null when
     /// none lands within the budget.
     /// </summary>
+    /// <summary>Tries for <see cref="HullOrder"/>'s search: 3000, or DECOMPILE_HULL_BUDGET.</summary>
+    private static readonly int HullOrderBudget =
+        int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_HULL_BUDGET"), out var budget) && budget > 0 ? budget : 3000;
+
     private static Vector3[][]? HullOrder(Vector3[][] faces, Vector3[] vertexOrder, BrushGeometry.Piece piece,
                                           MapEntities.Entity entity, DmxBinary.Element entityNode, Vector3 meshOrigin, Vector3 meshAngles, int budget = 3000)
     {
