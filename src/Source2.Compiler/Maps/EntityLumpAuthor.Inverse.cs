@@ -178,7 +178,7 @@ public static partial class EntityLumpAuthor
             isWorld,
             UnbuildConnections(Child(lumpEntity, "m_connections"), fixup),
             HasGeometry: brushModel is not null)
-        { BoneTransforms = boneTransforms };
+        { BoneTransforms = boneTransforms, HasMeshChild = brushModel is not null };
         // A path's nodes are folded into keys after hammerUniqueId (PathKeys): back to its nodes.
         // A cable (@CableClass) ships them too, a cable_dynamic with a model of its own and its tint
         // as rendercolor, "%i %i %i" (CMapCable::vf217): the tint's alpha never ships, so it is the

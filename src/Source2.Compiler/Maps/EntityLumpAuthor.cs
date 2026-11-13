@@ -335,7 +335,11 @@ public static partial class EntityLumpAuthor
         // entity is pointed at it by name. The path is derived, not looked up:
         // Valve's cardtest compile names the model of brush entity 2138
         // "ImpModel" maps/cardtest/entities/impmodel_2138.vmdl.
-        if (entity.HasGeometry && worldName is { Length: > 0 })
+        // CMapEntity vf219 (rc 0923 1810045b0): a solid class always gets its model (the entity ships only with a
+        // child that counts, ReachesTheLump), any other only with a visible mesh child; a cable is its own geometry
+        // (atixref's path_particle_rope_clientside paths have path node children and no model; ledger 272).
+        if (entity.HasGeometry && worldName is { Length: > 0 }
+            && (schema is null || schema.IsSolidClass(entity.ClassName) || schema.IsCableClass(entity.ClassName) || entity.HasMeshChild))
         {
             var model = new KVObject(BrushModelPath(entity, worldName, fixup, schema));
             model.Flag = KVFlag.ResourceName;

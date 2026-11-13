@@ -433,6 +433,24 @@
    "note": "the MergeMeshes call: VisibilityGuidedMeshClustering, three or more clusters (vis, else the box grid 180283520) and mutual visibility (ledger 271)"
   },
   {
+   "addr": "180f73db0",
+   "name": "CMapNodeDataProvider::ModelKind",
+   "module": "s2c:entities/lump",
+   "note": "vf44 (0x160): the node vf219; the export builds a model when it is 1 or 2 (ledger 272)"
+  },
+  {
+   "addr": "1810045b0",
+   "name": "CMapEntity::ModelKind",
+   "module": "s2c:entities/lump",
+   "note": "vf219: solid class 1 (2 with render_as_world_but_physics_as_entity); else 1 only with a visible child whose vf 0x138 is not null (CMapMesh, CMapTileMesh) (ledger 272)"
+  },
+  {
+   "addr": "180234180",
+   "name": "CVisibilityMeshMerger::MergeMeshes",
+   "module": "s2c:entities/lump",
+   "note": "reads debugColorClustering on entry (ledger 271)"
+  },
+  {
    "addr": "18111be50",
    "name": "MapCheck_EmptyEntities",
    "module": "s2c:entities/lump",

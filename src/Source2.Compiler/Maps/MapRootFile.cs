@@ -196,14 +196,17 @@ public static class MapRootFile
         }
 
         // The arguments in read order, then MSVC's std::sort by V_stricmp_fast (ReadOrder).
-        // An Only Entities build reads force_up_to_date_materials only through its entity models (ReadsMeshArguments).
-        var names = new List<string>(compile.EntitiesOnly && !compile.EntityRenderModels ? Always.Skip(1) : Always);
-        if (children.Any(c => c.Contains("/worldnodes/", StringComparison.Ordinal) && c.EndsWith(".vmdl", StringComparison.Ordinal)))
-        {
+        // force_up_to_date_materials is read by a model compile with a render mesh (ModelCompile_ReadMeshArgs):
+        // the world node models this build compiles, or an entity model (ReadsMeshArguments). A -world build of a
+        // map with no node models and only physics entity models reads none (s2c_dec_probe01, ledger 272).
+        var nodeModels = children.Any(c => c.Contains("/worldnodes/", StringComparison.Ordinal) && c.EndsWith(".vmdl", StringComparison.Ordinal));
+        var names = new List<string>(compile.EntityRenderModels || (nodeModels && !compile.EntitiesOnly && compile.Runs("world")) ? Always : Always.Skip(1));
+        if (nodeModels)
             names.AddRange(WorldNodeModels);
-            if (compile.NodeArguments?.Contains("debugColorClustering") ?? true)
-                names.Add("debugColorClustering");
-        }
+        // The merge reads debugColorClustering whether or not it leaves node models (s2c_dec_atixref: read, no
+        // node model; ledger 271/272). Without this build's own node compile, node models stand for it.
+        if (compile.NodeArguments?.Contains("debugColorClustering") ?? nodeModels)
+            names.Add("debugColorClustering");
         if (compile.Runs("phys"))
             names.AddRange(Physics);
         // CWorldRendererBuilder_Build (0923 1802472a0) builds the ray trace environment when vis runs or the

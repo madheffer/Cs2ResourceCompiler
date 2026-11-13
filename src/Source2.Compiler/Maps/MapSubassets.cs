@@ -22,8 +22,21 @@ public static class MapSubassets
     /// (worldspawn aside) adds ("entity", class), then its soundevent-typed keys (FGD type
     /// sound, 0xd) in key-table order, class defaults included, each ("soundevent", value).
     /// </summary>
+    /// <param name="load">Reads a map under the addon's content (MapPrefabs.FromContent): a prefab loaded at
+    /// runtime adds its own map's entities, its worldspawn too, where its point_prefab stands (s2c_rtprefab and
+    /// four more: Valve's table counts s2c_propover.vmap's worldspawn, spawns and props; ledger 272). Null
+    /// leaves them out.</param>
     public static List<(string Type, string Name, int Count)> References(IReadOnlyList<MapEntities.Entity> entities, FgdSchema schema,
-                                                                       DmxBinary.Document document)
+                                                                       DmxBinary.Document document, Func<string, DmxBinary.Document?>? load = null)
+    {
+        var table = new Table();
+        Collect(table, entities, schema, document, load, ownWorld: false);
+        // Each type is a sub-table, entity's first (measured, whatever the first slot holds).
+        return [.. table.Copy().InSlotOrder().OrderBy(r => r.Type, StringComparer.Ordinal)];
+    }
+
+    private static void Collect(Table table, IReadOnlyList<MapEntities.Entity> entities, FgdSchema schema, DmxBinary.Document document,
+                                Func<string, DmxBinary.Document?>? load, bool ownWorld)
     {
         var lump = LumpOrder(entities, document);
         var walk = new List<MapEntities.Entity>(lump.Count);
@@ -41,18 +54,21 @@ public static class MapSubassets
             walk.Add(lump[i]);
             i = j - 1;
         }
-        var table = new Table();
         foreach (var e in walk)
         {
-            if (e.IsWorld || e.Hidden || e.ClassName.EqualsAscii("worldspawn") || !schema.HasClass(e.ClassName))
+            if (e.Runtime is { } runtime && !e.Hidden && load?.Invoke($"maps/{runtime.TargetMapName}.vmap") is { } inner)
+            {
+                MapPrefabs.Attach(inner, load);
+                Collect(table, MapEntities.From(inner), schema, inner, load, ownWorld: true);
+                continue;
+            }
+            if (e.Hidden || !schema.HasClass(e.ClassName) || (!ownWorld && (e.IsWorld || e.ClassName.EqualsAscii("worldspawn"))))
                 continue;
             table.Add("entity", e.ClassName);
             foreach (var (key, value) in EntityLumpAuthor.KeyTable(e, schema))
                 if (value.Length > 0 && schema.KeyOf(e.ClassName, key) is { TypeId: 0xd })
                     table.Add("soundevent", value);
         }
-        // Each type is a sub-table, entity's first (measured, whatever the first slot holds).
-        return [.. table.Copy().InSlotOrder().OrderBy(r => r.Type, StringComparer.Ordinal)];
     }
 
     /// <summary>The main lump's entities (EntityLumpSet.MainLump): instance copies spliced in where their parent's subtree ends, templates dropped.</summary>

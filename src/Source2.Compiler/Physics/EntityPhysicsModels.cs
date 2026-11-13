@@ -153,6 +153,9 @@ public static class EntityPhysicsModels
             var props = entity.Get<DmxBinary.Element>("entity_properties");
             var className = props?.Get<string>("classname") ?? "";
             var targetName = props?.Get<string>("targetname") ?? "";
+            // A class other than a solid one gets a model only with a visible mesh child (CMapEntity vf219, ledger 272).
+            if (meshes.Count == 0 && schema is not null && !schema.IsSolidClass(className))
+                return null;
             // Inside a prefab with fixupEntityNames the name the path is built from
             // is the fixed-up one, "[PR#]<prefab id>_<name>" (MapEntities.Walk).
             var fixup = prefabs.FirstOrDefault(p => p.GetValue<bool>("fixupEntityNames") == true) is { } fixing

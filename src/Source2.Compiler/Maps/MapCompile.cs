@@ -476,8 +476,8 @@ public static class MapCompile
                                                                               !bakes && MapRootFile.ReadsStaticModelRecords(document), args.EntitiesOnly,
                                                                               MapRootFile.ReadsMeshArguments(entityModels, failedModels), Partial: args.Partial)
                                                   { NodeArguments = nodeArguments }, children,
-                                                  MapAssets.References(document, MapSubassets.LumpOrder(walkEntities, document), schema, $"maps/{map}".ToLowerInvariant()),
-                                                  MapSubassets.References(walkEntities, schema, document));
+                                                  MapAssets.References(document, MapSubassets.LumpOrder(walkEntities, document), schema, $"maps/{map}".ToLowerInvariant(), MapPrefabs.FromContent(addonContent)),
+                                                  MapSubassets.References(walkEntities, schema, document, MapPrefabs.FromContent(addonContent)));
             log.WriteLine($"  map root: {rootPath}, {children.Count} children");
         }
         foreach (var note in notes.Take(10))

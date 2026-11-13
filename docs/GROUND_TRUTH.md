@@ -6733,10 +6733,43 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        under three boxes it skips the merge), and the mutual visibility (vf 0x130) is there. Then it merges
        each of its three lists, the read coming first.
      - Measured: both probes (one 64-unit world box) have a world node model but no merge; Valve's .vmap_c
-       lists meshletMaxTriangles / meshletMaxVertices and not debugColorClustering. Ledger 119 had the three
+       lists meshletMaxTriangles / meshletMaxVertices and not debugColorClustering (ledger 272: the merge also runs
+       with no node model left). Ledger 119 had the three
        together "with world node models", from maps large enough to merge.
      - Now: WorldNodeCompile.Result.Clustered (the same three-cluster condition our merge already took),
        WorldNodeFiles.Build's readArguments, MapRootFile.Compile.NodeArguments; a build whose node compile
        did not run here keeps the old reading.
      - Both probes, with Valve's .vwrld stamp pinned (S2C_WORLD_STAMP): every file of the package byte for
        byte Valve's.
+
+272. **The .vmap_c over every probe package: what reads force_up_to_date_materials and debugColorClustering, a
+     runtime prefab's map, snapshot paths** (2026-11-13; 20261103 compiles in game/csgo_addons/s2c_rc_probe; a scan
+     of every package's RED2 against its outputs; MapRootFileTests, MapAssetsTests, MapSubassetsTests):
+     - force_up_to_date_materials: in every package exactly when the build compiles a world node model or an entity
+       model with a render mesh (a brush entity's is embedded: its DATA's m_refLODGroupMasks has an entry), or fails
+       one (ze_doom_p2_c_gameplay's missing materials). 13 -world builds of maps with neither (s2c_dec_probe01 and
+       the other decompiles) lack it; ModelCompile_ReadMeshArgs (1802f9cc0) is its reader (ledger 119). Was: always
+       outside an Only Entities build.
+     - debugColorClustering: whenever the merge runs, node models or not (s2c_dec_atixref and
+       s2c_dec_s2c_prefabprobe9 read it and keep no node model; probe_classes' decompile and both s2c_emptymesh
+       probes have node models and no merge). Without this build's own node compile, node models stand for it.
+     - A prefab loaded at runtime (a visible point_prefab): its map's entities, worldspawn included, join the
+       subasset table where the point_prefab stands, and its map's own references join the RERL (s2c_rtprefab,
+       s2c_rtprefab3/4/6, their decompiles: s2c_propover.vmap's worldspawn, spawns, props, material and models).
+     - The particle snapshot path the compile writes into snapshot_file (EntityLumpSet.WithParticleSnapshot) is
+       in the RERL whether or not the snapshot is built (s2c_snapprobe's node_1 and node_67).
+     - The test now: the inputs as MapCompile lists them (runtime prefabs too), the entity models' render read
+       from the package, a map with neither node models nor world physics as a -world build, our own world node
+       build for whether the merge runs (no vis), and a package whose input .vmap has changed since (its recorded
+       CRC) skipped as stale: s2c_dec_s2c_prefabinst, s2c_dec_s2c_prefabprobe4 and 8, s2c_navmovable,
+       s2c_sanavcover, s2c_zebias1 and two Hammer re-saves.
+     - Result: every non-stale probe package's .vmap_c byte for byte (MapRootEqualsValves passes), RERL externals
+       and subasset tables too.
+     - Which entities get a model (found when ledger 269's rule gave atixref's four path_particle_rope_clientside
+       paths, whose children are path nodes, a model key): the export builds one when the data provider's vf 0x160
+       (180f73db0 -> the node's vf219) is 1 or 2. CMapEntity vf219 (1810045b0, CMapPath and CMapPathNode too): a
+       solid class (type 5) 1, or 2 with render_as_world_but_physics_as_entity; any other class 1 only with a
+       visible child whose vf 0x138 is not null, which only CMapMesh and CMapTileMesh give (1800ddd70; every other
+       node 1800cc720, null). CMapCable has its own (18114d2b0). Ported as MapEntities.Entity.HasMeshChild:
+       EntityLumpAuthor writes model for a solid class that ships, a cable, or a class with a mesh child, and
+       EntityPhysicsModels builds none for a class other than a solid one without a mesh.

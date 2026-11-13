@@ -10,9 +10,20 @@ namespace Source2.Compiler.Maps;
 /// </summary>
 public static class MapAssets
 {
-    public static SortedSet<string> References(DmxBinary.Document document, IReadOnlyList<MapEntities.Entity> walk, FgdSchema schema, string mapPath)
+    /// <param name="load">Reads a map under the addon's content (MapPrefabs.FromContent): a visible prefab loaded at
+    /// runtime adds its map's own references (s2c_dec_s2c_rtprefab4: s2c_propover.vmap's material and five
+    /// prop models; ledger 272). Null leaves them out.</param>
+    public static SortedSet<string> References(DmxBinary.Document document, IReadOnlyList<MapEntities.Entity> walk, FgdSchema schema, string mapPath,
+                                               Func<string, DmxBinary.Document?>? load = null)
     {
         var found = new SortedSet<string>(StringComparer.Ordinal);
+        Collect(found, document, walk, schema, mapPath, load);
+        return found;
+    }
+
+    private static void Collect(SortedSet<string> found, DmxBinary.Document document, IReadOnlyList<MapEntities.Entity> walk, FgdSchema schema,
+                                string mapPath, Func<string, DmxBinary.Document?>? load)
+    {
         void Add(string value, string extension)
         {
             var v = value.Trim().Replace('\\', '/');
@@ -45,11 +56,23 @@ public static class MapAssets
             else if (e.Type == "CMapPrefab" && e.GetValue<bool>("loadAtRuntime") == true && e.Get<string>("targetMapPath") is { Length: > 0 } runtime)
                 Add(runtime, "");
         }
+        // The particle snapshot path the compile writes into snapshot_file before the collector reads the keys
+        // (EntityLumpSet.WithParticleSnapshot), whether or not the snapshot is built (s2c_snapprobe: node_1 and
+        // node_67, no .vsnap of their own; ledger 272).
+        var nodeIds = EntityLumpSet.MapNodeIds(document);
         foreach (var entity in walk)
         {
-            // A runtime prefab's point_prefab carries no keys of its own; its map is added with the node above.
+            // A runtime prefab's point_prefab carries no keys of its own; its map is added with the node above,
+            // and that map's own references with it.
+            if (entity.Runtime is { } runtime && !entity.Hidden && load?.Invoke($"maps/{runtime.TargetMapName}.vmap") is { } inner)
+            {
+                MapPrefabs.Attach(inner, load);
+                Collect(found, inner, MapSubassets.LumpOrder(MapEntities.From(inner), inner), schema, mapPath, load);
+            }
             if (entity.Hidden || entity.Runtime is not null)
                 continue;
+            if (!entity.Instanced && entity.Prefabs.Length == 0 && EntityLumpSet.SnapshotNode(entity, nodeIds) is { } snapshot)
+                Add($"{mapPath}/particle_snapshots/node_{snapshot.ToString(System.Globalization.CultureInfo.InvariantCulture)}.vsnap", "");
             foreach (var (key, value) in EntityLumpAuthor.KeyTable(entity, schema))
             {
                 if (schema.KeyOf(entity.ClassName, key) is not { } k || value.Length == 0)
@@ -73,7 +96,6 @@ public static class MapAssets
                 Add(string.IsNullOrEmpty(given) ? $"_bakeresourcecache/{mapPath}_baked/{r.Prefix}_{entity.IdPath.Replace(':', '_')}" : given, r.Extension);
             }
         }
-        return found;
     }
 
     // The document's elements, then each loaded prefab's (MapPrefabs.Attach), depth first.

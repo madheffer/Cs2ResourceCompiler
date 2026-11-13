@@ -68,6 +68,10 @@ public static class MapEntities
         /// </summary>
         public string? BoneTransforms { get; init; }
 
+        /// <summary>A visible mesh child (CMapMesh or CMapTileMesh, the node types whose vf 0x138 is not null):
+        /// what gives a class other than a solid one its model (CMapEntity vf219, rc 0923 1810045b0; ledger 272).</summary>
+        public bool HasMeshChild { get; init; }
+
         /// <summary>The CMapWorld's mapUsageType string (worldspawn only; null when the node has none),
         /// which the export writes through <see cref="EntityLumpAuthor.MapUsageTypeName"/>.</summary>
         public string? MapUsageType { get; init; }
@@ -419,7 +423,11 @@ public static class MapEntities
                     throw new NotSupportedException($"node {id}: an editorOnly node with children is not measured");
                 entity = entity with { Layer = layer, Hidden = within.Enclosed || prefab.Hidden.Contains(id) || editorOnly, Prefabs = prefab.Ids, NamePrefix = prefab.NamePrefix, PrefabMap = prefab.Map };
                 if (entity.HasGeometry && child.Type is not "CMapCable")
-                    entity = entity with { HasGeometry = child.GetElements("children").Any(c => CountsAsGeometry(c, prefab.Hidden)) };
+                    entity = entity with
+                    {
+                        HasGeometry = child.GetElements("children").Any(c => CountsAsGeometry(c, prefab.Hidden)),
+                        HasMeshChild = child.GetElements("children").Any(c => c.Type is "CMapMesh" or "CMapTileMesh" && CountsAsGeometry(c, prefab.Hidden)),
+                    };
                 // A node of a prefab's map is placed as the prefab moves it.
                 if (prefab.Chain.Length > 0)
                 {
@@ -607,6 +615,7 @@ public static class MapEntities
             Tint: element.Type is "CMapCable" ? element.Get<byte[]>("tintColor") ?? [255, 255, 255, 255] : null)
         {
             NavLink = element.Type is "CMapNavLink" ? NavLinkFields.Read(element) : null,
+            HasMeshChild = !isWorld && element.GetElements("children").Any(c => c.Type is "CMapMesh" or "CMapTileMesh" && CountsAsGeometry(c, null)),
         };
     }
 
