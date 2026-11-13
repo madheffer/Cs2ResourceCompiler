@@ -6799,3 +6799,13 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        are not reachable from an unturned mesh at the entity's origin, nor from one turned with the entity or at
        the world's origin (all three tried through the forward's moves). Open: search the prefab's placement
        (the common yaw of its entities, a translation) against hull exactness.
+     - Measured further (11-13): the source prefab is origin (1024 512 64), yaw 90, and the source mesh's
+       world pose is (6320.0586, -1728, 148) turned 90, its pivot the mesh's middle. The decompile can put a
+       mesh at exactly that pose (an identity prefab, the mesh turned with the entity, pivoted at the hull
+       box's centre on a 1/1024 grid), so the placement is not the gap either. The source mesh is not quite
+       planar (corner y 15.542969 and 15.538086 on one face), and the hull build recomputes its vertices:
+       Valve's top vertices have z 4.000001 and 3.9999998, finer than a float at the world's z of 152 holds,
+       while the corners place at 4. No corner set reached them in 24 rounds of moving each corner by its
+       vertex's miss through the forward's hull build. Open: the hull builder's plane step inverted, to
+       rebuild a non-planar mesh from a hull it reshaped. Tried and taken out again: that pivot and the
+       iteration.

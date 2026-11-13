@@ -128,8 +128,9 @@ Brush entities:
    texture axes. Triangle-mesh physics shapes (0%).
 8. The 4 hulls left: one corner and one vertex order on ze_doom, two in s2c_prefabprobe2's prefab
    (11-13, ledger 273: the source turns prefab 108 by 90 and moves it, the decompile's placement is the
-   identity, which lands every entity too; only these two hulls' rounding needs the true placement: search
-   it against hull exactness). The order (teleportlab_4) is not a budget issue:
+   identity, which lands every entity too. The pose itself can be matched; what is left is that the source
+   mesh is not planar and the hull build recomputes its vertices below a world float, so the corners that
+   give them need the hull builder's plane step inverted). The order (teleportlab_4) is not a budget issue:
    200000 seeded tries (`DECOMPILE_HULL_BUDGET=200000`, 13.5 min) do not find it either, so it needs
    an order built from the shipped hull (its first tetrahedron, then points in add order) rather than
    a shuffle.
