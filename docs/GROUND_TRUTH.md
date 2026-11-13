@@ -6809,3 +6809,17 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        vertex's miss through the forward's hull build. Open: the hull builder's plane step inverted, to
        rebuild a non-planar mesh from a hull it reshaped. Tried and taken out again: that pivot and the
        iteration.
+
+274. **ze_doom's teleportrandom2_458: a vertex only the hull builder can make, from corners the hull dropped**
+     (2026-11-13; our forward, Valve's to the bit on the source, run on the source's and the decompile's inputs):
+     - The source mesh has 20 corners; the hull keeps 16. Two near-collinear corners at (-256, 127.98535, +-64),
+       beside (-256, 128, +-64), are dropped, and the corner at y -127.989746 ships as -127.98975.
+     - Measured: the hull builder (RnHullBuilder.BuildHull, ShapePoints, Create) on the source's 18 input points
+       gives Valve's 16 bit for bit; on the same points without the two at 127.98535 it keeps -127.989746. So
+       those dropped corners are what moves that vertex. Valve's 16 vertices fed straight to the builder also give
+       themselves, but through a mesh at the entity's origin -127.98975 is not reachable: the entity's inverse
+       is an exact subtraction near y 6488 (a float spacing of 1/2048), and -127.98975 is not on that grid.
+     - So no corner or pivot places it, and the decompile would have to add corners the shipped hull no longer
+       holds. Open, with s2c_prefabprobe2's two (ledger 273): a mesh rebuilt with points the builder drops,
+       chosen so its recompute lands the shipped vertex. Tried and taken out: corners stepped by the miss of the
+       forward's own hull build (no corner set reaches it). The BrushPhysics test tolerates this model.
