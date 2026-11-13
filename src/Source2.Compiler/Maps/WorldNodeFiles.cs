@@ -33,7 +33,7 @@ public static class WorldNodeFiles
                                      FgdSchema schema, string game, EnvVolumes.Set volumes, uint timestamp, List<string> notes,
                                      bool vis = true, ulong? fingerprint = null, WorldTrees.BakedLighting? baked = null,
                                      (byte[] Vvis, List<(Vector3 Min, Vector3 Max)>[] Flat)? visibility = null,
-                                     IReadOnlyDictionary<string, object>? arguments = null)
+                                     IReadOnlyDictionary<string, object>? arguments = null, ICollection<string>? readArguments = null)
     {
         map = Io.Tier0Strings.LowerAscii(map);
         var outputs = new List<Output>();
@@ -86,6 +86,8 @@ public static class WorldNodeFiles
             }
         var result = WorldNodeCompile.Compile(lists, flat, mutual, nodeBounds: built.Count > 0 ? (nodeMin, nodeMax) : null, layer: WorldNodeBuild.LayerEntries(built, overlays, descriptors, content, shaders));
         notes.AddRange(result.Unported.Select(u => "world node list not ported: " + u));
+        if (result.Clustered)
+            readArguments?.Add("debugColorClustering");
 
         // The models.
         var facts = new Dictionary<string, WorldNodeModels.MaterialFacts>(StringComparer.OrdinalIgnoreCase);

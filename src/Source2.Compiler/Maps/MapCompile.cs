@@ -230,6 +230,8 @@ public static class MapCompile
                              HashSet<string> steps, string package, DmxBinary.Document document, FgdSchema schema, bool startsEmpty,
                              IReadOnlyList<string> steamAudioCleanups, bool bakes = false, bool skipUnported = false, Action<string, GameContent, TextWriter>? ownBake = null)
     {
+        // What this build's world node compile read (MapRootFile.Compile.NodeArguments); null when no node compile ran here.
+        HashSet<string>? nodeArguments = null;
         // Where the bake's outputs are read from: vrad3's folder, or the job our own bake ran in.
         var lightingFolder = args.Vrad3Output;
         // Entity models that failed to compile: no file, but the map root lists them.
@@ -308,9 +310,10 @@ public static class MapCompile
                 ? (uint.Parse(stampText, System.Globalization.CultureInfo.InvariantCulture), (ulong?)ulong.Parse(printText, System.Globalization.CultureInfo.InvariantCulture))
                 : ((uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds(), null);
             var baked = bakes && lightingFolder is { } bakedFolder && lighting is not null ? BakedWorldLighting(bakedFolder, map, args, lighting) : null;
+            nodeArguments = [];
             var node = WorldNodeFiles.Build(document, addon, map, assets, shaders, schema, game, lighting?.Volumes ?? EnvVolumes.Set.Empty,
                                             stamp, notes, vis: steps.Contains("vis"), fingerprint: fingerprint, baked: baked, visibility: visibility,
-                                            arguments: args.Arguments);
+                                            arguments: args.Arguments, readArguments: nodeArguments);
             foreach (var f in node)
                 entries[f.Path] = f.Bytes;
             log.WriteLine($"  world: {lumps.Count} lumps, {models.Count} entity models, {node.Count} node files"
@@ -471,7 +474,8 @@ public static class MapCompile
             entries[rootPath] = MapRootFile.Write(new MapRootFile.Compile(addon, inputs, bakedRoot, probeVolumes, args.Arguments,
                                                                               bakes ? [.. steps, "bakedlighting"] : steps,
                                                                               !bakes && MapRootFile.ReadsStaticModelRecords(document), args.EntitiesOnly,
-                                                                              MapRootFile.ReadsMeshArguments(entityModels, failedModels), Partial: args.Partial), children,
+                                                                              MapRootFile.ReadsMeshArguments(entityModels, failedModels), Partial: args.Partial)
+                                                  { NodeArguments = nodeArguments }, children,
                                                   MapAssets.References(document, MapSubassets.LumpOrder(walkEntities, document), schema, $"maps/{map}".ToLowerInvariant()),
                                                   MapSubassets.References(walkEntities, schema, document));
             log.WriteLine($"  map root: {rootPath}, {children.Count} children");

@@ -77,6 +77,10 @@ internal static class WorldNodeCompile
     {
         /// <summary>Lists whose compile is not ported, with the entries they held.</summary>
         public List<string> Unported { get; init; } = [];
+
+        /// <summary>The merge ran (three or more clusters, the vis builder's or the node's box grid):
+        /// CVisibilityMeshMerger::MergeMeshes reads debugColorClustering on entry (ledger 271).</summary>
+        public bool Clustered { get; init; }
     }
 
     /// <summary>Settings CompileNode reads: csgo_core's values by default.</summary>
@@ -156,7 +160,8 @@ internal static class WorldNodeCompile
             visFlat = [.. RenderClusters.Grid(grid.Min, grid.Max, settings.ClusterSize).Select(b => new List<(Vector3 Min, Vector3 Max)> { b })];
             mutual = [];
         }
-        if (settings.VisibilityGuidedMeshClustering && visFlat is { Count: >= 3 } && mutual != null)
+        var clustered = settings.VisibilityGuidedMeshClustering && visFlat is { Count: >= 3 } && mutual != null;
+        if (clustered)
         {
             foreach (var list in lists.Where(l => MeshLists.Merged.Contains(l.Kind)))
             {
@@ -231,7 +236,7 @@ internal static class WorldNodeCompile
                 }
             }
         }
-        return new Result(objects, aggregates, boxes) { Unported = counters.Unported };
+        return new Result(objects, aggregates, boxes) { Unported = counters.Unported, Clustered = clustered };
     }
 
     // CVisibilityMeshMerger::MergeMeshes with csgo_core's minimums; each output

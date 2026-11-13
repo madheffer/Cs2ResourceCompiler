@@ -427,6 +427,12 @@
    "note": "the only access to +0x2ba8 besides the constructor; the compile never reads it (ledger 270)"
   },
   {
+   "addr": "180278812",
+   "name": "Step_BuildingVertexOverrideStreams_Merge",
+   "module": "s2c:entities/lump",
+   "note": "the MergeMeshes call: VisibilityGuidedMeshClustering, three or more clusters (vis, else the box grid 180283520) and mutual visibility (ledger 271)"
+  },
+  {
    "addr": "18111be50",
    "name": "MapCheck_EmptyEntities",
    "module": "s2c:entities/lump",

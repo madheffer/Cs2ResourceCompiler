@@ -6723,3 +6723,20 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Was: MapEntities.FixupEntityNames read the world's flag, so a map saved with it off compiled without
        the prefix. Now: it is always true; a prefab's own fixupEntityNames ("[PR#]<id>_") is unchanged.
      - Both probe maps: default_ents.vents_c byte for byte Valve's, every entity model too.
+
+271. **debugColorClustering is read only when a world node's meshes are merged** (2026-11-13; resourcecompiler
+     20260923 decompile through ReVa; 20261103 compiles of s2c_emptymesh and s2c_emptymesh2):
+     - CVisibilityMeshMerger::MergeMeshes (180234180) reads debugColorClustering on entry. Its one caller,
+       Step_BuildingVertexOverrideStreams (180277ade, the call at 180278812), runs it only when
+       VisibilityGuidedMeshClustering is set and there are three or more clusters: the vis builder's
+       (param_3 vf 0x120) or, with fewer, the node's box grid (CWorldRendererBuilderNode_BoxGrid 180283520;
+       under three boxes it skips the merge), and the mutual visibility (vf 0x130) is there. Then it merges
+       each of its three lists, the read coming first.
+     - Measured: both probes (one 64-unit world box) have a world node model but no merge; Valve's .vmap_c
+       lists meshletMaxTriangles / meshletMaxVertices and not debugColorClustering. Ledger 119 had the three
+       together "with world node models", from maps large enough to merge.
+     - Now: WorldNodeCompile.Result.Clustered (the same three-cluster condition our merge already took),
+       WorldNodeFiles.Build's readArguments, MapRootFile.Compile.NodeArguments; a build whose node compile
+       did not run here keeps the old reading.
+     - Both probes, with Valve's .vwrld stamp pinned (S2C_WORLD_STAMP): every file of the package byte for
+       byte Valve's.

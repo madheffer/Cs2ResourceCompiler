@@ -115,6 +115,7 @@ RESOURCECOMPILER = [
     ('180fefb60', 'EntityLump_FixupValue', LUMP, "not empty, not '!' '*' '?' '@' first, not an FGD class name (ledger 270)"),
     ('180f787b0', 'CMapNode::FixupNames', LUMP, 'vf157: every child that IsA CMapNode (ledger 270)'),
     ('180fcbe00', 'CMapWorld_SetFixupEntityNames', LUMP, 'the only access to +0x2ba8 besides the constructor; the compile never reads it (ledger 270)'),
+    ('180278812', 'Step_BuildingVertexOverrideStreams_Merge', LUMP, 'the MergeMeshes call: VisibilityGuidedMeshClustering, three or more clusters (vis, else the box grid 180283520) and mutual visibility (ledger 271)'),
     ('18111be50', 'MapCheck_EmptyEntities', LUMP, 'Hammer map check: a CMapEntity of class type 5 or 10 (or should_have_children) with no children; not run by the compile (ledger 269)'),
     ('180fb15e0', 'NavGen_CollectLadders', NAV, "CNavGenInput +0x60 (ledger 107): meshes under the root (180fb2830) with a mapbuilder.ladder material (int attribute 0x1a382654, material vfn 0x50) through 180fb21f0, func_ladder entities' meshes last; FUN_1818ca470 adds each (top, bottom, normal, width)"),
     ('180fb1380', 'NavGen_CollectFuncLadders', NAV, "'func_ladder' entities of the flat node array (+0x1828/+0x1830, flag 1: byte +0x370 set), then of each sub-map (180fc8c80) with flag 4"),

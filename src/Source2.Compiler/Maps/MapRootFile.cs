@@ -34,6 +34,11 @@ public static class MapRootFile
                                  bool FlattenProps = false, bool EntitiesOnly = false, bool EntityRenderModels = false, bool Partial = false)
     {
         public bool Runs(string step) => Steps is null ? step is "world" or "phys" or "vis" or "bakedlighting" : Steps.Contains(step);
+
+        /// <summary>The arguments the world node compile read beyond the meshlet pair (WorldNodeFiles.Build's
+        /// readArguments: debugColorClustering when a node's meshes were merged, ledger 271); null reads the
+        /// merge as run wherever there are world node models.</summary>
+        public IReadOnlyCollection<string>? NodeArguments { get; init; }
     }
 
     /// <summary>
@@ -119,7 +124,7 @@ public static class MapRootFile
     // flattenPropsWithBakedLighting 180245770 when the compile does not bake (vfunc 0x108), and bakelighting
     // when it does not. Measured on 56 Valve compiles (world only, world+phys+vis+nav, full; ledger 119).
     private static readonly string[] Always = ["force_up_to_date_materials", "skipauxfiles", "skipmapload"];
-    private static readonly string[] WorldNodeModels = ["debugColorClustering", "meshletMaxTriangles", "meshletMaxVertices"];
+    private static readonly string[] WorldNodeModels = ["meshletMaxTriangles", "meshletMaxVertices"];
     private static readonly string[] Physics = ["keep_vertices", "mapbuilder_entity_classname"];
 
     private static readonly string[] Lighting =
@@ -194,7 +199,11 @@ public static class MapRootFile
         // An Only Entities build reads force_up_to_date_materials only through its entity models (ReadsMeshArguments).
         var names = new List<string>(compile.EntitiesOnly && !compile.EntityRenderModels ? Always.Skip(1) : Always);
         if (children.Any(c => c.Contains("/worldnodes/", StringComparison.Ordinal) && c.EndsWith(".vmdl", StringComparison.Ordinal)))
+        {
             names.AddRange(WorldNodeModels);
+            if (compile.NodeArguments?.Contains("debugColorClustering") ?? true)
+                names.Add("debugColorClustering");
+        }
         if (compile.Runs("phys"))
             names.AddRange(Physics);
         // CWorldRendererBuilder_Build (0923 1802472a0) builds the ray trace environment when vis runs or the
