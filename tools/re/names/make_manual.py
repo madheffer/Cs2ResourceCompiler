@@ -2675,7 +2675,10 @@ TIER0 = [
     ("1800d7940", "KV3Text_WriteValue", "s2c:containers", "binary blob (case 6): member over 32 bytes opens line break, #[ at column 1, rows of 32 upper-case pairs, depth + 1 tabs on every row but the first, close line break, depth tabs, ]"),
     ("180050840", "CBlockCompress::FastCompress", "s2c:entities/lump", "export; LZSS: u32 size (bit 31 stored), u16 flags per 16 tokens, literal or u16 ((distance-1)<<4 | length-3), 3..18 bytes, 4096 back; 2048-slot hash of 3 bytes, last position wins; stored once the write reaches size-4 (Compression/BlockCompress.cs)"),
     ("180050ae0", "CBlockCompress::FastDecompress", "s2c:entities/lump", "export; the decoder of 180050840"),
-    ("1802bdd90", "crt_exp2f", "s2c:baked/bomb", "x split to n + f in [-0.5, 0.5], Cody-Waite expf of f ln2 (1802bdb54) scaled by 2^n"),
+    ("1802bdd90", "crt_exp2f", "s2c:baked/bomb", "_fdtest first (0 -> 1, +Inf/NaN as is, -Inf -> 0); |x| under 2^31 split to n + f in [-0.5, 0.5]; Cody-Waite expf of f ln2 (1802bdb54) scaled by 2^n (ledger 267)"),
+    ("1802bdb54", "crt_expf_scaled", "s2c:baked/bomb", "(&y, scale, n): y under -229 -> scale 0, over 229 -> scale Inf; y 0 -> _fdscale(scale, n); rational, then _fdscale(r scale, k + n) (ledger 267)"),
+    ("1802d2900", "crt_fdscale", "s2c:baked/bomb", "float times 2^e on 16-bit halves: Inf past 254, denormal shift with a rounding word, nearest even; Simulation/CrtMath.FdScale (ledger 267)"),
+    ("1802cf224", "crt_fdtest", "s2c:baked/bomb", "float class: 2 NaN, 1 Inf, 0 zero, -1 normal, -2 denormal (ledger 267)"),
     ("1802df0a4", "crt_acosf", "s2c:baked/bomb", "AMD libm float acosf; V_acosf (180007e80) clamps to [-1, 1] first"),
     # Containers: resource names, KV3, RED2, manifests.
     ("1800c7220", "Kv3_SaveBinary", CT, "binary_auto: LZ4 below 0x80001 bytes, else Zstd; raw below 0x100"),
@@ -3630,6 +3633,13 @@ RESOURCECOMPILER_1029 = [
 ]
 
 # resourcecompiler.dll as installed since the 11-03 update, 1.41.9.5 (tools/re/binaries/resourcecompiler_20261103.dll).
+TIER0_1103 = [
+    ("180007fb0", "V_exp2f", IO, "export; the CRT's exp2f 1802bded0 (ledger 267)"),
+    ("1802bded0", "crt_exp2f", IO, "same code as 0923's 1802bdd90 (rip targets resolved); Simulation/CrtMath.Exp2 (ledger 267)"),
+    ("1802bdc94", "crt_expf_scaled", IO, "same code as 0923's 1802bdb54 (ledger 267)"),
+    ("1802d2a40", "crt_fdscale", IO, "same code as 0923's 1802d2900; Simulation/CrtMath.FdScale (ledger 267)"),
+]
+
 RESOURCECOMPILER_1103 = [
     # Read from the disassembly (resourcecompiler 20261103; the Ghidra project's build has the code elsewhere): ledger 201.
     ("1802ed210", "CResourceCompilerMesh_WriteVertexBuffer", WN, "count +4, stride +8, layout +0x18; unless the mesh's vf 0x28, gameinfo ResourceCompiler/MeshCompiler/EncodeVertexBuffer (default 0) with vertices: meshopt_encodeVertexVersion(EncodeVertexBufferVersion, default 0), the bound, encodeVertexBufferLevel at EncodeVertexBufferLevel (default 3), version -1; the encoding is kept (+0xc m_bMeshoptCompressed 1) only when smaller than count x stride, then with its byte argument Zstd'd and kept (+0xf 1) when that is smaller; else the raw buffer; an MVTX block, its index at +0"),
@@ -3757,6 +3767,7 @@ if __name__ == "__main__":
     write("navsystem_20261015.manual.json", NAVSYSTEM)
     write("resourcecompiler_20261006.manual.json", RESOURCECOMPILER_1006)
     write("tier0_20261015.manual.json", TIER0_1015)
+    write("tier0_20261103.manual.json", TIER0_1103)
     write("scenesystem_20261015.manual.json", SCENESYSTEM + SCENESYSTEM_CASCADES)
     write("scenesystem_20261023.manual.json", SCENESYSTEM_1023)
     write("materialsystem2_20261015.manual.json", MATERIALSYSTEM_1015)

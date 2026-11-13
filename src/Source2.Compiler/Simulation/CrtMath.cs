@@ -141,28 +141,45 @@ public static class CrtMath
     /// k 0.00027608682, and for |g| at least 2^-25 the rational
     /// ((g P + Q) + 1) / ((Q - g P) + 1) with g P = (0.0083208261 g^2 + 0.5) g
     /// and Q = 0.099974856 g^2; scaled by 2^(k + n). Every step is a float.
-    /// Overflow, underflow and |x| of 2^31 or more are not read, and throw.
+    /// The edges (_fdtest 1802cf224 first, the same code in tier0 20261103 at 1802bded0): a zero
+    /// gives 1, +Inf and NaN come back as they are, -Inf gives +0; |x| of 2^31 or more skips the
+    /// split (n 0, f x); y under -229 gives +0, over 229 +Inf; the 2^(k + n) step is _fdscale
+    /// (1802d2900, <see cref="FdScale"/>): Inf past the top, a denormal rounded to nearest even
+    /// below it. errno is not modelled.
     /// </summary>
     public static float Exp2(float x)
     {
-        if (x == 0f)
+        var bits = BitConverter.SingleToUInt32Bits(x);
+        if ((bits & 0x7fffffff) == 0)
             return 1f;
-        if (!float.IsFinite(x) || x <= -2147483648f || 2147483648f <= x)
-            throw new NotSupportedException("exp2f of a non-finite or huge argument is not ported");
-        var whole = MathF.Truncate(x);
-        var n = (int)whole;
-        var f = x - whole;
-        if (f > 0.5f)
+        if ((bits & 0x7f800000) == 0x7f800000)
+            return (bits & 0x7fffff) == 0 && (int)bits < 0 ? 0f : x;
+        var n = 0;
+        var f = x;
+        if (!(-2147483648f >= x) && !(x >= 2147483648f))
         {
-            f -= 1f;
-            n++;
-        }
-        else if (-0.5f > f)
-        {
-            f += 1f;
-            n--;
+            var whole = MathF.Truncate(x);
+            n = (int)whole;
+            f = x - whole;
+            if (f > 0.5f)
+            {
+                f -= 1f;
+                n++;
+            }
+            else if (-0.5f > f)
+            {
+                f += 1f;
+                n--;
+            }
         }
         var y = f * 0.6931472f;
+        // The float exp (1802bdb54) with scale 1: y 0 (an integer x) is 1 scaled by 2^n.
+        if (y == 0f)
+            return FdScale(1f, n);
+        if (-229f > y)
+            return 0f;
+        if (y > 229f)
+            return float.PositiveInfinity;
         var t = y * 1.442695f;
         var k = (int)((0f > t ? -0.5f : 0.5f) + t);
         var kf = (float)k;
@@ -178,10 +195,58 @@ public static class CrtMath
             var q = z * 0.099974856f;
             r = (gp + q + 1f) / (q - gp + 1f);
         }
-        var e = k + n;
-        if (e is < -126 or > 127)
-            throw new NotSupportedException("exp2f overflow and underflow are not ported");
-        return r * BitConverter.Int32BitsToSingle((e + 127) << 23);
+        return FdScale(r, k + n);
+    }
+
+    /// <summary>
+    /// _fdscale (tier0 1802d2900; 1802d2a40 in 20261103): v times 2^e on the float's 16-bit halves.
+    /// A biased exponent c plus e past 254 is Inf of v's sign; above 0 it is written in place;
+    /// otherwise the mantissa with its hidden bit is shifted right by 1 - (c + e) (a signed zero past
+    /// 24), the shifted-out bits kept as a rounding word, and rounded to nearest, ties to even.
+    /// Only a normal v is read (Exp2 passes one in [0.7, 1.42]); a zero or denormal v (1802dc380)
+    /// and Inf or NaN throw.
+    /// </summary>
+    public static float FdScale(float v, int e)
+    {
+        var bits = BitConverter.SingleToUInt32Bits(v);
+        var hi = (int)(bits >> 16);
+        var lo = (int)(bits & 0xffff);
+        var c = (hi >> 7) & 0xff;
+        if (c is 0 or 0xff)
+            throw new NotSupportedException("_fdscale of a zero, denormal, Inf or NaN is not ported");
+        if (e > 0 && 0xff - c <= e)
+            return hi >= 0x8000 ? float.NegativeInfinity : float.PositiveInfinity;
+        if (-c < e)
+            return BitConverter.UInt32BitsToSingle((uint)(((((c + e) * 0x80) | (hi & 0x807f)) & 0xffff) << 16 | lo));
+        var sign = hi & 0x8000;
+        var mantissa = (hi & 0x7f) | 0x80;
+        var shift = e - 1 + c;
+        if (shift < -24)
+            return BitConverter.UInt32BitsToSingle((uint)sign << 16);
+        var round = 0;
+        if (shift <= -16)
+        {
+            round = lo;
+            shift += 16;
+            lo = mantissa;
+            mantissa = 0;
+        }
+        var s = -shift;
+        if (s != 0)
+        {
+            var outBits = (lo << (16 - s)) & 0xffff;
+            round = outBits | (round != 0 ? 1 : 0);
+            lo = ((mantissa << (16 - s)) & 0xffff) | (lo >> s);
+            mantissa >>= s;
+        }
+        hi = mantissa | sign;
+        if (round > 0x8000 || (round == 0x8000 && (lo & 1) != 0))
+        {
+            lo = (lo + 1) & 0xffff;
+            if (lo == 0)
+                hi++;
+        }
+        return BitConverter.UInt32BitsToSingle((uint)hi << 16 | (uint)lo);
     }
 
     /// <summary>

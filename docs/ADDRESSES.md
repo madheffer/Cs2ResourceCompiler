@@ -2775,14 +2775,17 @@ names (asserts, RTTI, log strings; tens of thousands per DLL) are in
 - file: `tier0.dll`, 3,979,416 bytes, PE time 2026-11-11 17:20 UTC
 - SHA-256 `0bcd160dfa72d9f97fbf85095d59baad18fca61f20d840e83a5bd9f7635d5c32`
 - installed: this build
-- 58 addresses
+- 61 addresses
 
 ### s2c:baked/bomb
 
 | address | name | what | cited in |
 |---|---|---|---|
-| `1802bdd90` | `crt_exp2f` | x split to n + f in [-0.5, 0.5], Cody-Waite expf of f ln2 (1802bdb54) scaled by 2^n | `src/Source2.Compiler/Simulation/CrtMath.cs:137` |
-| `1802df0a4` | `crt_acosf` | AMD libm float acosf; V_acosf (180007e80) clamps to [-1, 1] first | `src/Source2.Compiler/Simulation/ContinuousSolve.cs:671`, `src/Source2.Compiler/Simulation/CrtMath.cs:237` |
+| `1802bdb54` | `crt_expf_scaled` | (&y, scale, n): y under -229 -> scale 0, over 229 -> scale Inf; y 0 -> _fdscale(scale, n); rational, then _fdscale(r scale, k + n) (ledger 267) | `src/Source2.Compiler/Simulation/CrtMath.cs:140`, `src/Source2.Compiler/Simulation/CrtMath.cs:176` |
+| `1802bdd90` | `crt_exp2f` | _fdtest first (0 -> 1, +Inf/NaN as is, -Inf -> 0); \|x\| under 2^31 split to n + f in [-0.5, 0.5]; Cody-Waite expf of f ln2 (1802bdb54) scaled by 2^n (ledger 267) | `src/Source2.Compiler/Simulation/CrtMath.cs:137` |
+| `1802cf224` | `crt_fdtest` | float class: 2 NaN, 1 Inf, 0 zero, -1 normal, -2 denormal (ledger 267) | `src/Source2.Compiler/Simulation/CrtMath.cs:144` |
+| `1802d2900` | `crt_fdscale` | float times 2^e on 16-bit halves: Inf past 254, denormal shift with a rounding word, nearest even; Simulation/CrtMath.FdScale (ledger 267) | `src/Source2.Compiler/Simulation/CrtMath.cs:147`, `src/Source2.Compiler/Simulation/CrtMath.cs:202` |
+| `1802df0a4` | `crt_acosf` | AMD libm float acosf; V_acosf (180007e80) clamps to [-1, 1] first | `src/Source2.Compiler/Simulation/ContinuousSolve.cs:671`, `src/Source2.Compiler/Simulation/CrtMath.cs:302` |
 
 ### s2c:containers
 
@@ -2842,7 +2845,7 @@ names (asserts, RTTI, log strings; tens of thousands per DLL) are in
 | `18017fc30` | `CVertexKDTree_Bounds` |  | `src/Source2.Compiler/Maps/VertexKdTree.cs:55` |
 | `18017feb0` | `CVertexKDTree::BuildNode` | export; leaf at 8 or fewer, midpoint of the longest side, node numbered before its children | `src/Source2.Compiler/Maps/VertexKdTree.cs:27` |
 | `180180730` | `CVertexKDTree::BuildMidpoint` | export; point pointers in index order, then BuildNode(0, n) | `src/Source2.Compiler/Maps/VertexKdTree.cs:6` |
-| `1802df0a4` | `acosf` | CRT, rational approximation | `src/Source2.Compiler/Simulation/ContinuousSolve.cs:671`, `src/Source2.Compiler/Simulation/CrtMath.cs:237` |
+| `1802df0a4` | `acosf` | CRT, rational approximation | `src/Source2.Compiler/Simulation/ContinuousSolve.cs:671`, `src/Source2.Compiler/Simulation/CrtMath.cs:302` |
 | `1802e0c30` | `cosf` | CRT dispatcher (AMD libm) |  |
 | `1802e0f10` | `cosf_fma3` | code label: the FMA3 path, entered by a jcc from cosf | `src/Source2.Compiler/Simulation/CrtMath.cs:11`, `src/Source2.Compiler/Simulation/CrtMath.cs:36` |
 | `1802e1d80` | `expf` | CRT dispatcher |  |
@@ -2853,7 +2856,7 @@ names (asserts, RTTI, log strings; tens of thousands per DLL) are in
 | `1802e67d0` | `sinf_fma3` | code label: the FMA3 path, entered by a jcc from sinf | `src/Source2.Compiler/Simulation/CrtMath.cs:11`, `src/Source2.Compiler/Simulation/CrtMath.cs:59` |
 | `1802e7d50` | `tanf` | CRT dispatcher |  |
 | `1802e80c0` | `tanf_fma3` | code label: the FMA3 path, entered by a jcc from tanf | `src/Source2.Compiler/Maps/LightCrt.cs:23` |
-| `18033e3e0` | `Crt_TwoToJOver64` | data: 2^(j/64), j = 0..63 | `src/Source2.Compiler/Simulation/CrtMath.cs:343` |
+| `18033e3e0` | `Crt_TwoToJOver64` | data: 2^(j/64), j = 0..63 | `src/Source2.Compiler/Simulation/CrtMath.cs:408` |
 | `1803ab28c` | `Crt_Fma3Flag` | data: CPU flag selecting the FMA3 libm paths |  |
 
 ### s2c:resources/containers
@@ -2876,17 +2879,33 @@ names (asserts, RTTI, log strings; tens of thousands per DLL) are in
 
 | address | name | what | cited in |
 |---|---|---|---|
-| `180007ef0` | `V_atanf` | jumps to the CRT's atanf 1802e057c | `src/Source2.Compiler/Simulation/CrtMath.cs:289` |
-| `180008130` | `V_log2f` | jumps to the CRT's log2f 1802e3680 (edx -1, then the float log family 1802e34f0) | `src/Source2.Compiler/Simulation/CrtMath.cs:188` |
-| `1800081a0` | `V_powf` | jumps to the CRT's powf 1802e5130 | `src/Source2.Compiler/Simulation/CrtMath.cs:505` |
+| `180007ef0` | `V_atanf` | jumps to the CRT's atanf 1802e057c | `src/Source2.Compiler/Simulation/CrtMath.cs:354` |
+| `180008130` | `V_log2f` | jumps to the CRT's log2f 1802e3680 (edx -1, then the float log family 1802e34f0) | `src/Source2.Compiler/Simulation/CrtMath.cs:253` |
+| `1800081a0` | `V_powf` | jumps to the CRT's powf 1802e5130 | `src/Source2.Compiler/Simulation/CrtMath.cs:570` |
 | `1800be850` | `KV3_SetInt64Subtyped` | basic type 3, the value in +8 |  |
 | `1800be890` | `KV3_SetUInt64Subtyped` | basic type 4, the value in +8 |  |
 | `1800c4120` | `KV3Binary_ReadValue` | switch on type - 1 up to 0x1a: 26 and 27 need format >= 5 and build an unsigned 0 / 1 (1800be890: basic type 4, subtype 0x17, as UINT32 = 12 does); 15 / 16 stay signed (1800be850, type 3, subtype 0x16) | `src/Source2.Compiler/Kv3/Kv3BlockWriter.cs:162` |
 | `1800c5f60` | `KV3Binary_ChooseNodeType` | bool 13/14; int 11 when it fits 32 bits else 3, uint 12 else 4, double 5; with the compact flag (r8b; its one caller 1800c6ef3 passes 1) int 0/1 -> 15/16, uint 0/1 -> 26/27, double 0/1 -> 17/18; arrays 8, 0x18/0x19 under 0x100 elements, else 0x0a. The 20261006 build (inlined at 1800c6cb3) wrote a uint 0/1 as 15/16 | `src/Source2.Compiler/Containers/Kv3V5Writer.cs:13`, `src/Source2.Compiler/Containers/Kv3V5Writer.cs:128`, `src/Source2.Compiler/Kv3/Kv3BlockWriter.cs:106` |
-| `1802e057c` | `CRT_atanf` | one build: double, reduced at 0.4375 / 0.6875 / 1.1875 / 2.4375, a 3 / 3 rational; Simulation/CrtMath.Atan (ledger 108) | `src/Source2.Compiler/Simulation/CrtMath.cs:289` |
+| `1802e057c` | `CRT_atanf` | one build: double, reduced at 0.4375 / 0.6875 / 1.1875 / 2.4375, a 3 / 3 rational; Simulation/CrtMath.Atan (ledger 108) | `src/Source2.Compiler/Simulation/CrtMath.cs:354` |
 | `1802e34f0` | `CRT_FloatLogFamily` | logf / log2f / log10f by edx (0 / -1 / 1): frexp 1802e9520, m doubled under sqrt(1/2), s = (m - 1) / (m + 1), a 3-term odd series in s^2, log2(e) split in two; zero -> -Inf, negatives -> NaN; all float, no dispatch (ledger 117); Simulation/CrtMath.Log2 |  |
-| `1802e5130` | `CRT_powf` | double: ln x from a 257-entry table and a cubic (x within 1/16 of 1: a series), times y, exp from 2^(j/64); FMA3 build from 1802e5896 (ledger 111); Simulation/CrtMath.Pow | `src/Source2.Compiler/Simulation/CrtMath.cs:505` |
+| `1802e5130` | `CRT_powf` | double: ln x from a 257-entry table and a cubic (x within 1/16 of 1: a series), times y, exp from 2^(j/64); FMA3 build from 1802e5896 (ledger 111); Simulation/CrtMath.Pow | `src/Source2.Compiler/Simulation/CrtMath.cs:570` |
 | `1802e9520` | `CRT_FloatFrexp` | class (0 zero, 1 Inf, 2 NaN, -1 finite) and m in [0.5, 1) with its exponent; denormals through 1802dc4c0 |  |
+
+## tier0.dll, build 20261103
+
+- file: `tier0.dll`, 3,979,416 bytes, PE time 2026-11-11 17:20 UTC
+- SHA-256 `0bcd160dfa72d9f97fbf85095d59baad18fca61f20d840e83a5bd9f7635d5c32`
+- installed: this build
+- 4 addresses
+
+### s2c:io
+
+| address | name | what | cited in |
+|---|---|---|---|
+| `180007fb0` | `V_exp2f` | export; the CRT's exp2f 1802bded0 (ledger 267) |  |
+| `1802bdc94` | `crt_expf_scaled` | same code as 0923's 1802bdb54 (ledger 267) |  |
+| `1802bded0` | `crt_exp2f` | same code as 0923's 1802bdd90 (rip targets resolved); Simulation/CrtMath.Exp2 (ledger 267) | `src/Source2.Compiler/Simulation/CrtMath.cs:144` |
+| `1802d2a40` | `crt_fdscale` | same code as 0923's 1802d2900; Simulation/CrtMath.FdScale (ledger 267) | `src/Source2.Compiler/Simulation/CrtMath.cs:202` |
 
 ## visbuilder.dll, build 20260923
 
@@ -3708,7 +3727,7 @@ names (asserts, RTTI, log strings; tens of thousands per DLL) are in
 | `1801ad740` | `RnHullCreateRuntime` | export |  |
 | `180292700` | `RnHull_MassProperties` |  | `src/Source2.Compiler/Physics/RnHullBuilder.cs:744` |
 | `1803843f0` | `RnHull_BuildFromPoints` | normalise, then quickhull | `src/Source2.Compiler/Physics/RnHullBuilder.cs:115`, `src/Source2.Compiler/Physics/RnHullBuilder.cs:123` |
-| `180384ab0` | `RnHull_Extrude` |  | `src/Source2.Compiler/Maps/Decompile/BrushRender.cs:254`, `src/Source2.Compiler/Maps/Decompile/MapDecompiler.cs:1119`, `src/Source2.Compiler/Physics/RnHullBuilder.cs:175` |
+| `180384ab0` | `RnHull_Extrude` |  | `src/Source2.Compiler/Maps/Decompile/BrushRender.cs:254`, `src/Source2.Compiler/Maps/Decompile/MapDecompiler.cs:1135`, `src/Source2.Compiler/Physics/RnHullBuilder.cs:175` |
 | `180384f80` | `RnHull_Result` |  |  |
 | `180385100` | `RnHull_CheckInnerMargin` |  | `src/Source2.Compiler/Physics/RnHullBuilder.cs:307` |
 | `180385370` | `RnHull_Limits` |  | `src/Source2.Compiler/Physics/RnHullBuilder.cs:234` |

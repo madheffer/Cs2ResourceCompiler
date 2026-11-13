@@ -46,7 +46,25 @@
    "addr": "1802bdd90",
    "name": "crt_exp2f",
    "module": "s2c:baked/bomb",
-   "note": "x split to n + f in [-0.5, 0.5], Cody-Waite expf of f ln2 (1802bdb54) scaled by 2^n"
+   "note": "_fdtest first (0 -> 1, +Inf/NaN as is, -Inf -> 0); |x| under 2^31 split to n + f in [-0.5, 0.5]; Cody-Waite expf of f ln2 (1802bdb54) scaled by 2^n (ledger 267)"
+  },
+  {
+   "addr": "1802bdb54",
+   "name": "crt_expf_scaled",
+   "module": "s2c:baked/bomb",
+   "note": "(&y, scale, n): y under -229 -> scale 0, over 229 -> scale Inf; y 0 -> _fdscale(scale, n); rational, then _fdscale(r scale, k + n) (ledger 267)"
+  },
+  {
+   "addr": "1802d2900",
+   "name": "crt_fdscale",
+   "module": "s2c:baked/bomb",
+   "note": "float times 2^e on 16-bit halves: Inf past 254, denormal shift with a rounding word, nearest even; Simulation/CrtMath.FdScale (ledger 267)"
+  },
+  {
+   "addr": "1802cf224",
+   "name": "crt_fdtest",
+   "module": "s2c:baked/bomb",
+   "note": "float class: 2 NaN, 1 Inf, 0 zero, -1 normal, -2 denormal (ledger 267)"
   },
   {
    "addr": "1802df0a4",
