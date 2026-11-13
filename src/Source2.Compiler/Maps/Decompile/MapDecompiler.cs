@@ -1095,7 +1095,7 @@ public static class MapDecompiler
         }
         // A mesh at the world's origin: its move is the identity, so every world point is a corner.
         var atZero = new Dictionary<Vector3, Vector3>();
-        var identity = CTransform.FromNode(DmxBinary.NewElement("CMapMesh", "", Guid.Empty)).Matrix();
+        var identity = Placed(DmxBinary.NewElement("CMapMesh", "", Guid.Empty)).Matrix();
         Vector3 FitAtZero(Vector3 h)
         {
             if (!atZero.TryGetValue(h, out var v))
@@ -1107,8 +1107,8 @@ public static class MapDecompiler
         var turnedNode = DmxBinary.NewElement("CMapMesh", "", Guid.Empty);
         turnedNode.Attributes["origin"] = e.Entity.Origin;
         turnedNode.Attributes["angles"] = entityNode.Attributes["angles"];
-        var turnedToWorld = CTransform.FromNode(turnedNode).Matrix();
-        var turnedFromWorld = CTransform.FromNode(turnedNode).Inverse().Matrix();
+        var turnedToWorld = Placed(turnedNode).Matrix();
+        var turnedFromWorld = Placed(turnedNode).Inverse().Matrix();
         var turned = new Dictionary<Vector3, Vector3?>();
         Vector3? FitTurned(Vector3 h)
         {
@@ -1163,13 +1163,13 @@ public static class MapDecompiler
                           h => CornerFor(h, e.Entity.Origin, toWorld, toEntity, fromEntity),
                           f => SamePoints(piece, f, origin, angles, e.Entity, entityNode, transformOf)) is { } nudged)
                 (fit, moved) = (nudged, moved + 1);
-            else if (own && !SamePoints(piece, fit, origin, angles, e.Entity, entityNode, transformOf))
+            else if ((own || (transformOf != null && !moves)) && !SamePoints(piece, fit, origin, angles, e.Entity, entityNode, transformOf))
             {
                 var turnedAngles = (Vector3)turnedNode.Attributes["angles"]!;
                 if (piece.Vertices.All(h => FitTurned(h) is not null)
-                    && SamePoints(piece, h => FitTurned(h)!.Value, e.Entity.Origin, turnedAngles, e.Entity, entityNode))
+                    && SamePoints(piece, h => FitTurned(h)!.Value, e.Entity.Origin, turnedAngles, e.Entity, entityNode, transformOf))
                     (angles, fit, moved) = (turnedAngles, h => FitTurned(h)!.Value, moved + 1);
-                else if (SamePoints(piece, FitAtZero, Vector3.Zero, Vector3.Zero, e.Entity, entityNode))
+                else if (SamePoints(piece, FitAtZero, Vector3.Zero, Vector3.Zero, e.Entity, entityNode, transformOf))
                     (origin, fit, moved) = (Vector3.Zero, FitAtZero, moved + 1);
                 else
                     off++;

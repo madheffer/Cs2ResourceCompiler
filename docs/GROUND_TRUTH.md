@@ -6791,3 +6791,11 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        inverse estimate and a float search (LocalCorner). s2c_prefabprobe2's prefab 108 is at the origin,
        unturned: its two hulls left (carousel_door01_108_27, shootgame_mountain_climber_train_108_119) are not
        a placement gap but a vertex no searched corner places exactly through those moves, now noted.
+     - Measured on those two (a probe of the source beside the decompile): our forward on the source gives
+       Valve's eight vertices to the bit, so the forward is right. The source places prefab 108 turned 90 in yaw
+       and moved (entity 27 at (-2240, -5376, 84) unturned, its mesh 80 units off it in y); the decompile's
+       prefab placement is the identity, which lands every lump entity bit for bit too, so the lump alone does
+       not tell them apart. Only these hulls' rounding does: the forward's moves of a mesh turned with its prefab
+       are not reachable from an unturned mesh at the entity's origin, nor from one turned with the entity or at
+       the world's origin (all three tried through the forward's moves). Open: search the prefab's placement
+       (the common yaw of its entities, a translation) against hull exactness.
