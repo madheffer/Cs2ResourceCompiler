@@ -1080,9 +1080,34 @@ public static class MapDecompiler
             notes.Add($"{label}: {geometry.TriangleMeshes} triangle-mesh shape(s) not read");
         if (geometry.UnknownMaterials.Count > 0)
             notes.Add($"{label}: {geometry.UnknownMaterials.Count} hull(s) with a material hash no known material has");
-        if (geometry.Pieces.Count == 0 && (geometry.Soups.Count == 0 || cable))
+        // An empty model (no hulls, no shapes, no render: ze_por_island_p's func_water 416): resourcecompiler
+        // drops a brush entity whose mesh has no faces, and gives every face a hull, but a mesh with
+        // physicsType "none" and toolsskip faces compiles to exactly this model for func_water,
+        // func_brush, trigger_once and func_door (s2c_emptymesh, ledger 268). Its shape is not in the
+        // model, so a 16-unit cube at the entity's origin stands in.
+        if (geometry.Pieces.Count == 0 && geometry.Soups.Count == 0 && !geometry.HasRender && !cable)
+        {
+            builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero, [.. Cube(8f).Select(f => (f, 0))],
+                            [EmptyModelMaterial], physicsType: "none");
+            notes.Add($"{label}: its model is empty (no render, no collision); a toolsskip cube with physics none stands in (its shape not recovered)");
+        }
+        else if (geometry.Pieces.Count == 0 && (geometry.Soups.Count == 0 || cable))
             notes.Add($"{label}: its model has no hulls; no geometry");
     }
+
+    /// <summary>The material of the stand-in mesh for an empty brush model (ledger 268).</summary>
+    public const string EmptyModelMaterial = "materials/tools/toolsskip.vmat";
+
+    // An axis-aligned cube of half size s, corners counter-clockwise from outside.
+    private static Vector3[][] Cube(float s) =>
+    [
+        [new(-s, -s, s), new(s, -s, s), new(s, s, s), new(-s, s, s)],
+        [new(-s, s, -s), new(s, s, -s), new(s, -s, -s), new(-s, -s, -s)],
+        [new(-s, -s, -s), new(s, -s, -s), new(s, -s, s), new(-s, -s, s)],
+        [new(s, s, -s), new(-s, s, -s), new(-s, s, s), new(s, s, s)],
+        [new(s, -s, -s), new(s, s, -s), new(s, s, s), new(s, -s, s)],
+        [new(-s, s, -s), new(-s, -s, -s), new(-s, -s, s), new(-s, s, s)],
+    ];
 
     /// <summary>A Hammer mesh rebuilt with a brush entity model's render half: the hulls it gives (input
     /// indices, in order), its faces (corners in the mesh's space), materials and corner streams.</summary>

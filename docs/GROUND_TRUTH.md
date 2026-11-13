@@ -6634,3 +6634,45 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        (ze_namviet_p_skybox, ze_inboxed_p_skybox, ze_sisyphus_skybox) ship "skybox".
      - Now: `EntityLumpAuthor.MapUsageTypeName` from `MapEntities.Entity.MapUsageType` (the CMapWorld's), and
        the decompiler writes the lump's value back on the world.
+
+267. **tier0's exp2f at its edges: zero, Inf, NaN, huge, overflow and the denormal tail** (2026-11-13;
+     tier0 20260923 capstone disassembly via tools/re/disasm.py; the same code in tier0 20261103 with rip
+     targets resolved; oracle: tier0_20261103's exported V_exp2f called through ctypes by
+     tools/re/exp2f_oracle.py, no game process):
+     - V_exp2f (1802bdd90; 1802bded0 in 1103) classes x with _fdtest (1802cf224: 2 NaN, 1 Inf, 0 zero,
+       -1 normal, -2 denormal). Zero gives 1; Inf gives +0 when negative, else x; NaN gives x.
+     - -2^31 >= x or x >= 2^31 skips the split (n 0, f x); otherwise the split as ledger 90.
+     - The float exp (1802bdb54) with scale 1: y = f ln2 of 0 is _fdscale(1, n); y under -229 gives +0,
+       over 229 +Inf; else the rational, then _fdscale(r, k + n).
+     - _fdscale (1802d2900): biased exponent c plus e past 254 is Inf of the sign; above 0 written in
+       place; else the mantissa with its hidden bit shifted right by 1 - (c + e) on 16-bit halves (a
+       signed zero past 24), the shifted-out bits a rounding word (sticky below), round to nearest, ties
+       to even.
+     - Oracle: 46 edge values and 40,000 seeded ones in [-160, 140] and [-152, -125] bit for bit.
+     - Was: Exp2 threw for a non-finite or huge x and for a result outside the normal range, which
+       stopped ze_por_island_p's forward on two light_omni2 with brightness "-Infinity".
+     - Now: `CrtMath.Exp2` / `CrtMath.FdScale` (a zero, denormal, Inf or NaN v into FdScale still throws;
+       Exp2 never passes one). That map's two lights come out at 0 lumens; its older compile wrote 1000.
+
+268. **An empty brush model comes from a mesh with physicsType "none" and faces that draw nothing**
+     (2026-11-13; resourcecompiler 20261103 compiles of s2c_rc_probe/maps/s2c_emptymesh.vmap, written by
+     VmapBuilder, run standalone at low priority with CS2 open; models read with s2c decompile, DATA and
+     PHYS blocks):
+     - A func_water whose CMapMesh has no faces, and one with no mesh at all: neither is in the lump and
+       no model is built.
+     - A func_water box (16 units) in each of 26 tool materials (toolsskip, toolsnodraw, toolsclip,
+       toolstrigger, toolsinvisible, toolsskybox and the rest of core's tools) or a missing material: every
+       one gets a model with a PHYS block (2 shape records); a single quad, a triangle, a two-sided quad and
+       a 0.002-thick box likewise. A func_water's render is never in its model.
+     - The same box with physicsType "none": no PHYS block, m_refMeshes empty, m_modelInfo flags 8388608
+       and zero bounds. In toolsskip that model (1.9 KB) is the same for func_water, func_brush,
+       trigger_once and func_door; in reflectivity_50 func_brush and func_door get a render (4.5 KB).
+     - ze_por_island_p's func_water 416 (older lump format) ships unnamed_416.vmdl in exactly that form,
+       the only difference being two fields today's compile adds (m_animGraph2Refs, m_vecNmSkeletonRefs).
+     - Was: the decompile wrote no mesh for a model with no hulls, so the forward dropped the solid
+       entity (ReachesTheLump) and the round trip missed it.
+     - Now: MapDecompiler gives such a model (no hulls, no triangle shapes, no render, not a cable) a
+       16-unit toolsskip cube at the entity's origin with physicsType "none", noted; its shape is not in
+       the model and is not recovered.
+     - Seen, not ported: the forward keeps a brush entity with a face-less mesh (HasGeometry is any
+       CMapMesh child) where resourcecompiler drops it; RC's own test is not read.

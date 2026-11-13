@@ -1335,7 +1335,18 @@ parentname...), differ, missing. "%f" strings compare with what our float prints
   forward prints to them (SettleWorld.Fixed6). And an angle a turn away is a candidate too (180 and
   -180): in floats sin(pi) keeps its sign's rounding, and under 858's yaw 180 only one of them prints
   -0.000000 0.000000 0.000000 (TemplatePlacementTests). No placement diffs left on namviet or sisyphus.
-- Open: ze_por_island_p's forward stops on an exp2f argument it does not port.
+- ze_por_island_p's forward stopped on two light_omni2 (112, 113) whose lump carries brightness
+  "-Infinity": CrtMath.Exp2 threw for a non-finite argument. Fixed 11-13 from tier0's own code (ledger
+  267: _fdtest edges, the 229 limits, _fdscale's denormal tail; 40,046 values bit for bit against
+  tier0's exported V_exp2f). The round trip now runs: 228 of 383 alike. What differs is the unlit
+  forward against a lit lump (precomputed bounds, probe atlas keys and textures), 12 upper-case model
+  names, 12 env_particle_glow snapshot_file, those two lights' units (0 now, 1000 from the older
+  compile) and 1 func_water missing (416).
+- That func_water's model is empty: no render, no collision. resourcecompiler drops a brush entity with a
+  face-less mesh and hulls every face, but a mesh with physicsType "none" in toolsskip compiles to that
+  exact model (s2c_emptymesh probes, ledger 268). The decompile now gives an empty model a 16-unit
+  toolsskip cube with physics none, noted; missing 0, 229 of 383 alike. Seen there too: our forward keeps
+  an entity whose mesh has no faces, which RC drops (RC's test not read).
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's
