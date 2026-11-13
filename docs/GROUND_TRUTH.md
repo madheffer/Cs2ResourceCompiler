@@ -6823,3 +6823,17 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        holds. Open, with s2c_prefabprobe2's two (ledger 273): a mesh rebuilt with points the builder drops,
        chosen so its recompute lands the shipped vertex. Tried and taken out: corners stepped by the miss of the
        forward's own hull build (no corner set reaches it). The BrushPhysics test tolerates this model.
+
+275. **ze_doom's teleportlab_4_953 is not a vertex order: its hull's mass data keep a skew the vertices lost**
+     (2026-11-13; our hull builder, Valve's to the bit on the source):
+     - Measured: every one of the 40320 orders of Valve's own 8 vertices, as the hull builder's input, gives
+       Valve's vertex order, and the decompile's mesh does too: the order is fixed by the points. What differs
+       is the hull's centroid (z -0.00196075 against Valve's -0.001953125) and mass properties.
+     - The source mesh is skewed by a few floats (its local corners z 256.0019 and 256.00195, -255.99805 and
+       -256.00195, y +-191.99902; its pivot the box's centre), so the builder's input holds 255.99994 and -256
+       where the shipped vertices are 256 and -256.0039: the build recomputes the vertices, and the centroid is
+       taken from the points before. The shipped vertices carry none of that skew; it would have to be solved
+       back from the hull's planes and mass data. The same class as ledgers 273 and 274: a hull the builder
+       reshaped. The note "vertex order no face order searched gives" is the wrong name for this one.
+     - Tried and taken out: the mesh re-pivoted at the box's centre (the source's pivot) with its corners
+       fitted again: the points land, the centroid does not.

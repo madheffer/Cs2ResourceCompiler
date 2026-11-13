@@ -126,8 +126,9 @@ Brush entities:
    it misses, `ENTFILTER=s2c_rc_probe|atixref|123`), render meshes inside prefabs and copies (the
    forward moves them by the placement), drawn faces back as polygons (they stay triangles), Hammer's
    texture axes. Triangle-mesh physics shapes (0%).
-8. The 4 hulls left: one corner and one vertex order on ze_doom (teleportrandom2_458: its vertex comes only
-   from the hull builder recomputing with two near-collinear corners the hull drops, ledger 274), two in
+8. The 4 hulls left, all hulls the builder reshaped from a source mesh a few floats off (ledgers 273-275):
+   on ze_doom teleportrandom2_458 (a vertex only two dropped near-collinear corners give) and teleportlab_4_953
+   (not an order: the centroid keeps the source's skew, every input order gives Valve's vertex order), two in
    s2c_prefabprobe2's prefab
    (11-13, ledger 273: the source turns prefab 108 by 90 and moves it, the decompile's placement is the
    identity, which lands every entity too. The pose itself can be matched; what is left is that the source
