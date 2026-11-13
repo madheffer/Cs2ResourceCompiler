@@ -397,6 +397,36 @@
    "note": "vf217: the node keys, then compile_source_id = +0x17ec"
   },
   {
+   "addr": "180fca750",
+   "name": "MapWorld_FixupNames",
+   "module": "s2c:entities/lump",
+   "note": "the world name list (+0x1828), then vf157 with the prefix; called by the compile driver with \"[PR#]\" unconditionally (ledger 270)"
+  },
+  {
+   "addr": "180f24170",
+   "name": "CMapGameDataNode::FixupNames",
+   "module": "s2c:entities/lump",
+   "note": "vf157: name-typed keys (0x830006) through EntityLump_FixupValue get the prefix; entity_name_fixup_persist; outputs, then children (ledger 270)"
+  },
+  {
+   "addr": "180fefb60",
+   "name": "EntityLump_FixupValue",
+   "module": "s2c:entities/lump",
+   "note": "not empty, not '!' '*' '?' '@' first, not an FGD class name (ledger 270)"
+  },
+  {
+   "addr": "180f787b0",
+   "name": "CMapNode::FixupNames",
+   "module": "s2c:entities/lump",
+   "note": "vf157: every child that IsA CMapNode (ledger 270)"
+  },
+  {
+   "addr": "180fcbe00",
+   "name": "CMapWorld_SetFixupEntityNames",
+   "module": "s2c:entities/lump",
+   "note": "the only access to +0x2ba8 besides the constructor; the compile never reads it (ledger 270)"
+  },
+  {
    "addr": "18111be50",
    "name": "MapCheck_EmptyEntities",
    "module": "s2c:entities/lump",

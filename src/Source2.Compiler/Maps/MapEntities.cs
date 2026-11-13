@@ -340,13 +340,17 @@ public static class MapEntities
     }
 
     /// <summary>
-    /// Whether the map asks for entity-name fixup, which the compile answers by
-    /// prefixing every name and every reference to one.
+    /// Whether the compile prefixes the map's names and references with "[PR#]": always (ledger 270).
+    /// The compile driver (rc 0923 180f1d770) runs the fixup (180fca750 -> vf157 180f24170 over the
+    /// world and every child, EntityLump_FixupValue 180fefb60 skipping class names and names starting
+    /// '!', '*', '@' or '?') whatever the world's fixupEntityNames (CMapWorld +0x2ba8, default true),
+    /// which nothing in the compile reads: s2c_emptymesh2 saves it false and ships [PR#]t0. A prefab's own
+    /// fixupEntityNames is its own matter (MapPrefabs, 180f9e860).
     /// </summary>
     public static bool FixupEntityNames(DmxBinary.Document document)
     {
         ArgumentNullException.ThrowIfNull(document);
-        return document.OfType("CMapWorld").FirstOrDefault()?.GetValue<bool>("fixupEntityNames") ?? false;
+        return true;
     }
 
     /// <summary>

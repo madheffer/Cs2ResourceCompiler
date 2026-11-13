@@ -6703,5 +6703,23 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        CMapEntity out of the walk. Both probe packages: every entity model byte for byte, the lumps' rows
        (class, name, compile_source_id, model) Valve's.
      - Not modelled: references (180f8e9e0), faceless meshes beside other faceless meshes deeper than
-       the entity's own children. Seen, separate: RC writes these builder maps' names with [PR#] though
-       their world says fixupEntityNames false, where our forward writes none.
+       the entity's own children. RC writes these builder maps' names with [PR#] though their world
+       says fixupEntityNames false: ledger 270.
+
+270. **The map's own [PR#] name fixup is unconditional; the world's fixupEntityNames is not read** (2026-11-13;
+     resourcecompiler 20260923 decompile through ReVa; 20261103 compiles of s2c_emptymesh and s2c_emptymesh2):
+     - The compile driver (180f1d770, CompileMap's preprocess) calls 180fca750(world, "[PR#]") with no test.
+       It collects the world's name list (+0x1828) and runs vf157 (180f24170, CMapWorld and CMapEntity alike):
+       each key whose type is a name (bits 0x830006 of the type) and whose value passes EntityLump_FixupValue
+       (180fefb60: not empty, not starting '!', '*', '?' or '@', and not an FGD class name) gets the prefix;
+       entity_name_fixup_persist classes keep _entname_fixup_prefix; then the outputs (CMapEntityIONode vf157
+       180feb390) and every child that IsA CMapNode (CMapNode vf157 180f787b0). CMapPrefab (180f98d10) and
+       CMapGroup have their own.
+     - CMapWorld's constructor (180fc0fa0) declares fixupEntityNames (bool, +0x2ba8, default true); the only
+       other access is its setter (180fcbe00, from the editor's UI table). Nothing in the compile reads it.
+     - Measured: s2c_emptymesh and s2c_emptymesh2 save it false and ship [PR#] on every name. Every lump
+       checked carries it (atixref 354/354 names, prefabprobe4 343/343; c2m2's environment prefab 59/60, the
+       60th "keyframe" a class name). An earlier byte search said otherwise because the lumps are compressed.
+     - Was: MapEntities.FixupEntityNames read the world's flag, so a map saved with it off compiled without
+       the prefix. Now: it is always true; a prefab's own fixupEntityNames ("[PR#]<id>_") is unchanged.
+     - Both probe maps: default_ents.vents_c byte for byte Valve's, every entity model too.
