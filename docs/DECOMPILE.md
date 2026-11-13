@@ -1345,8 +1345,9 @@ parentname...), differ, missing. "%f" strings compare with what our float prints
 - That func_water's model is empty: no render, no collision. resourcecompiler drops a brush entity with a
   face-less mesh and hulls every face, but a mesh with physicsType "none" in toolsskip compiles to that
   exact model (s2c_emptymesh probes, ledger 268). The decompile now gives an empty model a 16-unit
-  toolsskip cube with physics none, noted; missing 0, 229 of 383 alike. Seen there too: our forward keeps
-  an entity whose mesh has no faces, which RC drops (RC's test not read).
+  toolsskip cube with physics none, noted; missing 0, 229 of 383 alike. The forward's rule for which
+  children keep a brush entity is now RC's (ledger 269): any visible child, a point entity too, but not a
+  face-less mesh, and an entity with only face-less meshes is not in the walk (takes no number).
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's

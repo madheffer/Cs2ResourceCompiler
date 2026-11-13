@@ -143,11 +143,13 @@ public static class EntityPhysicsModels
                 return new CTransform(origin, 1f, CTransform.AngleQuaternion(angles));
             }
             : null;
-            // The lump points every brush entity at a model, but a hidden mesh is
-            // not compiled, and an entity left with none gets no file.
-            var meshes = Meshes(entity).Where(m => !hidden.Contains(m.GetValue<int>("nodeID") ?? -1)).ToList();
-            if (!entity.GetElements("children").Any(c => c.Type is "CMapMesh") || meshes.Count == 0)
+            // A model is built for the entities the lump keeps (MapEntities.CountsAsGeometry, ledger 269):
+            // one with no child that counts (a hidden or force_hidden mesh, a mesh with no faces) gets none,
+            // and one kept only by a point entity child gets an empty one (s2c_emptymesh's a_pointchild).
+            // A hidden mesh is not compiled.
+            if (!entity.GetElements("children").Any(c => MapEntities.CountsAsGeometry(c, hidden)))
                 return null;
+            var meshes = Meshes(entity).Where(m => !hidden.Contains(m.GetValue<int>("nodeID") ?? -1) && m.GetValue<bool>("force_hidden") != true).ToList();
             var props = entity.Get<DmxBinary.Element>("entity_properties");
             var className = props?.Get<string>("classname") ?? "";
             var targetName = props?.Get<string>("targetname") ?? "";

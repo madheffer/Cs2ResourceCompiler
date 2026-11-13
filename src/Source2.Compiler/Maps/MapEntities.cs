@@ -399,6 +399,12 @@ public static class MapEntities
             // subasset gather reads (180fc9930) is off for the node and all below it: s2c_deformpath2's hidden
             // cable and its three path nodes, and its one hidden path node, are not in the .vmap_c's table.
             var within = child.GetValue<bool>("force_hidden") == true ? prefab with { Enclosed = true } : prefab;
+            // A CMapEntity whose children are all meshes with no faces is not in the compile's walk at all:
+            // s2c_emptymesh2's func_brush "emptymesh" takes no compile_source_id (the next entity is one past
+            // the one before it), where one with no children, a hidden mesh or a force_hidden mesh takes its
+            // number and only stays out of the lump (ledger 269). Where resourcecompiler drops it is not read.
+            if (child.Type is "CMapEntity" && OnlyFacelessMeshes(child))
+                continue;
             if (GameKeyBearer.Contains(child.Type) && Read(child, isWorld: false) is { } entity)
             {
                 // An editorOnly node (CMapNode +0x365) fails the compile's node
@@ -408,6 +414,8 @@ public static class MapEntities
                 if (editorOnly && child.GetElements("children").Any())
                     throw new NotSupportedException($"node {id}: an editorOnly node with children is not measured");
                 entity = entity with { Layer = layer, Hidden = within.Enclosed || prefab.Hidden.Contains(id) || editorOnly, Prefabs = prefab.Ids, NamePrefix = prefab.NamePrefix, PrefabMap = prefab.Map };
+                if (entity.HasGeometry && child.Type is not "CMapCable")
+                    entity = entity with { HasGeometry = child.GetElements("children").Any(c => CountsAsGeometry(c, prefab.Hidden)) };
                 // A node of a prefab's map is placed as the prefab moves it.
                 if (prefab.Chain.Length > 0)
                 {
@@ -511,6 +519,35 @@ public static class MapEntities
     }
 
     /// <summary>Whether the walk reads the node as an entity (as it does a prefab map's world, never shipped).</summary>
+    /// <summary>
+    /// Whether a child keeps its solid class entity in the lump (ledger 269). The export (rc 0923
+    /// 180240a60) asks the node's data provider for its children (CMapNodeDataProvider vf2 / vf3,
+    /// 180f74dd0 / 180f73c00: "children" +0x200, typed CMapNode) and keeps the entity when one is
+    /// visible (+0x370, CMapNode_SetVisible 180f7a350) and no node refers to it (180f8e9e0); any
+    /// node type counts, a point entity too (s2c_emptymesh: a func_brush with only an info_target
+    /// gets a model). A CMapMesh with no faces does not (s2c_emptymesh: alone or beside an
+    /// info_target, RC builds no model for it; where it drops out is not read). Visibility here
+    /// is force_hidden and, given the map's hidden set, its flags; references are not modelled.
+    /// </summary>
+    /// <summary>Whether a node has children and every one is a CMapMesh with no faces (ledger 269).</summary>
+    internal static bool OnlyFacelessMeshes(DmxBinary.Element node)
+    {
+        var children = node.GetElements("children").ToList();
+        return children.Count > 0 && children.All(c => c.Type is "CMapMesh" && FaceCount(c) == 0);
+    }
+
+    private static int FaceCount(DmxBinary.Element mesh)
+        => mesh.Get<DmxBinary.Element>("meshData")?.Get<object?[]>("faceEdgeIndices")?.Length ?? 0;
+
+    internal static bool CountsAsGeometry(DmxBinary.Element child, HashSet<int>? hidden)
+    {
+        if (child.GetValue<bool>("force_hidden") == true)
+            return false;
+        if (hidden is not null && child.GetValue<int>("nodeID") is { } id && hidden.Contains(id))
+            return false;
+        return child.Type is not "CMapMesh" || FaceCount(child) > 0;
+    }
+
     internal static bool ReadsAsEntity(DmxBinary.Element element) => Read(element, isWorld: false) is not null;
 
     /// <summary>The node as the walk reads it, where it stands in the source (no prefab or instance placement); null when it is no entity.</summary>
@@ -551,11 +588,11 @@ public static class MapEntities
             element.GetValue<Vector3>("scales") ?? Vector3.One,
             isWorld,
             ReadConnections(element),
-            // A brush entity is a node with mesh children. The world has meshes too,
-            // but those are the world's own geometry rather than an entity model. A
-            // cable is its own geometry: Mako's cable_dynamic ships a model of its
-            // own, unnamed_20788.vmdl.
-            !isWorld && (element.Type is "CMapCable" || element.GetElements("children").Any(c => c.Type is "CMapMesh")),
+            // A brush entity is a node with a child that counts (CountsAsGeometry; the walk
+            // narrows it by the map's hidden set). The world has meshes too, but those are the
+            // world's own geometry rather than an entity model. A cable is its own geometry:
+            // Mako's cable_dynamic ships a model of its own, unnamed_20788.vmdl.
+            !isWorld && (element.Type is "CMapCable" || element.GetElements("children").Any(c => CountsAsGeometry(c, null))),
             Hidden: false,
             PathNodes: pathNodes,
             ClosedLoop: element.GetValue<bool>("closedLoop") ?? false,

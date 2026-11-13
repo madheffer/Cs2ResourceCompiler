@@ -361,6 +361,48 @@
    "note": "the visibility state byte +0x370 (180f8f920 starts it at 1)"
   },
   {
+   "addr": "180f74dd0",
+   "name": "CMapNodeDataProvider::ChildCount",
+   "module": "s2c:entities/lump",
+   "note": "vf2: the node's children count (+0x1f8); the export's geometry test (ledger 269)"
+  },
+  {
+   "addr": "180f73c00",
+   "name": "CMapNodeDataProvider::GeometryChild",
+   "module": "s2c:entities/lump",
+   "note": "vf3: child i when it IsA CMapNode, is visible (+0x370) and nothing refers to it (180f8e9e0), else null; a solid class entity with none is not exported (ledger 269)"
+  },
+  {
+   "addr": "180f8e9e0",
+   "name": "MapNode_IsReferred",
+   "module": "s2c:entities/lump",
+   "note": "MapNode_ReferrerCount (180f8ba70) > 0"
+  },
+  {
+   "addr": "180f163b0",
+   "name": "MapNode_GatherGameDataNodes",
+   "module": "s2c:entities/lump",
+   "note": "every CMapGameDataNode under a node (MapNode_CollectByClass 180f86e70, filter 8); the list 180f180a0 numbers (ledger 269)"
+  },
+  {
+   "addr": "180f180a0",
+   "name": "MapWorld_NumberGameDataNodes",
+   "module": "s2c:entities/lump",
+   "note": "compile_source_id (+0x17ec) per gathered node, keyed by path and nodeID so a repeated prefab reuses its numbers (ledger 269)"
+  },
+  {
+   "addr": "180f26160",
+   "name": "CMapGameDataNode::WriteKeys",
+   "module": "s2c:entities/lump",
+   "note": "vf217: the node keys, then compile_source_id = +0x17ec"
+  },
+  {
+   "addr": "18111be50",
+   "name": "MapCheck_EmptyEntities",
+   "module": "s2c:entities/lump",
+   "note": "Hammer map check: a CMapEntity of class type 5 or 10 (or should_have_children) with no children; not run by the compile (ledger 269)"
+  },
+  {
    "addr": "180fb15e0",
    "name": "NavGen_CollectLadders",
    "module": "s2c:baked/nav",

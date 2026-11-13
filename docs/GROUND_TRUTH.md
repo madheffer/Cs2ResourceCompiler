@@ -6674,5 +6674,34 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Now: MapDecompiler gives such a model (no hulls, no triangle shapes, no render, not a cable) a
        16-unit toolsskip cube at the entity's origin with physicsType "none", noted; its shape is not in
        the model and is not recovered.
-     - Seen, not ported: the forward keeps a brush entity with a face-less mesh (HasGeometry is any
-       CMapMesh child) where resourcecompiler drops it; RC's own test is not read.
+     - The forward's side (a brush entity with a face-less mesh) is ledger 269.
+
+269. **Which children keep a brush entity, and the one that is not in the walk** (2026-11-13;
+     resourcecompiler 20260923 decompile through ReVa, export 180240a60; 20261103 compiles of
+     s2c_rc_probe/maps/s2c_emptymesh.vmap and s2c_emptymesh2.vmap, written by VmapBuilder, run standalone
+     at low priority with CS2 open):
+     - The export keeps a solid class entity (FGD class type 5, CMapGameDataNode +0x88's +0xc) only when
+       its data provider gives a child: CMapNodeDataProvider vf2 (180f74dd0) counts the node's "children"
+       (+0x1f8; the array at +0x200 is typed CMapNode by the node's attribute set, 180f8f920), vf3
+       (180f73c00) returns child i when it IsA that type, is visible (+0x370, CMapNode_SetVisible
+       180f7a350, starts 1) and no node refers to it (180f8e9e0: MapNode_ReferrerCount > 0 fails). No
+       child gives the early out (LAB_180244267, result 1), no lump entry and no model.
+     - Measured (lump and package): a func_brush with only an info_target child ships, with a model
+       (empty, 1.9 KB, byte for byte our empty model); one with an empty mesh and an info_target ships
+       too; one with no children, a mesh the visibility manager hides (flag 1) or a force_hidden mesh is
+       not in the lump and gets no model.
+     - Numbering (compile_source_id, the node's +0x17ec from 180f180a0 over every CMapGameDataNode
+       180f163b0 gathers): those three still take their numbers (t1 3, t2 5, t3 7 around them), but a
+       func_brush whose only child is a mesh with no faces takes none (the next info_target is 8, one past
+       7). So that entity is gone before the walk; where (load or a pass before the numbering) is not
+       read. The map check CMapCheckIssue_EmptyEntities (detector 18111be50: a solid or type 10 class, or
+       should_have_children, with no children) is not it: a childless func_brush keeps its number.
+     - Was: HasGeometry was any CMapMesh child (so a face-less mesh kept the entity and an info_target
+       child did not), and EntityPhysicsModels wrote a model for a hidden or face-less mesh.
+     - Now: MapEntities.CountsAsGeometry (a child not force_hidden, not in the map's hidden set, not a
+       face-less mesh) for HasGeometry and EntityPhysicsModels; MapEntities.OnlyFacelessMeshes leaves such a
+       CMapEntity out of the walk. Both probe packages: every entity model byte for byte, the lumps' rows
+       (class, name, compile_source_id, model) Valve's.
+     - Not modelled: references (180f8e9e0), faceless meshes beside other faceless meshes deeper than
+       the entity's own children. Seen, separate: RC writes these builder maps' names with [PR#] though
+       their world says fixupEntityNames false, where our forward writes none.
