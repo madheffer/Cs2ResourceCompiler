@@ -127,7 +127,8 @@ Brush entities:
    forward moves them by the placement), drawn faces back as polygons (they stay triangles), Hammer's
    texture axes. Triangle-mesh physics shapes (0%).
 8. The 4 hulls left: one corner and one vertex order on ze_doom, two in s2c_prefabprobe2's prefab
-   (placement not modelled by the one-mesh chain). The order (teleportlab_4) is not a budget issue:
+   (11-13, ledger 273: the prefab's moves are modelled now and it is at the origin; a vertex of each that
+   no searched corner places exactly). The order (teleportlab_4) is not a budget issue:
    200000 seeded tries (`DECOMPILE_HULL_BUDGET=200000`, 13.5 min) do not find it either, so it needs
    an order built from the shipped hull (its first tetrahedron, then points in add order) rather than
    a shuffle.
@@ -162,8 +163,8 @@ Prefabs and entities:
     placements; 60%).
 13. Render-only cables' texture settings, and cable_static (in the world). A render-only cable's
     radius is only as exact as its render mesh.
-14. s2c_prefabprobe3's prop that is still falling when Valve's settle ends: not invertible from the
-    package; it stays a note.
+14. s2c_prefabprobe3's prop that is still falling when Valve's settle ends: done 11-13 (ledger 273),
+    its start searched along z with our settle (Valve's to the bit on the source) until it lands.
 
 Other map data:
 15. **Map variables: done 10-30** (ledger 187): forward port and decompile, s2c_varprobe exact
@@ -1472,8 +1473,7 @@ Next, in the order the user is likely to pick:
 4. Cables: done 10-29 ("Cables" above): lumps exact, collision cables' settings exact; open: a
    render-only cable's radius (the render mesh's precision), texture settings, cable_static (world).
 5. A prefab map that places prefabs, with instances of its own (InstancePlan with prefab blocks).
-6. The falling prop (probe3): a prop the settle leaves awake is not invertible from the package; at
-   most note it.
+6. The falling prop (probe3): done 11-13 (ledger 273), the start searched with our settle.
 7. Brush geometry: hull vertex order and corners done 10-29 (451 of 455 models' PHYS exact; left:
    two in s2c_prefabprobe2's prefab, whose placement the one-mesh chain does not model, and two on
    ze_doom); render meshes and UVs, world meshes (plan 3 and 4).

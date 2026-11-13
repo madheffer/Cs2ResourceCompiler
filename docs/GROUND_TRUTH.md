@@ -6773,3 +6773,21 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        node 1800cc720, null). CMapCable has its own (18114d2b0). Ported as MapEntities.Entity.HasMeshChild:
        EntityLumpAuthor writes model for a solid class that ships, a cable, or a class with a mesh child, and
        EntityPhysicsModels builds none for a class other than a solid one without a mesh.
+
+273. **A prop still falling when the settle ends comes back from where it started** (2026-11-13; our settle
+     port, SettleWorld.Run, against Valve's package of s2c_prefabprobe3):
+     - Measured: SettleWorld.Run on s2c_prefabprobe3's source leaves prop_physics 2140:2239 at
+       (2600.06, -730.72, -11680.223), angles (0 135 0), awake: Valve's lump to the bit. Settled again from
+       that pose (what a decompile written there gives) it falls on to -16373.6 and goes to sleep
+       (spawnflags 1), so the pose a package holds is not a source for such a prop.
+     - Now: MapDecompiler.Unsettle, when the decompile has the game's content: our settle on the rebuilt maps;
+       for each prop it does not land on the lump's pose (x, y and angles unchanged), the start is searched
+       along z: the settle's drop added, then the miss taken off, then single floats, until it lands the
+       lump's origin bit for bit, awake. 2140:2239 lands; Entities_CompileAsTheSourceDoes passes on all 26
+       maps. A prop that does not land is noted and written at the lump's pose.
+     - Inside a prefab the decompile's brush corners are fitted and checked through the forward's moves
+       (EntityPhysicsModels' transformOf: SettleWorld.PrefabPlacement over the prefab nodes as MapNodeAngles
+       holds them, then CTransform(origin, AngleQuaternion(angles))); a prefab that moves its map gets an
+       inverse estimate and a float search (LocalCorner). s2c_prefabprobe2's prefab 108 is at the origin,
+       unturned: its two hulls left (carousel_door01_108_27, shootgame_mountain_climber_train_108_119) are not
+       a placement gap but a vertex no searched corner places exactly through those moves, now noted.

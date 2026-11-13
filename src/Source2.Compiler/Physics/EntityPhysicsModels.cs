@@ -304,14 +304,15 @@ public static class EntityPhysicsModels
     /// over a mesh: Pieces, Inputs, the map builder's hull, ShapePoints, the compile's hull), each
     /// hull's vertex positions in order; no applied material, no deformer, no instance path.
     /// </summary>
-    internal static List<Vector3[]> BrushMeshHulls(DmxBinary.Element mesh, DmxBinary.Element entity, string className, int formatVersion)
+    internal static List<Vector3[]> BrushMeshHulls(DmxBinary.Element mesh, DmxBinary.Element entity, string className, int formatVersion,
+                                                   Func<DmxBinary.Element, CTransform>? transformOf = null)
     {
         var result = new List<Vector3[]>();
         var type = BrushHulls.Resolve(PhysicsTypeOf(mesh), true, className == "func_shatterglass", false, false);
         if (type is BrushHulls.PhysicsType.None or BrushHulls.PhysicsType.Mesh)
             return result;
         var simplify = WorldCollision.SimplificationError(mesh, formatVersion);
-        foreach (var (_, positions, faces, local) in BrushHulls.Pieces(mesh, entity))
+        foreach (var (_, positions, faces, local) in BrushHulls.Pieces(mesh, entity, transformOf: transformOf))
             foreach (var input in BrushHulls.Inputs(positions, faces, type, local, simplify: simplify))
             {
                 var qh = RnHullBuilder.BuildHull(input, RnHullBuilder.Options.MapBuilder, out _);

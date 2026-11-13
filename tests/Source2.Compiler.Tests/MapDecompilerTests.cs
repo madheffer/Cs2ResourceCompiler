@@ -65,7 +65,10 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         var schema = MapFixtures.GameSchema();
 
         var files = MapDecompiler.ReadPackage(package);
-        var result = MapDecompiler.Decompile(files, map, schema, StockMaterials());
+        // The game's and the addon's models, for the decompile's settle of props still falling (ledger 273).
+        using var content = CS2Fixtures.StockPak() is { } pak
+            ? new Maps.GameContent(pak, Path.GetDirectoryName(Path.GetDirectoryName(package))!) : null;
+        var result = MapDecompiler.Decompile(files, map, schema, StockMaterials(), content);
         // DECOMPILE_SAVE=<dir>: the decompile this check judges, as <dir>/<map>.vmap.
         if (Environment.GetEnvironmentVariable("DECOMPILE_SAVE") is { Length: > 0 } saveTo)
             File.WriteAllBytes(Path.Combine(saveTo, map + ".vmap"), result.Vmap);

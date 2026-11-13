@@ -87,6 +87,8 @@ public static class MapDecompiler
                                     GameContent? content)
     {
         var notes = new List<string>();
+        // Each written entity's node by its id path (Unsettle moves a falling prop's start).
+        var nodeOf = new Dictionary<string, DmxBinary.Element>(StringComparer.Ordinal);
         var lumps = files.Where(f => f.Key.EndsWith(".vents_c", StringComparison.OrdinalIgnoreCase)
                                      && f.Key.StartsWith($"maps/{mapName}/", StringComparison.OrdinalIgnoreCase))
                          .OrderBy(f => f.Key, StringComparer.Ordinal).ToList();
@@ -467,6 +469,8 @@ public static class MapDecompiler
         MatchCopyIds();
         var prefabFiles = scopes.Values.Where(sc => sc.Parent is not null && sc.Builder is not null && sc.SameAs is null)
                                 .ToDictionary(sc => sc.Path(mapName), sc => sc.Builder!.Write(), StringComparer.OrdinalIgnoreCase);
+        // Falling props (ledger 273), once the maps are whole; the prefab maps are written again after it.
+        bool UnsettleFalling() => content is not null && Unsettle(main, scopes.Values, mapName, schema, content, entities, nodeOf, notes);
 
         // The compile numbers nodes in walk order (compile_source_id), the world 0
         // (MapEntities.Walk): a map's own children in tree order, then each prefab's map where
@@ -708,11 +712,13 @@ public static class MapDecompiler
                     notes.Add($"{x.ClassName} {x.NodeId}: not rebuilt as a cable ({string.Join("; ", e.Dropped.Where(d => d.StartsWith("pathNodes", StringComparison.Ordinal)))}); kept as an entity");
                 var entityNode = builder.AddEntity(x.NodeId, x.Keys, x.Origin, x.Angles, x.Scales, x.Connections,
                                                    parent: layer is null ? null : layerNode);
+                nodeOf[e.IdPath] = entityNode;
                 var inner = e.IdPath[(e.IdPath.LastIndexOf(':') + 1)..];
                 foreach (var v in scope.Variables.Where(v => v.Inner == inner))
                     VmapBuilder.Bind(entityNode, v.Key, v.Variable);
                 if (e.BrushModel is { } model)
-                    AddBrushGeometry(builder, entityNode, e, model, files, table, notes, NewId, schema?.IsCableClass(x.ClassName) == true);
+                    AddBrushGeometry(builder, entityNode, e, model, files, table, notes, NewId, schema?.IsCableClass(x.ClassName) == true,
+                                     scope.PrefabChain);
                 at = Math.Max(at, e.SourceId + 1);
             }
             RuntimeUpTo(int.MaxValue);
@@ -742,8 +748,9 @@ public static class MapDecompiler
                 // The prefab map's world takes the index ahead of its first node.
                 FillTo(child.FirstSourceId - 1);
                 at++;
-                builder.AddPrefab(child.NodeId, child.Path(mapName), fix?.Own is not null, fix?.TargetName ?? "",
-                                  child.Placement.Origin, child.Placement.Angles);
+                var prefabNode = builder.AddPrefab(child.NodeId, child.Path(mapName), fix?.Own is not null, fix?.TargetName ?? "",
+                                                   child.Placement.Origin, child.Placement.Angles);
+                child.PrefabChain = [.. scope.PrefabChain, prefabNode];
                 child.Builder = new VmapBuilder($"{mapName}/{child.Chain}");
                 child.Builder.SetWorld(1, [new("classname", "worldspawn")], [], false, "standard");
                 foreach (var v in child.Variables)
@@ -921,10 +928,93 @@ public static class MapDecompiler
                 notes.Add("instances: the paddings solved do not land every collapse's copies; not matched");
         }
 
+        if (UnsettleFalling())
+            prefabFiles = scopes.Values.Where(sc => sc.Parent is not null && sc.Builder is not null && sc.SameAs is null)
+                                .ToDictionary(sc => sc.Path(mapName), sc => sc.Builder!.Write(), StringComparer.OrdinalIgnoreCase);
         return new Result(main.Builder!.Write(), entities, placeholders, notes)
         {
             Prefabs = prefabFiles, Overshoot = overshoot, IdsMatched = matched,
         };
+    }
+
+    /// <summary>
+    /// A physics prop the settle leaves awake and moving (still falling when its 30 s end: s2c_prefabprobe3's
+    /// 2140:2239, out of c2m2's world): the lump holds where it got to, so written there it would fall again in the
+    /// recompile. Our settle (SettleWorld.Run, Valve's to the bit on that map's source) is run on the rebuilt maps;
+    /// for each prop it does not land on the lump's pose with angles unchanged, the start is searched along z (the
+    /// fall's axis, under prefabs turned only in yaw): the drop added, then the miss taken off, then single floats,
+    /// until the settle lands it on the lump's origin bit for bit. Not landed: noted, left at the lump's pose.
+    /// Returns whether any node moved.
+    /// </summary>
+    private static bool Unsettle(Scope main, IEnumerable<Scope> scopes, string mapName, FgdSchema schema, GameContent content,
+                                 IReadOnlyList<EntityLumpAuthor.SourceEntity> entities, Dictionary<string, DmxBinary.Element> nodeOf,
+                                 List<string> notes)
+    {
+        Dictionary<string, SettleWorld.Settlement>? Settle()
+        {
+            var docs = scopes.Where(sc => sc.Parent is not null && sc.Builder is not null)
+                             .ToDictionary(sc => sc.Path(mapName), sc => MapNodeAngles.Apply(DmxBinary.Read(sc.Builder!.Write())), StringComparer.OrdinalIgnoreCase);
+            var doc = MapNodeAngles.Apply(DmxBinary.Read(main.Builder!.Write()));
+            MapPrefabs.Attach(doc, path => docs.GetValueOrDefault(path.Replace('\\', '/')));
+            try
+            {
+                return SettleWorld.Run(doc, content, schema,
+                    SmartProps.NodesCreatedOnLoad(doc, path => content.SmartProp(path) is { } d ? SmartProps.LocatorsOf(d) : 0));
+            }
+            catch (NotSupportedException)
+            {
+                return null;
+            }
+        }
+        var settled = Settle();
+        if (settled is null)
+            return false;
+        var lumpPose = entities.GroupBy(x => x.IdPath).ToDictionary(g => g.Key, g => g.First().Entity);
+        var moved = false;
+        foreach (var (key, first) in settled)
+        {
+            if (!lumpPose.TryGetValue(key, out var want) || !nodeOf.TryGetValue(key, out var node)
+                || (first.Origin == want.Origin && first.Angles == want.Angles))
+                continue;
+            if (first.Angles != want.Angles || first.Origin.X != want.Origin.X || first.Origin.Y != want.Origin.Y)
+            {
+                notes.Add($"{want.ClassName} {key}: the settle moves it off the lump's pose other than along z; written at the lump's pose");
+                continue;
+            }
+            var start = node.GetValue<Vector3>("origin") ?? Vector3.Zero;
+            // The settle from the lump's pose drops it by (lump z - its z); starting that much higher lands near it.
+            var z = start.Z + (want.Origin.Z - first.Origin.Z);
+            var landed = false;
+            for (var round = 0; round < 48 && !landed; round++)
+            {
+                node.Attributes["origin"] = new Vector3(start.X, start.Y, z);
+                if (Settle() is not { } again || !again.TryGetValue(key, out var s))
+                    break;
+                if (s.Origin == want.Origin && s.Angles == want.Angles && !s.Asleep)
+                {
+                    landed = true;
+                    break;
+                }
+                var miss = s.Origin.Z - want.Origin.Z;
+                // Off by more than a few floats: take the miss off; else a float at a time.
+                var next = MathF.Abs(miss) > MathF.Abs(MathF.BitIncrement(want.Origin.Z) - want.Origin.Z) * 4 ? z - miss
+                    : miss > 0 ? MathF.BitDecrement(z) : MathF.BitIncrement(z);
+                if (next == z)
+                    break;
+                z = next;
+            }
+            if (landed)
+            {
+                moved = true;
+                notes.Add($"{want.ClassName} {key}: still falling when the settle ends; its start searched along z to {z:R} (lands the lump's {want.Origin.Z:R})");
+            }
+            else
+            {
+                node.Attributes["origin"] = start;
+                notes.Add($"{want.ClassName} {key}: still falling when the settle ends; no start along z lands the lump's pose; written at it");
+            }
+        }
+        return moved;
     }
 
     /// <summary>
@@ -935,9 +1025,31 @@ public static class MapDecompiler
     /// </summary>
     private static void AddBrushGeometry(VmapBuilder builder, DmxBinary.Element node, EntityLumpAuthor.SourceEntity e, string model,
                                          IReadOnlyDictionary<string, byte[]> files, IReadOnlyDictionary<uint, string> table,
-                                         List<string> notes, Func<int> newId, bool cable = false)
+                                         List<string> notes, Func<int> newId, bool cable = false,
+                                         IReadOnlyList<DmxBinary.Element>? prefabs = null)
     {
         var label = $"{e.Entity.ClassName} {e.IdPath}";
+        // Inside a prefab's map the forward places the mesh and the entity by the prefabs (EntityPhysicsModels'
+        // transformOf: SettleWorld.PrefabPlacement, then a CTransform of that), so the corners are fitted and
+        // checked through the same moves (s2c_prefabprobe2's carousel_door01 and mountain climber train).
+        // The prefab nodes as the .vmap's reader holds them (MapNodeAngles: angles through SetAngles).
+        var chain = prefabs?.Select(p =>
+        {
+            var c = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
+            c.Attributes["origin"] = p.GetValue<Vector3>("origin") ?? Vector3.Zero;
+            c.Attributes["angles"] = SettleWorld.SetAngles(p.GetValue<Vector3>("angles") ?? Vector3.Zero);
+            return c;
+        }).ToList();
+        Func<DmxBinary.Element, CTransform>? transformOf = chain is { Count: > 0 } ? n =>
+        {
+            var (o, a) = SettleWorld.PrefabPlacement(n.GetValue<Vector3>("origin") ?? Vector3.Zero, n.GetValue<Vector3>("angles") ?? Vector3.Zero, chain);
+            return new CTransform(o, 1f, CTransform.AngleQuaternion(a));
+        } : null;
+        CTransform Placed(DmxBinary.Element n) => transformOf?.Invoke(n) ?? CTransform.FromNode(n);
+        // A prefab that moves its map (any origin or angles in the chain); one at the origin, unturned, leaves the
+        // mesh's move a plain add, as CornerFor takes it, though its transforms are still the forward's
+        // CTransform(origin, AngleQuaternion(angles)) rather than CTransform.FromNode.
+        var moves = chain?.Any(c => c.GetValue<Vector3>("origin") != Vector3.Zero || c.GetValue<Vector3>("angles") != Vector3.Zero) == true;
         if (!files.TryGetValue(model + "_c", out var bytes))
         {
             notes.Add($"{label}: its model {model} is not in the package (the compile failed it); no geometry");
@@ -955,14 +1067,30 @@ public static class MapDecompiler
         entityNode.Attributes["origin"] = e.Entity.Origin;
         // The entity's angles as the .vmap's reader will hold them (MapNodeAngles).
         entityNode.Attributes["angles"] = SettleWorld.SetAngles(e.Entity.Angles);
-        var toWorld = CTransform.FromNode(meshNode).Matrix();
-        var toEntity = CTransform.FromNode(entityNode).Inverse().Matrix();
-        var fromEntity = CTransform.FromNode(entityNode).Matrix();
+        var toWorld = Placed(meshNode).Matrix();
+        var toEntity = Placed(entityNode).Inverse().Matrix();
+        var fromEntity = Placed(entityNode).Matrix();
         var fitted = new Dictionary<Vector3, Vector3>();
+        // Inside a prefab the mesh's move is the placement's rotation and translation, not CornerFor's per-axis
+        // add: the corner is estimated through its inverse, tried on Hammer's grids, then searched float by float
+        // (LocalCorner) for one the forward's two moves take to the hull's vertex bit for bit.
+        var fromMesh = moves ? Placed(meshNode).Inverse().Matrix() : null;
+        Vector3 PrefabCorner(Vector3 h)
+        {
+            Vector3 Place(Vector3 c) => MapMeshes.Transform(toEntity, MapMeshes.Transform(toWorld, c));
+            var estimate = MapMeshes.Transform(fromMesh!, MapMeshes.Transform(fromEntity, h));
+            for (var grid = 1f; grid >= 1f / 1024; grid /= 2)
+            {
+                var snapped = new Vector3(MathF.Round(estimate.X / grid) * grid, MathF.Round(estimate.Y / grid) * grid, MathF.Round(estimate.Z / grid) * grid);
+                if (Place(snapped) == h)
+                    return snapped;
+            }
+            return LocalCorner(h, estimate, Place) ?? estimate;
+        }
         Vector3 Fit(Vector3 h)
         {
             if (!fitted.TryGetValue(h, out var v))
-                fitted[h] = v = CornerFor(h, e.Entity.Origin, toWorld, toEntity, fromEntity);
+                fitted[h] = v = fromMesh is null ? CornerFor(h, e.Entity.Origin, toWorld, toEntity, fromEntity) : PrefabCorner(h);
             return v;
         }
         // A mesh at the world's origin: its move is the identity, so every world point is a corner.
@@ -1028,13 +1156,14 @@ public static class MapDecompiler
             // Hammer leaves it under an entity first, else turned with the entity, else at the world's
             // origin (its pivot is Hammer's to place; only its move reaches the compile). Inside a
             // prefab or a copy the forward also moves by the placement, which that chain does not, so
-            // those keep the first.
-            if (own && !SamePoints(piece, fit, origin, angles, e.Entity, entityNode)
+            // those keep the first; inside a prefab whose placement is modelled (transformOf) the first
+            // is checked and nudged through it, the turned and world-origin chains still not.
+            if ((own || transformOf != null) && !SamePoints(piece, fit, origin, angles, e.Entity, entityNode, transformOf)
                 && Nudged(piece, Fit, h => MapMeshes.Transform(toEntity, MapMeshes.Transform(toWorld, h)),
                           h => CornerFor(h, e.Entity.Origin, toWorld, toEntity, fromEntity),
-                          f => SamePoints(piece, f, origin, angles, e.Entity, entityNode)) is { } nudged)
+                          f => SamePoints(piece, f, origin, angles, e.Entity, entityNode, transformOf)) is { } nudged)
                 (fit, moved) = (nudged, moved + 1);
-            else if (own && !SamePoints(piece, fit, origin, angles, e.Entity, entityNode))
+            else if (own && !SamePoints(piece, fit, origin, angles, e.Entity, entityNode, transformOf))
             {
                 var turnedAngles = (Vector3)turnedNode.Attributes["angles"]!;
                 if (piece.Vertices.All(h => FitTurned(h) is not null)
@@ -1045,9 +1174,11 @@ public static class MapDecompiler
                 else
                     off++;
             }
+            else if (!own && transformOf != null && !SamePoints(piece, fit, origin, angles, e.Entity, entityNode, transformOf))
+                off++;
             var faces = piece.Faces.Select(f => f.Select(fit).ToArray()).ToArray();
             var vertexOrder = piece.Vertices.Select(fit).ToArray();
-            var order = HullOrder(faces, vertexOrder, piece, e.Entity, entityNode, origin, angles, HullOrderBudget);
+            var order = HullOrder(faces, vertexOrder, piece, e.Entity, entityNode, origin, angles, HullOrderBudget, transformOf);
             if (order is null)
                 unordered++;
             builder.AddMesh(node, newId(), origin, angles, [.. (order ?? faces).Select(f => (f, 0))], [piece.Material], vertexOrder);
@@ -1674,14 +1805,15 @@ public static class MapDecompiler
         int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_HULL_BUDGET"), out var budget) && budget > 0 ? budget : 3000;
 
     private static Vector3[][]? HullOrder(Vector3[][] faces, Vector3[] vertexOrder, BrushGeometry.Piece piece,
-                                          MapEntities.Entity entity, DmxBinary.Element entityNode, Vector3 meshOrigin, Vector3 meshAngles, int budget = 3000)
+                                          MapEntities.Entity entity, DmxBinary.Element entityNode, Vector3 meshOrigin, Vector3 meshAngles, int budget = 3000,
+                                          Func<DmxBinary.Element, CTransform>? transformOf = null)
     {
         var scratch = new VmapBuilder("hullorder");
         bool Lands(Vector3[][] candidate)
         {
             var mesh = scratch.AddMesh(scratch.World, 1, meshOrigin, meshAngles, [.. candidate.Select(f => (f, 0))], [piece.Material], vertexOrder);
             scratch.RemoveFromWorld(mesh);
-            var hulls = Physics.EntityPhysicsModels.BrushMeshHulls(mesh, entityNode, entity.ClassName, VmapBuilder.FormatVersion);
+            var hulls = Physics.EntityPhysicsModels.BrushMeshHulls(mesh, entityNode, entity.ClassName, VmapBuilder.FormatVersion, transformOf);
             return hulls.Count == 1 && hulls[0].Length == piece.Vertices.Length
                    && hulls[0].Zip(piece.Vertices).All(p => BitConverter.SingleToInt32Bits(p.First.X) == BitConverter.SingleToInt32Bits(p.Second.X)
                                                          && BitConverter.SingleToInt32Bits(p.First.Y) == BitConverter.SingleToInt32Bits(p.Second.Y)
@@ -1759,13 +1891,13 @@ public static class MapDecompiler
     /// <summary>Whether the piece's mesh, its corners fitted and placed so, hulls into exactly the shipped
     /// points (any order) through the forward's chain for one mesh.</summary>
     private static bool SamePoints(BrushGeometry.Piece piece, Func<Vector3, Vector3> fit, Vector3 origin, Vector3 angles,
-                                   MapEntities.Entity entity, DmxBinary.Element entityNode)
+                                   MapEntities.Entity entity, DmxBinary.Element entityNode, Func<DmxBinary.Element, CTransform>? transformOf = null)
     {
         static (int, int, int) Bits(Vector3 v) => (BitConverter.SingleToInt32Bits(v.X), BitConverter.SingleToInt32Bits(v.Y), BitConverter.SingleToInt32Bits(v.Z));
         var scratch = new VmapBuilder("samepoints");
         var mesh = scratch.AddMesh(scratch.World, 1, origin, angles, [.. piece.Faces.Select(f => (f.Select(fit).ToArray(), 0))], [piece.Material],
                                    [.. piece.Vertices.Select(fit)]);
-        var hulls = Physics.EntityPhysicsModels.BrushMeshHulls(mesh, entityNode, entity.ClassName, VmapBuilder.FormatVersion);
+        var hulls = Physics.EntityPhysicsModels.BrushMeshHulls(mesh, entityNode, entity.ClassName, VmapBuilder.FormatVersion, transformOf);
         return hulls.Count == 1 && hulls[0].Length == piece.Vertices.Length
                && hulls[0].Select(Bits).Order().SequenceEqual(piece.Vertices.Select(Bits).Order());
     }
@@ -1932,6 +2064,10 @@ public static class MapDecompiler
 
         /// <summary>A later placement's prefab transform over the first's map.</summary>
         public (Vector3 Origin, Vector3 Angles) Placement { get; set; }
+
+        /// <summary>The CMapPrefab nodes that place this map, outermost first (empty for the main map): the forward
+        /// moves a brush entity's meshes and the entity by them (SettleWorld.PrefabPlacement).</summary>
+        public IReadOnlyList<DmxBinary.Element> PrefabChain { get; set; } = [];
 
         /// <summary>A first placement's map variables: the node (inner id) and key each binds, and its value.</summary>
         public List<(string Inner, string Key, string Variable, string Value)> Variables { get; } = [];
