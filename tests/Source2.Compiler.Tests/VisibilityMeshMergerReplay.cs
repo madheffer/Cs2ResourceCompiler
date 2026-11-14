@@ -287,7 +287,7 @@ public class VisibilityMeshMergerReplay(ITestOutputHelper output)
         for (var i = 0; i < theirs.V.Length; i++)
         {
             if (BitConverter.SingleToInt32Bits(ours.Mesh.Vertices[i]) != BitConverter.SingleToInt32Bits(theirs.V[i]))
-                return $"vertex float {i} differs";
+                return $"vertex float {i} differs (stride {ours.Mesh.Stride}, vertex {i / Math.Max(1, ours.Mesh.Stride)} of {theirs.V.Length / Math.Max(1, ours.Mesh.Stride)}, field {i % Math.Max(1, ours.Mesh.Stride)}): ours {ours.Mesh.Vertices[i]:R} valve {theirs.V[i]:R}";
         }
         return null;
     }
@@ -353,7 +353,9 @@ public class VisibilityMeshMergerReplay(ITestOutputHelper output)
             }
         }
         var key = head.GetProperty("key").EnumerateArray().Select(x => (ushort)x.GetInt32()).ToArray();
-        var mesh = new VisibilityMeshMerger.Mesh { Vertices = [.. floats], Stride = stride, PositionOffset = position, Indices = [.. idx] };
+        var streams = head.GetProperty("streams").EnumerateArray()
+            .Select(s => (s.GetProperty("name").GetString() ?? "", s.GetProperty("index").GetInt32(), s.GetProperty("first").GetInt32(), s.GetProperty("count").GetInt32())).ToList();
+        var mesh = new VisibilityMeshMerger.Mesh { Vertices = [.. floats], Stride = stride, PositionOffset = position, Indices = [.. idx], Streams = streams };
         return (mesh, head.GetProperty("flags").GetUInt32(), key);
     }
 }

@@ -68,7 +68,7 @@ internal static class MapMeshCorners
     /// <param name="positions">The vertex positions to use in place of the mesh's own (a placed copy's
     /// deformation, <see cref="MapDeformers.PlacedPositions"/>).</param>
     public static List<Piece> Build(DmxBinary.Element mesh, bool shiftTexcoords, Func<Vector3, Vector3>? cutSpace, bool withTangent, bool allStreams, int? wholeMeshMaterial = null,
-                                    object?[]? vertexLighting = null, object?[]? positions = null)
+                                    object?[]? vertexLighting = null, object?[]? positions = null, bool keepStoredLighting = true)
     {
         var data = mesh.Get<DmxBinary.Element>("meshData") ?? throw new InvalidDataException("CMapMesh without meshData.");
         var scales = mesh.GetValue<Vector3>("scales") ?? Vector3.One;
@@ -94,6 +94,8 @@ internal static class MapMeshCorners
             if (name == "tangent" && !withTangent)
                 continue;
             var values = s.Get<object?[]>("data") ?? [];
+            if (name == "PerVertexLighting" && vertexLighting is null && !keepStoredLighting)
+                continue;
             if (name == "PerVertexLighting" && vertexLighting is { } baked && baked.Length == values.Length && baked.All(x => x is byte[] { Length: 4 }))
                 values = [.. baked.Select(x => (object?)(x is byte[] c ? new Vector4(c[0] / 255f, c[1] / 255f, c[2] / 255f, c[3] / 255f) : Vector4.Zero))];
             streams.Add((name, values, Width(values)));

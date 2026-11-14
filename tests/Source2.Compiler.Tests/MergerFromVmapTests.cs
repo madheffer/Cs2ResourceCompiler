@@ -88,15 +88,28 @@ public class MergerFromVmapTests(ITestOutputHelper output)
 
         var lists = WorldNodeBuild.MergerInputs(built, overlays, descriptors, envMaps, content, shaders)
             .ToDictionary(kv => kv.Key, kv => kv.Value.Select(m => new Ours(m.Material, m.Stride, m.Vertices, m.Indices, m.Facts)).ToList());
+        // Valve's calls come layer by layer (CompileNode's per-layer pass, ledger 295): three a layer.
+        var (layerNames, layerOfNode, _) = WorldNodeFiles.LayerTable(doc, content, built, descriptors);
 
         var callList = calls.Values.ToList();
         int entries = 0, sameMesh = 0, sameFacts = 0, pairs = 0, pairsSame = 0, shown = 0;
+        var strideNodes = new List<int>();
+        var meshNodes = MapMeshes.Read(doc).Where(m => m.Instances.Length == 0).Select(m => m.NodeId).ToHashSet();
         var fieldMisses = new Dictionary<string, int>();
-        for (var li = 0; li < MeshLists.Merged.Count && li < callList.Count; li++)
+        for (var ci = 0; ci < callList.Count && ci < layerNames.Count * MeshLists.Merged.Count; ci++)
         {
-            var ours = lists[MeshLists.Merged[li]];
-            var valve = callList[li];
-            output.WriteLine($"{MeshLists.Merged[li]}: ours {ours.Count}, valve {valve.Inputs.Count}");
+            var (layer, li) = (ci / MeshLists.Merged.Count, ci % MeshLists.Merged.Count);
+            var ours = lists[MeshLists.Merged[li]].Where(o => layerOfNode(o.Facts.LayerNode) == layer).ToList();
+            var valve = callList[ci];
+            output.WriteLine($"layer {layer} {MeshLists.Merged[li]}: ours {ours.Count}, valve {valve.Inputs.Count}");
+            if (ours.Count != valve.Inputs.Count)
+            {
+                var om = ours.GroupBy(o => Path.GetFileName(o.Material)).ToDictionary(g => g.Key, g => g.Count());
+                var vm = valve.Inputs.GroupBy(v => Path.GetFileName(v.Material)).ToDictionary(g => g.Key, g => g.Count());
+                var keys = om.Keys.Union(vm.Keys).Where(k => om.GetValueOrDefault(k) != vm.GetValueOrDefault(k))
+                    .OrderByDescending(k => Math.Abs(om.GetValueOrDefault(k) - vm.GetValueOrDefault(k))).Take(10);
+                output.WriteLine("    by material (ours/valve): " + string.Join(", ", keys.Select(k => $"{k} {om.GetValueOrDefault(k)}/{vm.GetValueOrDefault(k)}")));
+            }
             var count = Math.Min(ours.Count, valve.Inputs.Count);
             for (var j = 0; j < count; j++)
             {
@@ -114,6 +127,8 @@ public class MergerFromVmapTests(ITestOutputHelper output)
                 if (v.Facts is { } vf)
                 {
                     var misses = Differences(o.Facts, vf);
+                    if (misses.Contains("stride"))
+                        strideNodes.Add(o.Facts.NodeId);
                     if (misses.Count == 0)
                         sameFacts++;
                     foreach (var miss in misses)
@@ -142,6 +157,10 @@ public class MergerFromVmapTests(ITestOutputHelper output)
         }
         foreach (var (field, misses) in fieldMisses.OrderByDescending(kv => kv.Value))
             output.WriteLine($"   fact {field}: {misses} entries differ");
+        if (strideNodes.Count > 0)
+            output.WriteLine($"   stride differences: {strideNodes.Count}, of them on instance copies (no CMapMesh of that id) {strideNodes.Count(n => !meshNodes.Contains(n))}");
+        var allOurs = lists.Values.SelectMany(x => x).ToList();
+        output.WriteLine($"   ours with PerVertexLighting: copies {allOurs.Count(o => !meshNodes.Contains(o.Facts.NodeId) && o.Facts.Streams.Any(x => x.Name == "PerVertexLighting"))}, originals {allOurs.Count(o => meshNodes.Contains(o.Facts.NodeId) && o.Facts.Streams.Any(x => x.Name == "PerVertexLighting"))}; valve with it {callList.Sum(c => c.Inputs.Count(v => v.Facts?.Streams.Any(x => x.Name == "PerVertexLighting") == true))} of {callList.Sum(c => c.Inputs.Count)}");
         output.WriteLine($"entries {entries}: meshes {sameMesh} exact, facts {sameFacts} exact; CanMerge {pairsSame} of {pairs} pairs as Valve's");
         Assert.Equal(entries, sameMesh);
         Assert.Equal(entries, sameFacts);

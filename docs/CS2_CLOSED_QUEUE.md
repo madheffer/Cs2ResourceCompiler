@@ -170,7 +170,7 @@ heavy runs with the game open at below-normal priority):
    -- -world -vis -fshallow` and read the log's visbuilder lines: if Valve's vis gives up (a leak, an open map,
    no sealed region), find that branch in visbuilder.dll and port it (VisOutside / VisRegions); if Valve's own
    compile makes real clusters, the 11-14 package was built without -vis and is the wrong reference.
-17. **Mako's render cluster boxes per layer** (ledgers 295, 303). With world layers and cubeMapName ported,
+17. **Mako's render cluster boxes per layer** (ledgers 295, 303). 2026-11-15 with CS2 closed (ledger 305): the merger is Valve's on all 15 calls once CMesh_Append remaps streams, and instance copies drop stored PerVertexLighting; Mako 1,131 of 1,782. Left: which props Valve bakes into the world lists (train_steel_walkways_01, ac_unit_wall_mounted_01_tintable vs our industrial_lights), from MergerFromVmapTests' per-material counts. Earlier notes: With world layers and cubeMapName ported,
    Mako -world is 966 of 1,782 files Valve's; the rest follows from the render cluster boxes each layer's
    instanced and base lists are cut by (lr2: Valve's cluster ids reach 45, ours 37; whole train-car meshes stay
    one nomerge object in Valve's). Frida on a standalone resourcecompiler compiling s2c_big

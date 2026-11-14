@@ -6772,3 +6772,31 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Result: ze_shaurma_v3_b07_t5 -world 968 of 1,004 files Valve's (was 626; no file on one side only);
        merger inputs 7,027 of 7,027 exact. Mako 967 of 1,782 (was 966). probe01, cardtest, ze_hold_em_p,
        atixref, ze_obj_christmas_factory, ze_doom_p2, ze_obj_elf_penis_factory_mat unchanged.
+
+305. **The merger's mesh append remaps streams; instance copies drop stored lighting** (2026-11-15, CS2 closed:
+     Frida on a standalone resourcecompiler 1.41.9.7 compiling s2c_big ze_ffvii_mako_reactor_v6_p -world -fshallow,
+     package restored cmp-ok, tools/vis/capture_meshmerge.py --max-pairs 4000, %TEMP%/meshmerge_capture/mako2.bin;
+     rc 0923 decompile of CMesh_Append 1812d6c70). READ (append) + MEASURED (lighting). Part of CS2_CLOSED_QUEUE A.17.
+     - Mako runs the merger 15 times, three lists for each of its five layers (ledger 295). Replayed through our
+       merger with Valve's inputs: 14 of 15 exact, and the one left (layer 1's aggregate list, 3,881 entries) had
+       Valve's CanMerge on all 15,062,161 pairs equal to ours, with only VertexPaintTintColor.x wrong in a few
+       merged meshes.
+     - CMesh_Append matches each of the receiving mesh's streams to the first of the appended mesh's with the same
+       semantic index (+0x10) and name (V_stricmp_fast); when every match sits at the receiver's own offset the
+       vertices are copied whole, else the new block is zeroed and each stream copied with the receiver's float
+       count (one without a match stays zero). A stream only the appended mesh has makes it relayout the receiver
+       (FUN_1812d5ff0, not ported: refused). CanMerge matches streams by name, so it joins meshes whose streams
+       come in different orders (Mako: 41 entries list VertexPaintBlendParams before VertexPaintTintColor, 6 put
+       PerVertexLighting first). Ported as VisibilityMeshMerger.Mesh.Append with Mesh.Streams. Replay: 15 of 15.
+     - Our merger inputs against Valve's, layer by layer (MergerFromVmapTests now walks the layers): 1,820 entries
+       had a PerVertexLighting stream Valve's lacks, 1,819 of them instance copies. Valve's entries with the stream
+       are 3,866; ours were the 3,202 originals plus 2,188 copies. With a copy keeping it only when the .vmap holds
+       vertexLightingData for that copy's own instance path, ours are 3,202 + 675 = 3,877 and the stride
+       differences drop to 357. So an instance copy does not inherit the template's stored PerVertexLighting; the
+       map load (180f0ea90) gives it the stream from its own data. MEASURED; CMapMesh's copy (181081be0) not read
+       for the stream. Ported: MapMeshCorners.Build keepStoredLighting, false for copies.
+     - Left on Mako's inputs: baked props (train_steel_walkways_01 and ac_unit_wall_mounted_01_tintable pieces in
+       Valve's aggregate lists, industrial_lights pieces in ours), and the facts that follow from the shifted
+       alignment.
+     - Result: Mako -world 1,131 of 1,782 files Valve's (was 967). probe01, cardtest, ze_hold_em_p, atixref,
+       ze_obj_christmas_factory, ze_doom_p2, ze_obj_elf_penis_factory_mat and ze_shaurma unchanged.

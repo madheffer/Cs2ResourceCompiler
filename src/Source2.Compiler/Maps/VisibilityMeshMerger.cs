@@ -27,7 +27,11 @@ public sealed class VisibilityMeshMerger
 
         public int VertexCount => Stride == 0 ? 0 : Vertices.Count / Stride;
 
-        public Mesh Copy() => new() { Vertices = [.. Vertices], Stride = Stride, PositionOffset = PositionOffset, Indices = [.. Indices] };
+        /// <summary>The CMesh's streams (name, semantic index +0x10, first float +0x14, float count +0x18), or null
+        /// when unknown; <see cref="Append"/> matches them by name and index.</summary>
+        public IReadOnlyList<(string Name, int Index, int First, int Count)>? Streams;
+
+        public Mesh Copy() => new() { Vertices = [.. Vertices], Stride = Stride, PositionOffset = PositionOffset, Indices = [.. Indices], Streams = Streams };
 
         /// <summary><c>FUN_1812dfd10</c>: min and max of the position stream over every vertex, a tie keeping the value held.</summary>
         public (Vector3 Min, Vector3 Max) Bounds()
@@ -44,11 +48,42 @@ public sealed class VisibilityMeshMerger
             return (new Vector3(x0, y0, z0), new Vector3(x1, y1, z1));
         }
 
-        /// <summary><c>FUN_1812d6c70</c> without renumbering: <paramref name="other"/>'s vertices appended, its indices offset.</summary>
+        /// <summary>
+        /// CMesh_Append (<c>FUN_1812d6c70</c>) without renumbering: <paramref name="other"/>'s vertices appended, its
+        /// indices offset. Each of this mesh's streams takes the first of <paramref name="other"/>'s with the same
+        /// semantic index and name (V_stricmp_fast); when every one sits at this mesh's own offset the vertices are
+        /// copied whole, else the new block is zeroed and each stream copied over with this mesh's float count (one
+        /// with no match stays zero). CanMerge matches streams by name, not order, so the merger joins meshes whose
+        /// streams come in different orders (Mako's VertexPaintBlendParams before VertexPaintTintColor, ledger 305).
+        /// A stream only <paramref name="other"/> has makes Valve relayout this mesh (FUN_1812d5ff0), not ported.
+        /// </summary>
         public void Append(Mesh other)
         {
             var offset = VertexCount;
-            Vertices.AddRange(other.Vertices);
+            int[]? from = null;
+            if (Streams is { } mine && other.Streams is { } theirs)
+            {
+                if (theirs.Any(t => !mine.Any(m => m.Index == t.Index && Io.Tier0Strings.EqualsIgnoreCase(m.Name, t.Name))))
+                    throw new NotSupportedException("CMesh_Append of a mesh with a stream the other lacks (its relayout, FUN_1812d5ff0, is not ported)");
+                var at = mine.Select(m => theirs.FirstOrDefault(t => t.Index == m.Index && Io.Tier0Strings.EqualsIgnoreCase(t.Name, m.Name)) is { Name: not null } t ? t.First : -1).ToArray();
+                if (at.Where((f, k) => f != mine[k].First).Any())
+                    from = at;
+            }
+            if (from is null)
+                Vertices.AddRange(other.Vertices);
+            else
+            {
+                var mine2 = Streams!;
+                for (var v = 0; v < other.VertexCount; v++)
+                {
+                    var block = new float[Stride];
+                    for (var k = 0; k < mine2.Count; k++)
+                        if (from[k] >= 0)
+                            for (var c = 0; c < mine2[k].Count; c++)
+                                block[mine2[k].First + c] = other.Vertices[(v * other.Stride) + from[k] + c];
+                    Vertices.AddRange(block);
+                }
+            }
             foreach (var i in other.Indices)
                 Indices.Add(i + offset);
         }
@@ -56,7 +91,7 @@ public sealed class VisibilityMeshMerger
         /// <summary><c>FUN_1812de310</c>: the triangles of <paramref name="indices"/>, vertices renumbered by first use.</summary>
         public Mesh Subset(List<int> indices)
         {
-            var result = new Mesh { Stride = Stride, PositionOffset = PositionOffset };
+            var result = new Mesh { Stride = Stride, PositionOffset = PositionOffset, Streams = Streams };
             var remap = new Dictionary<int, int>();
             foreach (var i in indices)
             {

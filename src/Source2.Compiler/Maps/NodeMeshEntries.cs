@@ -94,7 +94,8 @@ internal static class NodeMeshEntries
             // that decides the sign of a zero component.
             var turn = mesh.Instances.Length == 0 ? MapMeshes.Local(mesh.Element) : world;
             var pieces = MapMeshCorners.Build(mesh.Element, shift, p => MapMeshes.Transform(world, p), withTangent: true, allStreams: signature != null,
-                                              vertexLighting: lighting.GetValueOrDefault(string.Join('.', mesh.Instances.Append(mesh.NodeId))));
+                                              vertexLighting: lighting.GetValueOrDefault(string.Join('.', mesh.Instances.Append(mesh.NodeId))),
+                                              keepStoredLighting: mesh.Instances.Length == 0);
             if (signature != null)
             {
                 var needs = names.SelectMany(signature).ToHashSet();

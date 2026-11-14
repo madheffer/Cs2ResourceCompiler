@@ -269,7 +269,7 @@ internal static class WorldNodeCompile
             return ([], []);
         var inputs = entries.Select((o, k) => new VisibilityMeshMerger.Entry
         {
-            Mesh = new VisibilityMeshMerger.Mesh { Vertices = [.. o.Vertices], Stride = o.Stride, PositionOffset = PositionOffset(o), Indices = [.. o.Indices] },
+            Mesh = new VisibilityMeshMerger.Mesh { Vertices = [.. o.Vertices], Stride = o.Stride, PositionOffset = PositionOffset(o), Indices = [.. o.Indices], Streams = MergerStreams(o) },
             Origin = k, ObjectFlags = o.Facts.ObjectFlags,
         }).ToList();
         var merger = new VisibilityMeshMerger([.. flat], mutual,
@@ -680,6 +680,19 @@ internal static class WorldNodeCompile
     }
 
     private static IReadOnlyList<WrbMeshEntry.Stream> MeshStreams(Entry e) => e.Facts.MeshStreams ?? e.Facts.Streams;
+
+    // The entry's vertex layout as the merger's CMesh holds it: each stream's first float is the running sum of the counts before it.
+    private static List<(string Name, int Index, int First, int Count)> MergerStreams(Entry e)
+    {
+        var result = new List<(string, int, int, int)>();
+        var first = 0;
+        foreach (var s in e.Facts.Streams)
+        {
+            result.Add((s.Name, s.Index, first, s.Count));
+            first += s.Count;
+        }
+        return result;
+    }
 
     private static bool SameStreams(IReadOnlyList<WrbMeshEntry.Stream> a, IReadOnlyList<WrbMeshEntry.Stream> b)
         => a.Count == b.Count && a.Zip(b).All(p => string.Equals(p.First.Name, p.Second.Name, StringComparison.OrdinalIgnoreCase)

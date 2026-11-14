@@ -86,30 +86,7 @@ public static class WorldNodeFiles
             }
         // The node's world layers (FUN_18026cac0): world_layer_base, then each entry's layer in BuildNode's
         // order, then the props' (prop tree order), up to 64; an entry past them stays in the base layer.
-        var layerOf = WorldLayerOfNodes(document, content);
-        var layerNames = new List<string> { "world_layer_base" };
-        int LayerIndex(int nodeId) => layerOf.TryGetValue(nodeId, out var name) ? LayerByName(name) : 0;
-        int LayerByName(string name)
-        {
-            var at = layerNames.FindIndex(n => Io.Tier0Strings.EqualsIgnoreCase(n, name));
-            if (at >= 0)
-                return at;
-            if (layerNames.Count >= 0x40)
-                return 0;
-            layerNames.Add(name);
-            return layerNames.Count - 1;
-        }
-        foreach (var b in built)
-            LayerIndex(b.Source.Header.NodeId);
-        // Then the props' (the record's +0x180, the prop tree in model order), then the third list
-        // (node +0x178, 0x20 a record): the overlays'.
-        foreach (var (_, prop) in MapMeshes.ReadWithEntities(document).Entities
-                     .Where(e => !e.Hidden && e.Layer is not null && e.Element.Get<DmxBinary.Element>("entity_properties")?.Get<string>("classname") == "prop_static")
-                     .Select(e => (Model: e.Element.Get<DmxBinary.Element>("entity_properties")!.Get<string>("model") ?? "", e))
-                     .OrderBy(x => x.Model, StringComparer.Ordinal))
-            LayerByName("world_layer_" + prop.Layer);
-        foreach (var d in descriptors)
-            LayerIndex(d.NodeId);
+        var (layerNames, LayerIndex, LayerByName) = LayerTable(document, content, built, descriptors);
         var layerEntries = WorldNodeBuild.LayerEntries(built, overlays, descriptors, content, shaders);
         var perLayer = Enumerable.Range(0, layerNames.Count).Select(l => (
             ByKind: lists.ToDictionary(kv => kv.Key, kv => kv.Value.Where(e => LayerIndex(e.Facts.LayerNode) == l).ToList()),
@@ -274,6 +251,41 @@ public static class WorldNodeFiles
             foreach (var p in packages)
                 p.Dispose();
         }
+    }
+
+    /// <summary>
+    /// The node's world layer table (FUN_18026cac0): world_layer_base, then each entry's layer in BuildNode's order,
+    /// then the props' (the record's +0x180, the prop tree in model order), then the third list (node +0x178, 0x20 a
+    /// record): the overlays', each new name appended while fewer than 0x40; an entry past them, or with no layer,
+    /// is layer 0. Returns the names and the index of a node id (an entry's LayerNode) and of a name; both lookups
+    /// add a name not met yet, as the table's own walk does.
+    /// </summary>
+    internal static (List<string> Names, Func<int, int> OfNode, Func<string, int> OfName) LayerTable(DmxBinary.Document document, GameContent content,
+        IReadOnlyList<WorldNodeBuild.Built> built, IReadOnlyList<NodeOverlays.Descriptor> descriptors)
+    {
+        var layerOf = WorldLayerOfNodes(document, content);
+        var layerNames = new List<string> { "world_layer_base" };
+        int LayerByName(string name)
+        {
+            var at = layerNames.FindIndex(n => Io.Tier0Strings.EqualsIgnoreCase(n, name));
+            if (at >= 0)
+                return at;
+            if (layerNames.Count >= 0x40)
+                return 0;
+            layerNames.Add(name);
+            return layerNames.Count - 1;
+        }
+        int LayerIndex(int nodeId) => layerOf.TryGetValue(nodeId, out var name) ? LayerByName(name) : 0;
+        foreach (var b in built)
+            LayerIndex(b.Source.Header.NodeId);
+        foreach (var (_, prop) in MapMeshes.ReadWithEntities(document).Entities
+                     .Where(e => !e.Hidden && e.Layer is not null && e.Element.Get<DmxBinary.Element>("entity_properties")?.Get<string>("classname") == "prop_static")
+                     .Select(e => (Model: e.Element.Get<DmxBinary.Element>("entity_properties")!.Get<string>("model") ?? "", e))
+                     .OrderBy(x => x.Model, StringComparer.Ordinal))
+            LayerByName("world_layer_" + prop.Layer);
+        foreach (var d in descriptors)
+            LayerIndex(d.NodeId);
+        return (layerNames, LayerIndex, LayerByName);
     }
 
     /// <summary>
