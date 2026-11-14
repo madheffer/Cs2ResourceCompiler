@@ -148,6 +148,209 @@ internal static class BlendFaces
         return bias;
     }
 
+    /// <summary>RED2's physics_shape_mesh_count of the map's world physics: how many mesh pieces the compile
+    /// cut (empty layer pieces of painted blends included), or null.</summary>
+    internal static int? ShippedMeshPieces(IReadOnlyDictionary<string, byte[]> files, string mapName)
+    {
+        if (!files.TryGetValue($"maps/{mapName}/world_physics.vmdl_c", out var bytes))
+            return null;
+        using var resource = new Resource();
+        resource.Read(new MemoryStream(bytes));
+        return resource.EditInfo?.SearchableUserData.TryGetValue("physics_shape_mesh_count", out var value) == true && value is not null
+            ? (int)Convert.ToInt64(value.ToString(), System.Globalization.CultureInfo.InvariantCulture) : null;
+    }
+
+    /// <summary>
+    /// The world physics' surface table entries the mesh pieces registered, in table order: the part registers
+    /// spheres, capsules and hulls first, then each mesh piece in part order, empty ones too (WorldPhysics.Build), so
+    /// the entries no other shape uses are the mesh pieces' first surfaces in their part order. Null without the file.
+    /// </summary>
+    internal static List<uint>? MeshSurfaceOrder(IReadOnlyDictionary<string, byte[]> files, string mapName)
+    {
+        if (!files.TryGetValue($"maps/{mapName}/world_physics.vmdl_c", out var bytes))
+            return null;
+        using var resource = new Resource();
+        resource.Read(new MemoryStream(bytes));
+        var phys = resource.Blocks.FirstOrDefault(b => b.Type == BlockType.PHYS) switch
+        {
+            KeyValuesOrNTRO k => k.Data,
+            BinaryKV3 k => k.Data.Root,
+            _ => null,
+        };
+        static ValveKeyValue.KVObject? Child(ValveKeyValue.KVObject? parent, string key)
+            => parent is not null && parent.IsCollection && parent.TryGetValue(key, out var child) ? child : null;
+        var table = Child(phys, "m_surfacePropertyHashes")?.Values.Select(v => (uint)v.ToInt64(null)).ToList();
+        if (table is null)
+            return null;
+        var others = new HashSet<int>();
+        foreach (var part in Child(phys, "m_parts")?.Values ?? [])
+            foreach (var kind in new[] { "m_spheres", "m_capsules", "m_hulls" })
+                foreach (var shape in Child(Child(part, "m_rnShape"), kind)?.Values ?? [])
+                    others.Add((int)(Child(shape, "m_nSurfacePropertyIndex")?.ToInt64(null) ?? -1));
+        return [.. table.Where((_, i) => !others.Contains(i))];
+    }
+
+    /// <summary>Where the world's meshes go in the .vmap: their walk order and where the props' hull runs stand.</summary>
+    /// <param name="Walk">Indices into the (merged) mesh list, in walk order.</param>
+    /// <param name="Runs">Each run of props' hulls in the walk: how many meshes come before it and how many hulls it holds.</param>
+    /// <param name="ShippedOfWalk">Each walk item's place in the part (pieces and hulls), for the props' check.</param>
+    /// <param name="HullWalk">The hulls' walk items, in walk order.</param>
+    internal sealed record Layout(List<int> Walk, List<(int MeshesBefore, int Hulls)> Runs, int[] ShippedOfWalk, int[] HullWalk);
+
+    /// <summary>
+    /// The world meshes' walk order that gives the shipped part order of their physics pieces. Each mesh gives
+    /// the pieces the forward cuts from it (<paramref name="piecesOf"/>: triangles per piece in the forward's
+    /// order; a splitting blend gives one per layer, empty ones kept, WorldCollision.SplitLayers), one after
+    /// another in the walk, and the part sorts all of them with the props' hulls after every append
+    /// (WorldCollision.PartOrder). The meshes come in shipped order (each one non-empty piece, in the soup's
+    /// vertex order), so only the empty pieces' places in the part are unknown: searched so that every mesh's
+    /// pieces stand together in the walk. Before that, adjacent runs of one material are joined until the
+    /// pieces number the shipped count (<paramref name="target"/>, RED2): the soup is the pieces joined in part
+    /// order, so which adjacent runs join changes no physics byte, only the count does (node 409's hr_conc
+    /// 30 | 8 is one such choice; the leftmost runs are joined first). Null when a mesh has more than one
+    /// non-empty piece or no order holds.
+    /// </summary>
+    /// <param name="propsHold">Whether the props' hulls land in the shipped hull order for this walk-to-part map and
+    /// these hull walk items (in walk order).</param>
+    /// <remarks>The props' hulls are one run between meshes, or two (ze_hold_em_p's source: node 12 and 13, the 43
+    /// fixtures' 86 hulls, node 409's 7 pieces, the 43 bulbs' hulls; WPBUILD_WALK). One run is tried first.</remarks>
+    /// <param name="surfaceOrder">The surfaces the mesh pieces registered, in the shipped table's order
+    /// (<see cref="MeshSurfaceOrder"/>): a layout must register them so, empty pieces included.</param>
+    internal static (List<WorldGeometry.Mesh> Meshes, Layout? Layout) PieceLayout(List<WorldGeometry.Mesh> meshes,
+        Func<WorldGeometry.Mesh, (int Triangles, uint Surface)[]> piecesOf, int? target, int hulls, Func<int[], int[], bool> propsHold,
+        IReadOnlyList<uint>? surfaceOrder, List<string> notes)
+    {
+        meshes = [.. meshes];
+        var pieces = meshes.Select(piecesOf).ToList();
+        if (pieces.Any(p => p.Count(n => n.Triangles > 0) != 1))
+        {
+            notes.Add("world: a mesh gives other than one non-empty physics piece; meshes written in the one-piece order");
+            return (meshes, null);
+        }
+        // Join adjacent one-piece runs of one material until the count is the shipped one.
+        var joined = 0;
+        while (target is { } want && pieces.Sum(p => p.Length) > want)
+        {
+            var m = Enumerable.Range(0, meshes.Count - 1).FirstOrDefault(i => pieces[i].Length == 1 && pieces[i + 1].Length == 1
+                && meshes[i].Materials.Count == 1 && meshes[i + 1].Materials.Count == 1
+                && string.Equals(meshes[i].Materials[0], meshes[i + 1].Materials[0], StringComparison.Ordinal), -1);
+            if (m < 0)
+                break;
+            var (a, b) = (meshes[m], meshes[m + 1]);
+            List<Vector4[]?>? paint = a.Paint is null && b.Paint is null ? null
+                : [.. a.Paint ?? Enumerable.Repeat<Vector4[]?>(null, a.Faces.Count), .. b.Paint ?? Enumerable.Repeat<Vector4[]?>(null, b.Faces.Count)];
+            List<int>? bias = a.Bias is null && b.Bias is null ? null
+                : [.. a.Bias ?? Enumerable.Repeat(0, a.Faces.Count), .. b.Bias ?? Enumerable.Repeat(0, b.Faces.Count)];
+            meshes[m] = new WorldGeometry.Mesh(a.Materials, [.. a.Faces, .. b.Faces], a.Name, paint, bias);
+            meshes.RemoveAt(m + 1);
+            pieces.RemoveAt(m + 1);
+            pieces[m] = piecesOf(meshes[m]);
+            joined++;
+        }
+        var total = pieces.Sum(p => p.Length);
+        if (joined > 0)
+            notes.Add($"world: {joined} adjacent run(s) of one material joined to the shipped {target} physics pieces (which ones join changes no physics byte)");
+        if (target is { } t && total != t)
+            notes.Add($"world: the meshes give {total} physics pieces, the package {t}");
+        var filled = pieces.Select(p => Array.FindIndex(p, n => n.Triangles > 0)).ToArray();
+        // Surfaces some other shape registered first: in the table, not among the mesh pieces' own.
+        var registeredBefore = surfaceOrder is null ? null
+            : pieces.SelectMany(p => p.Select(x => x.Surface)).Where(s => !surfaceOrder.Contains(s)).ToHashSet();
+        // The walk's type layout: a mesh pieces, h1 hulls, (b - a) mesh pieces, the other hulls, the rest. One run
+        // (h1 = all hulls, the props after `a` pieces) first, most pieces before it first, as the one-piece search did.
+        IEnumerable<(int A, int H1, int B)> Layouts()
+        {
+            for (var a = total; a >= 0; a--)
+                yield return (a, hulls, a);
+            // Each layout costs a full part sort; two runs are tried only where that stays small (ze: 9 pieces, 129 hulls).
+            if (hulls < 2 || (long)total * total * hulls > 40000)
+                yield break;
+            for (var a = total; a >= 0; a--)
+                for (var b = total; b > a; b--)
+                    for (var h1 = hulls - 1; h1 >= 1; h1--)
+                        yield return (a, h1, b);
+        }
+        foreach (var (a, h1, b) in Layouts())
+        {
+            var isHull = new bool[total + hulls];
+            for (var w = a; w < a + h1; w++)
+                isHull[w] = true;
+            for (var w = b + h1; w < b + hulls; w++)
+                isHull[w] = true;
+            var at = Physics.WorldCollision.PartOrder(Enumerable.Range(0, total + hulls), i => isHull[i] ? 2 : 3);
+            var shippedOfWalk = new int[at.Count];
+            for (var k = 0; k < at.Count; k++)
+                shippedOfWalk[at[k]] = k;
+            var hullWalk = Enumerable.Range(0, at.Count).Where(w => isHull[w]).ToArray();
+            // The props' hulls first: cheaper than placing the pieces, and it rules out most layouts.
+            if (hulls > 0 && !propsHold(shippedOfWalk, hullWalk))
+                continue;
+            // Each part slot of a mesh piece (after the hulls) back to its walk item.
+            var walkOfSlot = new int[total];
+            for (var w = 0; w < at.Count; w++)
+                if (!isHull[w])
+                    walkOfSlot[shippedOfWalk[w] - hulls] = w;
+            int SlotOf(int w) => w < 0 || w >= at.Count || isHull[w] ? -1 : shippedOfWalk[w] - hulls;
+            var claimed = new bool[total];
+            var start = new int[meshes.Count];
+            var budget = 200000;
+            // Meshes in shipped order take the free slots in order; a slot skipped is an empty piece of a later mesh.
+            bool Place(int m, int from, int pending)
+            {
+                if (--budget < 0)
+                    return false;
+                if (m == meshes.Count)
+                    return pending == 0 && claimed.All(c => c) && SurfacesHold();
+                for (var s = from; s < total; s++)
+                {
+                    if (claimed[s])
+                        continue;
+                    var first = walkOfSlot[s] - filled[m];
+                    var slots = Enumerable.Range(0, pieces[m].Length).Select(j => SlotOf(first + j)).ToArray();
+                    if (slots.All(x => x >= 0 && (x == s || !claimed[x])) && slots.Distinct().Count() == slots.Length
+                        && slots.Where(x => x != s).All(x => x > s || IsPending(x, s)))
+                    {
+                        var freed = slots.Count(x => x != s && x < s);
+                        foreach (var x in slots)
+                            claimed[x] = true;
+                        start[m] = first;
+                        if (Place(m + 1, s + 1, pending - freed))
+                            return true;
+                        foreach (var x in slots)
+                            claimed[x] = false;
+                    }
+                    // Else this slot is a later mesh's empty piece.
+                    pending++;
+                    if (pending > total - meshes.Count)
+                        return false;
+                }
+                return false;
+            }
+            // A skipped slot below s is one left unclaimed earlier.
+            bool IsPending(int x, int s) => x < s && !claimed[x];
+            // The pieces' surfaces, first seen in part order, are the shipped table's mesh entries in order.
+            bool SurfacesHold()
+            {
+                if (surfaceOrder is null)
+                    return true;
+                var bySlot = new uint[total];
+                for (var m = 0; m < meshes.Count; m++)
+                    for (var j = 0; j < pieces[m].Length; j++)
+                        bySlot[SlotOf(start[m] + j)] = pieces[m][j].Surface;
+                var seen = bySlot.Where(s => !registeredBefore!.Contains(s)).Distinct().ToList();
+                return seen.SequenceEqual(surfaceOrder);
+            }
+            if (!Place(0, 0, 0))
+                continue;
+            var walk = Enumerable.Range(0, meshes.Count).OrderBy(m => start[m]).ToList();
+            List<(int, int)> runs = h1 == hulls ? [(walk.Count(m => start[m] < a), hulls)]
+                : [(walk.Count(m => start[m] < a), h1), (walk.Count(m => start[m] < b + h1), hulls - h1)];
+            return (meshes, new Layout(walk, runs, shippedOfWalk, hullWalk));
+        }
+        notes.Add("world: no walk order gives the shipped part order with every mesh's physics pieces together; meshes written in the one-piece order");
+        return (meshes, null);
+    }
+
     /// <summary>
     /// A stored channel back to a paint value. The compile packs it as ConvertFloatToChannel (181363b90,
     /// WorldNodeModels.Unorm8): clamped, times 255, truncated; so byte b stood for a value in [b/255, (b+1)/255)

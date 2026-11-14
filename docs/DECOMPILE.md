@@ -121,6 +121,23 @@ World geometry (the largest gap, 32%):
    (c) the walk-order inversion (`ShippedAt` in MapDecompiler) counting a splitting blend mesh as its layer
    pieces, empty ones included. The hr 30 | 8 cut falls inside the run of 10 and is pinned only by m_Triangles,
    so decide it by trying each cut through the forward once the rest is exact (about 2 s a build).
+   **11-15 later (ledger 291): pieces done.** (a) fixed by the other session (b44bd12, Members keeps one material
+   per member). (b) and (c) are `BlendFaces.PieceLayout`, called from MapDecompiler's world block: each world mesh's
+   pieces are the forward's own (the mesh written into a scratch map and cut by `WorldCollision.Pieces`); adjacent
+   one-material runs are joined, leftmost first, until the pieces number RED2's physics_shape_mesh_count; then a
+   search places the empty layer pieces in the part so every mesh's pieces stand together in the walk, the
+   props' hulls land in the shipped hull order and the pieces register the shipped surface table's mesh entries
+   in order (`MeshSurfaceOrder`). The props may stand in two runs (the true source: nodes 12 and 13, 86 fixture
+   hulls, node 409's 7 pieces, 43 bulb hulls; `WPBUILD_WALK`), so two-run layouts are tried after one-run ones
+   (capped by size). Correction to the line above: the cut is NOT pinned by m_Triangles. `WorldCollision.Group`
+   appends the pieces to one soup in part order, so where adjacent runs of one material join changes no byte (only
+   the count does), except where a soup would pass its `CountLimit`. ze through our forward: RED2 0 differences
+   (9 mesh pieces, 138 shapes), the surface table Valve's, PHYS 18 differences (was 4,513): m_Vertices from vertex
+   52, m_Triangles and 16 per-triangle surface ids, all triangle order inside pieces. What decides those (the other
+   session's PolygonOrder): the y = 398 quad brings no new vertex and is written first in the hr run, where the
+   source has it in the bias-0 hr 8 piece; and the slab 4480 piece is the right triangle set in another order. The
+   shipped vertex order pins the slab's: vertices 52-54 are the bake's first slab triangle, then a triangle of
+   another face, as the bake interleaves faces. `DECOMPILE_PIECE_LAYOUT=0` turns the layout off (the A/B).
 2. **The source's mesh split** (RED2 physics_shape_count 16 vs 4 on probe01): the physics cannot
    decide it; it waits on the render-mesh port (render aggregates merge and re-split meshes).
 3. **Render meshes** of the world: corner texcoords and normals as the brush entities' now are

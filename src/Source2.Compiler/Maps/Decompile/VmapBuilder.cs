@@ -688,8 +688,9 @@ public sealed class VmapBuilder
 
     private static void AddChild(DmxBinary.Element parent, DmxBinary.Element child)
     {
+        // Typed too: a world that had no child before (a scratch map's) has no type for it yet.
         var children = parent.Get<object?[]>("children") ?? [];
-        parent.Attributes["children"] = children.Append(child).ToArray();
+        parent.Set("children", T.Array(T.Element), children.Append(child).ToArray());
     }
 
     private static void Node(DmxBinary.Element e, int nodeId, ulong referenceId)

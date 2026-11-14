@@ -154,6 +154,24 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
         using var gpu = Environment.GetEnvironmentVariable("WPBUILD_GPU") == "1"
             ? new Source2.Compiler.Gpu.GpuMaterialSampler(Path.Combine(game, "csgo", "shaders_vulkan_dir.vpk"), models.Read)
             : null;
+        // WPBUILD_WALK=1: the pieces in walk order (type, node, material, triangles) with each one's place in the part.
+        if (Environment.GetEnvironmentVariable("WPBUILD_WALK") == "1")
+        {
+            var walkPieces = Physics.WorldCollision.Pieces(doc, name => Physics.WorldCollision.ReadMaterial(name, models.Material, models.CollisionProperty),
+                null, gpu == null ? null : gpu.For, models.Physics, models.SmartProp, models.CollisionProperty);
+            var part = Physics.WorldCollision.PartOrder(Enumerable.Range(0, walkPieces.Count), i => walkPieces[i].Type);
+            var placeOf = new int[part.Count];
+            for (var k = 0; k < part.Count; k++)
+                placeOf[part[k]] = k;
+            var hullRuns = new List<string>();
+            for (var w = 0; w < walkPieces.Count; w++)
+                if (walkPieces[w].Type == Physics.WorldCollision.MeshType)
+                    output.WriteLine($"walk {w}: mesh node {walkPieces[w].NodeId} {Path.GetFileNameWithoutExtension(walkPieces[w].MaterialName)} tris {walkPieces[w].Indices.Length / 3} -> part {placeOf[w]}");
+                else if (w == 0 || walkPieces[w - 1].Type != walkPieces[w].Type)
+                    hullRuns.Add($"{w}");
+            output.WriteLine($"walk: {walkPieces.Count} pieces, {walkPieces.Count(p => p.Type == Physics.WorldCollision.HullType)} hulls; hull runs start at walk {string.Join(",", hullRuns)}; types {string.Join("", walkPieces.Select(p => p.Type))}");
+            return;
+        }
         if (Environment.GetEnvironmentVariable("WPBUILD_HULLIDX") is { Length: > 0 } idxText)
         {
             var pieces = Physics.WorldCollision.Pieces(doc, name => Physics.WorldCollision.ReadMaterial(name, models.Material, models.CollisionProperty),

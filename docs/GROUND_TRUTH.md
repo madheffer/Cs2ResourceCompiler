@@ -7037,3 +7037,30 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Not read: where hr_conc's 30 | 8 boundary falls in the shipped soup. The vertex first-use order and RED2's
        piece count do not pin it (the cut lies inside one connected run of 10 triangles); only the BVH's triangle
        order does.
+
+291. **The world part's pieces in walk order: empty layer pieces, the props' hull runs, the surface table**
+     (2026-11-15, research/vmap-decompile, ze_hold_em_p; offline, our forward on the true source, exact against
+     Valve's package).
+     - Measured (`WPBUILD_WALK` on the true source): the part's walk is node 12, node 13 (6 hr_conc triangles each),
+       the 43 fluorescent fixtures' 86 hulls, node 409's 7 pieces (concrete_9 16, hr_conc 8, slabs 2 then its empty
+       layer piece, hr_conc 30, slabs 4480 then its empty layer piece), the 43 bulbs' hulls: 138 items, the props'
+       hulls in two runs, and a slab's filled layer piece before its empty one. In the part (the type sort after
+       every append, WorldCollision.PartOrder) the 9 mesh pieces stand hr 6 | empty | slab 2 | c9 16 | empty | hr 6 |
+       hr 30 | hr 8 | slab 4480, behind the 129 hulls.
+     - From the forward (WorldPhysics.Build): spheres, capsules and hulls register their surfaces first, then each
+       mesh piece in part order, empty ones included; so the shipped table's entries no other shape uses are the
+       mesh pieces' first surfaces in part order (ze: wet before concrete_block, from the empty layer piece
+       ahead of the slab's filled one).
+     - From the forward (WorldCollision.Group): each piece is appended to its attribute's newest soup in part order,
+       so the soup is the pieces joined in part order. Where adjacent pieces of one material are cut changes no
+       PHYS byte, only the count does (RED2 physics_shape_mesh_count), unless a soup would pass its CountLimit.
+     - Effect (`BlendFaces.PieceLayout`, decompile with the layout on and off): ze_hold_em_p's decompile through
+       our forward goes from PHYS 4,507 / RED2 3 differences to PHYS 18 / RED2 0 (9 mesh pieces, 138 shapes, the
+       surface table Valve's). The decompiled walk differs from the source's (props after 2 and 7 meshes; empty
+       pieces in other part slots) and builds the same bytes. probe01 and atixref decompiles are byte for byte
+       the same with the layout on and off.
+     - Left (the 18): m_Vertices from vertex 52, m_Triangles and 16 per-triangle surface ids, all triangle order
+       inside pieces. The shipped vertex order pins the slab 4480 piece's: vertices 52-54 are the bake's first
+       slab triangle, (1241.6001,-167.875,17) (1241.6001,-105,17) (1165.5,-105,17), then a triangle of another
+       face, as the bake interleaves faces. Not pinned by the vertex order: the y = 398 hr_conc quad, which brings
+       no new vertex (the source has it in the bias-0 hr 8 piece; the BVH order would place it).

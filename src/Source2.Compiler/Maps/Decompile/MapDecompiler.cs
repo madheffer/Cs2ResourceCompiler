@@ -470,8 +470,32 @@ public static class MapDecompiler
             if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
                 notes.Add($"world debug: props' shipped hulls {string.Join(" ", props.OrderBy(p => p.Hulls.Min()).Select(p => $"{Path.GetFileNameWithoutExtension(p.Model)[^5..]}[{string.Join(",", p.Hulls)}]"))}");
         }
-        var meshCount = worldMeshes.Count;
         var placedHulls = props.Sum(p => p.Hulls.Length);
+        // The meshes' walk order from their physics pieces: a painted blend mesh gives one piece per layer, empty
+        // ones too, and the shipped count asks some adjacent runs to be one mesh (BlendFaces.PieceLayout). Each
+        // mesh's pieces are the forward's own, cut from the mesh as written into a scratch map.
+        BlendFaces.Layout? layout = null;
+        // DECOMPILE_PIECE_LAYOUT=0: the one-piece order only (the comparison before this layout).
+        if (worldMeshes.Count > 0 && content is not null && Environment.GetEnvironmentVariable("DECOMPILE_PIECE_LAYOUT") != "0")
+        {
+            (int Triangles, uint Surface)[] PiecesOf(WorldGeometry.Mesh mesh)
+            {
+                var scratch = new VmapBuilder("pieces");
+                foreach (var part in HalfEdgeParts(mesh.Faces.Select(f => f.Corners).ToList(), out _))
+                    scratch.AddMesh(scratch.World, 1, Vector3.Zero, Vector3.Zero,
+                                    [.. part.Select(i => (mesh.Faces[i].Corners, mesh.Faces[i].Material))], mesh.Materials,
+                                    cornerBlend: mesh.Paint is { } paint ? [.. part.Select(i => paint[i])] : null,
+                                    faceBiases: mesh.Bias is { } bias ? [.. part.Select(i => bias[i])] : null);
+                var scratchDoc = DmxBinary.Read(scratch.Write());
+                return [.. Physics.WorldCollision.Pieces(scratchDoc, name => Physics.WorldCollision.ReadMaterial(name, content.Material, content.CollisionProperty),
+                                                          collisionProperty: content.CollisionProperty)
+                    .Where(p => p.Type == Physics.WorldCollision.MeshType).Select(p => (p.Indices.Length / 3, p.Physics.SurfaceKey))];
+            }
+            (worldMeshes, layout) = BlendFaces.PieceLayout(worldMeshes, PiecesOf, BlendFaces.ShippedMeshPieces(files, mapName), placedHulls,
+                (shippedOfWalk, hullWalk) => props.Count == 0 || placedHulls != shippedHulls || PropsAt(shippedOfWalk, hullWalk) is not null,
+                BlendFaces.MeshSurfaceOrder(files, mapName), notes);
+        }
+        var meshCount = worldMeshes.Count;
         // Where the props stood among the meshes changes the sort's shuffle of its first few (CRT qsort):
         // the props are taken as one run after `before` meshes, the first count (most meshes first)
         // whose inverse gives each prop its hulls in a row.
@@ -484,21 +508,35 @@ public static class MapDecompiler
             return inverse;
         }
         List<StaticProps.Placed>? PropOrder(int[] shippedAt, int before)
+            => PropsAt(shippedAt, [.. Enumerable.Range(before, placedHulls)]);
+        // The props in walk order whose hulls, at these walk items in order, land on the shipped hulls in a row
+        // each, in model order; null when no such order.
+        List<StaticProps.Placed>? PropsAt(int[] shippedAt, int[] hullWalk)
         {
             var byFirst = props.ToDictionary(p => p.Hulls[0]);
             var ordered = new List<StaticProps.Placed>();
-            for (var slot = before; slot < before + placedHulls;)
+            for (var k = 0; k < hullWalk.Length;)
             {
-                if (!byFirst.TryGetValue(shippedAt[slot], out var prop)
-                    || Enumerable.Range(0, prop.Hulls.Length).Any(j => shippedAt[slot + j] != prop.Hulls[j]))
+                if (!byFirst.TryGetValue(shippedAt[hullWalk[k]], out var prop) || k + prop.Hulls.Length > hullWalk.Length
+                    || Enumerable.Range(0, prop.Hulls.Length).Any(j => shippedAt[hullWalk[k + j]] != prop.Hulls[j]))
                     return null;
                 ordered.Add(prop);
-                slot += prop.Hulls.Length;
+                k += prop.Hulls.Length;
             }
             return ordered;
         }
         var (meshesBefore, worldShippedAt, propOrder) = (meshCount, ShippedAt(meshCount), (List<StaticProps.Placed>?)null);
-        if (props.Count > 0)
+        if (layout is not null)
+        {
+            if (props.Count > 0 && placedHulls == shippedHulls)
+                propOrder = PropsAt(layout.ShippedOfWalk, layout.HullWalk);
+            if (props.Count > 0)
+                notes.Add(propOrder is null
+                    ? $"prop_static: no place among the meshes gives the shipped hull order ({placedHulls} hulls placed of {shippedHulls}); written as found"
+                    : $"prop_static: {props.Count} rebuilt from {placedHulls} of the world's {shippedHulls} hulls, in {layout.Runs.Count} run(s) " +
+                      $"after {string.Join(" and ", layout.Runs.Select(r => r.MeshesBefore))} of the {meshCount} world meshes");
+        }
+        else if (props.Count > 0)
         {
             if (placedHulls == shippedHulls)
                 for (var before = meshCount; before >= 0 && propOrder is null; before--)
@@ -510,9 +548,13 @@ public static class MapDecompiler
                 notes.Add($"prop_static: {props.Count} rebuilt from {placedHulls} of the world's {shippedHulls} hulls, after {meshesBefore} of the {meshCount} world meshes");
         }
         var (splitMeshes, extraParts, droppedFaces) = (0, 0, 0);
-        void WriteMesh(int slot)
+        // A walk slot's mesh by the one-piece inverse of the part order.
+        void WriteMesh(int slot) => WriteWorldMesh(worldMeshes[worldShippedAt[slot] - placedHulls]);
+        void WriteProp(StaticProps.Placed prop)
+            => main.Builder!.AddEntity(main.NewId!(), [new("classname", "prop_static"), new("model", prop.Model)],
+                                       prop.Origin, prop.Angles, Vector3.One, []);
+        void WriteWorldMesh(WorldGeometry.Mesh mesh)
         {
-            var mesh = worldMeshes[worldShippedAt[slot] - placedHulls];
             var parts = HalfEdgeParts(mesh.Faces.Select(f => f.Corners).ToList(), out var dropped);
             droppedFaces += dropped;
             if (parts.Count > 1)
@@ -524,13 +566,35 @@ public static class MapDecompiler
                                       cornerBlend: mesh.Paint is { } paint ? [.. part.Select(i => paint[i])] : null,
                                       faceBiases: mesh.Bias is { } bias ? [.. part.Select(i => bias[i])] : null);
         }
-        for (var slot = 0; slot < meshesBefore; slot++)
-            WriteMesh(slot);
-        foreach (var prop in propOrder ?? props)
-            main.Builder!.AddEntity(main.NewId!(), [new("classname", "prop_static"), new("model", prop.Model)],
-                                    prop.Origin, prop.Angles, Vector3.One, []);
-        for (var slot = meshesBefore + placedHulls; slot < meshCount + placedHulls; slot++)
-            WriteMesh(slot);
+        if (layout is not null)
+        {
+            // Meshes in the layout's walk order, each run of props where its hulls stand, the props in order.
+            var (nextMesh, nextProp) = (0, 0);
+            var queue = propOrder ?? props;
+            foreach (var (before, hullCount) in layout.Runs)
+            {
+                for (; nextMesh < before; nextMesh++)
+                    WriteWorldMesh(worldMeshes[layout.Walk[nextMesh]]);
+                for (var taken = 0; taken < hullCount && nextProp < queue.Count; nextProp++)
+                {
+                    WriteProp(queue[nextProp]);
+                    taken += queue[nextProp].Hulls.Length;
+                }
+            }
+            for (; nextMesh < layout.Walk.Count; nextMesh++)
+                WriteWorldMesh(worldMeshes[layout.Walk[nextMesh]]);
+            for (; nextProp < queue.Count; nextProp++)
+                WriteProp(queue[nextProp]);
+        }
+        else
+        {
+            for (var slot = 0; slot < meshesBefore; slot++)
+                WriteMesh(slot);
+            foreach (var prop in propOrder ?? props)
+                WriteProp(prop);
+            for (var slot = meshesBefore + placedHulls; slot < meshCount + placedHulls; slot++)
+                WriteMesh(slot);
+        }
         foreach (var prop in meshProps)
             main.Builder!.AddEntity(main.NewId!(), [new("classname", "prop_static"), new("model", prop.Model)],
                                     prop.Origin, prop.Angles, Vector3.One, []);
