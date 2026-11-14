@@ -66,9 +66,7 @@ internal static class EntityRenderModels
             all = [.. all.Select(p => NodeMeshEntries.WithPaintStreams(p, needs))];
             // Hammer's high precision flag: a texcoord out of +-1.03125 anywhere in the
             // mesh, faces that draw nothing included.
-            var precise = all.Any(p => p.Streams.Where(x => x.Name == "texcoord").Any(x =>
-                Enumerable.Range(0, p.Vertices.Length / p.Stride).Any(c => MathF.Abs(p.Vertices[(c * p.Stride) + x.First]) > 1.03125f
-                                                                        || MathF.Abs(p.Vertices[(c * p.Stride) + x.First + 1]) > 1.03125f)));
+            var precise = MapMeshCorners.TexcoordsOutOfRange(mesh, shift);
             var pieces = all.Select(p => (Piece: p, Material: applied ?? (p.Material < names.Length ? names[p.Material] : "")))
                 .Where(p => !drawsNothing(p.Material)).ToList();
             for (var k = 0; k < pieces.Count; k++)

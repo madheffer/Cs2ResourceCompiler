@@ -147,7 +147,7 @@ heavy runs with the game open at below-normal priority):
      6 words, brick02's 23 forced): compare the tangentcompute floats with ours bit for bit. A blanket renormalise of
      our output fixes trim but breaks 7 mesh_overlay models, so it is not the rule.
 
-15. **ze_shaurma's no-vis merge** (real-map sweep 2026-11-15; ledger 292 has the maps that are exact). Our
+15. ~~ze_shaurma's no-vis merge~~ (done 2026-11-15, ledger 304: the merger is Valve's; the high precision flag reads the whole texcoord array; 968 of 1,004). Was: **ze_shaurma's no-vis merge** (real-map sweep 2026-11-15; ledger 292 has the maps that are exact). Our
    `compile-map -world` of s2p_shaurma's ze_shaurma_v3_b07_t5 against Valve's 11-12 package (inputs unchanged
    since): 626 of 1,004 files equal. The world node has 54 agg_merge aggregates Valve does not make and 142
    shared ones with more fragments than Valve's (assault_brick2a 17 vs 12): Valve's merger joins meshes ours

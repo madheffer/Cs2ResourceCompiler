@@ -100,8 +100,7 @@ internal static class NodeMeshEntries
                 var needs = names.SelectMany(signature).ToHashSet();
                 pieces = [.. pieces.Select(p => WithPaintStreams(p, needs))];
             }
-            var precise = forceHighPrecisionTexcoords || pieces.Any(p => p.Streams.Where(x => x.Name == "texcoord").Any(x =>
-                Enumerable.Range(0, p.Vertices.Length / p.Stride).Any(c => MathF.Abs(p.Vertices[(c * p.Stride) + x.First]) > 1.03125f || MathF.Abs(p.Vertices[(c * p.Stride) + x.First + 1]) > 1.03125f)));
+            var precise = forceHighPrecisionTexcoords || MapMeshCorners.TexcoordsOutOfRange(mesh.Element, shift);
             foreach (var piece in pieces)
             {
                 var v = (float[])piece.Vertices.Clone();

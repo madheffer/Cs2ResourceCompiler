@@ -6748,3 +6748,27 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Mako -world: 966 of 1,782 (was 957); lr2 171 objects (Valve 202, was 129). Left: the render cluster
        boxes per layer (Valve's lr2 cluster ids reach 45, ours 37), which decide how instanced meshes are cut
        (CS2_CLOSED_QUEUE A.17). Every other corpus map unchanged.
+
+304. **The high precision flag reads the whole texcoord array** (2026-11-15, CS2 closed: Frida on a standalone
+     resourcecompiler 1.41.9.7 compiling s2p_shaurma ze_shaurma_v3_b07_t5 -world -fshallow, packages restored
+     cmp-ok: tools/vis/capture_meshmerge.py (new --max-pairs), tools/re/capture_texcoordrange.py (new),
+     tools/re/capture_texcoordtransform.py (new --shift -0xe0); rc 0923 decompiles of ConvertMeshForBuilder
+     1810dff20, HammerMesh_TexcoordsOutOfRange 1810e7020, TexcoordIsland_Recentre 1813cc880). READ + MEASURED.
+     Closes CS2_CLOSED_QUEUE A.15.
+     - The merger itself is Valve's: VisibilityMeshMergerReplay on the capture, 3 of 3 calls exact (6,909
+       aggregate entries, 118 overlays), CanMerge 13,924 of 13,924 pairs. MergerFromVmapTests showed our inputs
+       differ in one fact only: 2,941 entries whose texcoord stream Valve marks high precision (+0x1d).
+     - None of shaurma's materials answers HasTexcoordTransform or 0x7c928c7c (10,256 reads, all missing), so
+       every mesh shifts. ConvertMeshForBuilder tests HammerMesh_TexcoordsOutOfRange (+-1.03125, every enabled
+       two-float face-vertex slot) before and after HammerMesh_ShiftTexcoordIslands; the second answer is the
+       mesh's forceHighPrecisionTexcoords. On shaurma it stays true for 5,741 of 6,043 meshes.
+     - Why: the test walks each stream's whole data array, while the shift (TexcoordIsland_Recentre over each
+       island's face corners) moves only the entries a face corner reaches. An open quad's array has 8 entries,
+       4 for its corners and 4 for the boundary half-edges no face uses; after the shift the corners read 0.28 ..
+       0 and the others keep -29, so the mesh is out of range. The CMesh takes only face corners, so the
+       vertices match ours either way.
+     - Ported: MapMeshCorners.TexcoordsOutOfRange (the shift on copies of the texcoord arrays, then the range
+       over all two-float streams), used by NodeMeshEntries and EntityRenderModels.
+     - Result: ze_shaurma_v3_b07_t5 -world 968 of 1,004 files Valve's (was 626; no file on one side only);
+       merger inputs 7,027 of 7,027 exact. Mako 967 of 1,782 (was 966). probe01, cardtest, ze_hold_em_p,
+       atixref, ze_obj_christmas_factory, ze_doom_p2, ze_obj_elf_penis_factory_mat unchanged.

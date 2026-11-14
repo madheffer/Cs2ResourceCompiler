@@ -117,8 +117,15 @@ public class MergerFromVmapTests(ITestOutputHelper output)
                     if (misses.Count == 0)
                         sameFacts++;
                     foreach (var miss in misses)
-                        if (fieldMisses.TryAdd(miss, 1))
-                            output.WriteLine($"   first {miss} difference, {Path.GetFileName(v.Material)}: ours {Describe(o.Facts, miss)} valve {Describe(vf, miss)}");
+                        if (fieldMisses.TryAdd(miss, 1) || (miss == "streams" && Environment.GetEnvironmentVariable("MERGEVMAP_UV") == "1" && fieldMisses[miss] < 12))
+                        {
+                            if (fieldMisses.TryGetValue(miss, out var seen) && seen > 1)
+                                fieldMisses[miss]++;
+                            // MERGEVMAP_UV=1: the texcoord range of each differing entry (ledger 44's 1.03125 and 16 tests).
+                            var uv = o.Facts.Streams.Select((st, k) => (st, First: o.Facts.Streams.Take(k).Sum(x => x.Count))).FirstOrDefault(x => x.st.Name == "texcoord");
+                            var range = uv.st == null ? 0f : Enumerable.Range(0, o.Vertices.Length / o.Stride).Max(c => Math.Max(MathF.Abs(o.Vertices[(c * o.Stride) + uv.First]), MathF.Abs(o.Vertices[(c * o.Stride) + uv.First + 1])));
+                            output.WriteLine($"   {(seen > 1 ? "next" : "first")} {miss} difference #{j}, {Path.GetFileName(v.Material)}: ours {Describe(o.Facts, miss)} valve {Describe(vf, miss)}, max |uv| {range}, node {o.Facts.NodeId}");
+                        }
                         else
                             fieldMisses[miss]++;
                 }

@@ -315,6 +315,35 @@ internal static class MapMeshCorners
     }
 
     /// <summary>
+    /// ConvertMeshForBuilder's forceHighPrecisionTexcoords test (rc 0923 1810dff20 at 1810e05a6 .. 1810e05d0):
+    /// HammerMesh_TexcoordsOutOfRange (1810e7020) over every enabled two-float face-vertex stream, each value
+    /// against +-1.03125, after the island shift (<see cref="ShiftTexcoords"/>, when the material lets the mesh
+    /// shift). The test reads each stream's whole data array, and the shift moves only the entries a face corner
+    /// reaches, so an entry no face uses (an open mesh's boundary half-edges) keeps its raw value and can flag the
+    /// mesh: captured on ze_shaurma_v3_b07_t5 (tools/re/capture_texcoordrange.py), a lone quad's 8 entries, the 4
+    /// corners shifted to [0, 1] and the 4 others left at -29, answer out of range (ledger 304).
+    /// </summary>
+    public static bool TexcoordsOutOfRange(DmxBinary.Element mesh, bool shiftTexcoords)
+    {
+        if (mesh.Get<DmxBinary.Element>("meshData") is not { } data)
+            return false;
+        var others = new List<object?[]>();
+        var texcoords = new List<object?[]>();
+        foreach (var s in data.Get<DmxBinary.Element>("faceVertexData")?.GetElements("streams") ?? [])
+        {
+            var values = s.Get<object?[]>("data") ?? [];
+            if (values.FirstOrDefault() is not Vector2)
+                continue;
+            (s.Name.Split(':')[0] == "texcoord" ? texcoords : others).Add(values);
+        }
+        // ShiftTexcoords replaces each stream it shifts by a shifted copy, so the mesh's own arrays stay as they are.
+        if (shiftTexcoords && texcoords.Count > 0)
+            ShiftTexcoords(texcoords, Ints(data, "faceEdgeIndices"), Ints(data, "edgeNextIndices"), Ints(data, "edgeVertexDataIndices"), Ints(data, "edgeOppositeIndices"));
+        var twoFloat = others.Concat(texcoords);
+        return twoFloat.Any(t => t.Any(v => v is Vector2 uv && (uv.X < -1.03125f || 1.03125f < uv.X || uv.Y < -1.03125f || 1.03125f < uv.Y)));
+    }
+
+    /// <summary>
     /// FUN_1810d93c0, run when some texcoord lies outside +-1.03125
     /// (FUN_1810e7020): per texcoord stream, each UV island whose box leaves
     /// [0, 1] loses its box centre rounded half away from zero

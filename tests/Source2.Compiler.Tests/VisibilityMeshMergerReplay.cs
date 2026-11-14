@@ -204,12 +204,14 @@ public class VisibilityMeshMergerReplay(ITestOutputHelper output)
     {
         var n = cap.N;
         var asym = 0;
-        for (var i = 0; i < n; i++)
+        // A list captured with --no-pairs (or past --max-pairs) has no matrix: our CanMerge on the facts stands in.
+        var hasPairs = cap.Pairs.Length == n * n;
+        for (var i = 0; hasPairs && i < n; i++)
             for (var j = 0; j < n; j++)
                 if (cap.Pairs[i * n + j] != cap.Pairs[j * n + i])
                     asym++;
         // Our WRBMeshEntry_CanMerge on the captured entry facts against Valve's answers.
-        if (cap.Facts.All(f => f is not null))
+        if (hasPairs && cap.Facts.All(f => f is not null))
         {
             var wrong = 0;
             for (var i = 0; i < n; i++)
@@ -223,7 +225,8 @@ public class VisibilityMeshMergerReplay(ITestOutputHelper output)
             canMergeWrong += wrong;
         }
         var merger = new VisibilityMeshMerger(flat, mutual,
-            (a, b) => a.Mesh.VertexCount + b.Mesh.VertexCount <= 0x200000 && cap.Pairs[a.Origin * n + b.Origin] != 0)
+            (a, b) => hasPairs ? a.Mesh.VertexCount + b.Mesh.VertexCount <= 0x200000 && cap.Pairs[a.Origin * n + b.Origin] != 0
+                               : WrbMeshEntry.CanMerge(cap.Facts[a.Origin]!, a.Mesh.VertexCount, cap.Facts[b.Origin]!, b.Mesh.VertexCount))
         {
             MinTriangles = cap.Settings[0],
             MinVertices = cap.Settings[1],

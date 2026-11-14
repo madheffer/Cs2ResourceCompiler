@@ -157,11 +157,13 @@ function hook() {
             debug: merger.readPointer().toString(), out0: this.out0, nov0: this.nov0});
       for (let i = 0; i < n; i++)
         mesh(ep.add(i * 0x238), 'in', {call: this.call, i: i});
+      if (%(pairs)d && n <= %(maxpairs)d) {
       const pairs = new Uint8Array(n * n);
       for (let i = 0; i < n; i++)
         for (let j = 0; j < n; j++)
           pairs[i * n + j] = canMerge(ep.add(i * 0x238), ep.add(j * 0x238));
       send({ev: 'canmerge', call: this.call, n: n}, pairs.buffer);
+      }
     },
     onLeave(ret) {
       const on = this.out.readS32(), op = this.out.add(8).readPointer();
@@ -193,6 +195,8 @@ def main():
     p.add_argument("map")
     p.add_argument("--out")
     p.add_argument("--full", action="store_true", help="a full compile rather than -world -fshallow")
+    p.add_argument("--no-pairs", action="store_true", help="skip Valve's CanMerge over every ordered pair (n^2 calls)")
+    p.add_argument("--max-pairs", type=int, default=4000, help="only lists of at most this many entries get the pair matrix")
     a = p.parse_args()
     if running("cs2.exe"):
         raise SystemExit("CS2 is running; not starting")
@@ -232,7 +236,8 @@ def main():
     dev = frida.get_local_device()
     pid = dev.spawn(argv, cwd=BIN, stdio="pipe")
     ses = dev.attach(pid)
-    sc = ses.create_script(AGENT % {"merge": installed("resourcecompiler", MERGE_RVA, "20261001"), "canmerge": installed("resourcecompiler", CANMERGE_RVA, "20261001")})
+    sc = ses.create_script(AGENT % {"merge": installed("resourcecompiler", MERGE_RVA, "20261001"), "canmerge": installed("resourcecompiler", CANMERGE_RVA, "20261001"),
+                                    "pairs": 0 if a.no_pairs else 1, "maxpairs": a.max_pairs})
     sc.on("message", on_message)
     sc.load()
     done = threading.Event()
