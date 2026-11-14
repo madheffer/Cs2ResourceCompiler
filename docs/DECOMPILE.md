@@ -108,6 +108,19 @@ World geometry (the largest gap, 32%):
    draws with the source's biases, 18 at all 0). Packages for it: `%TEMP%/fresh_compile\ze_hold_em_p_lit.vpk`,
    `s2c_zebias1.vpk` (source, round-trip control) and `s2c_zebias0.vpk` (node 409 all 0), each with its
    `.vrad3` folder. Checked through `WORLDPHYS_PIECES`.
+   **11-15 (ledger 290):** settled that no cage is needed. Node 409 written flat (its 4,536 baked triangles as
+   faces, in bake order, per-face bias, per-vertex paint truncated to 8 bits) builds Valve's world physics byte
+   for byte (`WPBUILD_FLATTEN=409|bytes`). The paint is now read back exactly: `BlendFaces.Read` takes the
+   render's `VertexPaintBlendParams` field, which is the bake's paint truncated (13,494 of 13,494 corners), and
+   the world meshes write it as the corner stream Hammer uses (VmapBuilder `cornerBlend`). With it the decompiled
+   soup's name is Valve's. `BlendFaces.AssignBiases` gives a mesh's per-face biases from its pieces' order
+   (node 409's own), and `Mesh.Bias` -> AddMesh `faceBiases` writes them. **Left:** the piece sequence. Our runs
+   are hr 6 | slab 2 | c9 15+3 | hr 2+4 | hr 3+7+6+4+3+10+3 | slab 4480; Valve's pieces are hr 6 | slab-L0 0 |
+   slab 2 | c9 16 | slab-L0 0 | hr 6 | hr 30 | hr 8 | slab 4480. So: (a) the 2 hr_conc triangles the material
+   pass gives concrete_9 (the other session's centroid fix); (b) the hr runs merged into Valve's three pieces;
+   (c) the walk-order inversion (`ShippedAt` in MapDecompiler) counting a splitting blend mesh as its layer
+   pieces, empty ones included. The hr 30 | 8 cut falls inside the run of 10 and is pinned only by m_Triangles,
+   so decide it by trying each cut through the forward once the rest is exact (about 2 s a build).
 2. **The source's mesh split** (RED2 physics_shape_count 16 vs 4 on probe01): the physics cannot
    decide it; it waits on the render-mesh port (render aggregates merge and re-split meshes).
 3. **Render meshes** of the world: corner texcoords and normals as the brush entities' now are

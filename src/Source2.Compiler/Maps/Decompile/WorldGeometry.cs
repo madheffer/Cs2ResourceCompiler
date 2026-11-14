@@ -23,7 +23,10 @@ namespace Source2.Compiler.Maps.Decompile;
 /// </summary>
 internal static class WorldGeometry
 {
-    public sealed record Mesh(List<string> Materials, List<(Vector3[] Corners, int Material, Vector2[]? Texcoords)> Faces, string Name);
+    /// <param name="Paint">Each face's corners' VertexPaintBlendParams where the render carries it (BlendFaces), else null.</param>
+    /// <param name="Bias">Each face's lightmapScaleBias (BlendFaces.AssignBiases), else all 0.</param>
+    public sealed record Mesh(List<string> Materials, List<(Vector3[] Corners, int Material, Vector2[]? Texcoords)> Faces, string Name,
+                              List<Vector4[]?>? Paint = null, List<int>? Bias = null);
 
     /// <param name="surfaceOf">A material's surface property hash (its physics); with it a face the render
     /// does not show takes a render material of the surface the soup gives its triangle.</param>
@@ -37,6 +40,7 @@ internal static class WorldGeometry
         if (!files.TryGetValue($"maps/{mapName}/world_physics.vmdl_c", out var physicsBytes))
             return result;
         var render = RenderCorners(files, mapName);
+        var paint = BlendFaces.Read(files, mapName);
         using var resource = new Resource();
         resource.Read(new MemoryStream(physicsBytes));
         var phys = resource.Blocks.FirstOrDefault(b => b.Type == BlockType.PHYS) switch
@@ -204,7 +208,9 @@ internal static class WorldGeometry
                             texcoords = [.. f.Loop.Select(v => uv[(f.Triangles.First(t => triangles[t].A == v || triangles[t].B == v || triangles[t].C == v), v)])];
                         written.Add(([.. f.Loop.Select(v => vertices[v])], 0, texcoords));
                     }
-                    result.Add(new Mesh(materials, written, name));
+                    // Painted faces (a blend's layer per triangle): each corner's paint from the render (BlendFaces).
+                    var painted = written.Select(f => paint.Face(materials[f.Item2], f.Item1)).ToList();
+                    result.Add(new Mesh(materials, written, name, painted.Any(p => p is not null) ? painted : null));
                 }
                 if (repaired is { } r)
                     notes.Add($"world: soup of {triangles.Count} triangles: {r}");

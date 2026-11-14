@@ -306,6 +306,44 @@ public partial class MapDecompilerTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary><c>DECOMPILE_RGBA8=&lt;vpk&gt;|&lt;material substring&gt;</c>: each matching world draw's layout and, per
+    /// 8-bit field, how often each value occurs (which stream carries a blend's paint).</summary>
+    [Fact]
+    public void WorldDrawByteStreams()
+    {
+        if (Environment.GetEnvironmentVariable("DECOMPILE_RGBA8") is not { Length: > 0 } spec || spec.Split('|') is not [var vpk, var want])
+            return;
+        var files = MapDecompiler.ReadPackage(vpk);
+        foreach (var (path, bytes) in files.Where(f => f.Key.Contains("/worldnodes/", StringComparison.Ordinal) && f.Key.EndsWith(".vmdl_c", StringComparison.Ordinal)).OrderBy(f => f.Key))
+        {
+            using var res = ResourceTrees.Read(bytes, path);
+            if (res.DataBlock is not ValveResourceFormat.ResourceTypes.Model model)
+                continue;
+            foreach (var (mesh, name, _, _) in model.GetEmbeddedMeshesAndLoD())
+                foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
+                    foreach (var call in so.GetArray("m_drawCalls"))
+                    {
+                        var material = call.GetStringProperty("m_material") ?? "";
+                        if (!material.Contains(want, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        var (first, count) = (call.GetInt32Property("m_nBaseVertex"), call.GetInt32Property("m_nVertexCount"));
+                        foreach (var b in call.GetArray("m_vertexBuffers"))
+                        {
+                            var vb = mesh.VBIB.VertexBuffers[b.GetInt32Property("m_hBuffer")];
+                            var offset = b.ContainsKey("m_nBindOffsetBytes") ? b.GetInt32Property("m_nBindOffsetBytes") : 0;
+                            foreach (var f in vb.InputLayoutFields.Where(f => f.Format.ToString() == "R8G8B8A8_UNORM"))
+                            {
+                                var hist = Enumerable.Range(0, 4).Select(c => Enumerable.Range(first, count)
+                                    .Select(v => vb.Data[(int)offset + v * (int)vb.ElementSizeInBytes + (int)f.Offset + c]).GroupBy(x => x)
+                                    .OrderByDescending(g => g.Count()).Take(6).Select(g => $"{g.Key}x{g.Count()}")).ToList();
+                                output.WriteLine($"{Path.GetFileName(path)} {name} {Path.GetFileNameWithoutExtension(material)} {count} vertices {f.SemanticName}{f.SemanticIndex} '{f.ShaderSemantic}': " +
+                                                 string.Join(" | ", hist.Select(h => string.Join(" ", h))));
+                            }
+                        }
+                    }
+        }
+    }
+
     /// <summary><c>DECOMPILE_INPUTS=&lt;vpk&gt;</c>: the input dependencies its .vmap_c records (MapDecompiler.MapInputs).</summary>
     [Fact]
     public void MapInputsOfAPackage()

@@ -6962,3 +6962,31 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        idle priority, its .vmap byte for byte the same.
      - Sakura's world: 1,135 meshes, 15,210 faces, every half-edge rule kept. ze_hold_em_p's world decompile and the
        19 probe decompiles byte for byte unchanged.
+
+290. **A painted subdivided world mesh's physics is its flat bake; the render keeps its paint truncated to 8 bits**
+     (2026-11-15, research/vmap-decompile, ze_hold_em_p node 409; offline, our forward on the true source, which is
+     exact against Valve's package: world_physics PHYS 0, RED2 0).
+     - Measured: node 409 (63 faces: concrete_9 x8 at bias 0, hr_conc_i_tintdark x19 (4 at 0, 15 at 1),
+       concrete_slabs_wet_1 x36: face 9 flat at bias 0, faces 19-53 subdivided at bias 1, 128 triangles each)
+       replaced in the source by a flat mesh of its 4,536 baked triangles, one face each in the bake's order, each
+       with its face's material and lightmapScaleBias and the bake's corner paint: our forward's world physics is
+       Valve's byte for byte, with the paint as floats and with it truncated to 8 bits and read back at the byte's
+       middle (`WPBUILD_FLATTEN=409|bytes`, WorldPhysicsAuthorTests). A decompile needs no subdivision cage for
+       the physics.
+     - Measured: each of node 409's 13,494 baked corners has, at the render vertex within 1/32 of it on a draw
+       triangle of its material facing its way, the bake's paint packed as ConvertFloatToChannel packs it
+       (181363b90: clamped, times 255, truncated; WorldNodeModels.Unorm8): 13,494 of 13,494, none missing
+       (BlendFacesTests.RenderPaintIsTheBakesAtEightBits). The draw layout names the field by its ShaderSemantic
+       `VertexPaintBlendParams` (ze: TEXCOORD4, R8G8B8A8_UNORM); a byte b stands for [b/255, (b+1)/255), and the
+       decompile writes (b + 0.5)/255 (1 for 255), which packs back to b.
+     - From the forward (WorldCollision.TessellatedPieces, BrushHulls.PiecesWithCorners): one piece per (bias,
+       material index) face set in sorted order, a splitting blend's piece then cut per layer (empty layers kept);
+       the physics sees the biases only through that order. The least biases for node 409's order of materials are
+       its own (0,0) (0,1) (0,2) (1,1) (1,2) (BlendFacesTests.BiasesFromThePieceOrder; BlendFaces.AssignBiases).
+     - Effect on the decompile (`DECOMPILE_WORLD_MESHES=1`, paint from the render): the soup's name is Valve's
+       (" [concrete_block]"). Still different: the piece sequence (ours 16 with the empty layer pieces, Valve's 9),
+       and with it the surface order (wet / concrete_block), the per-triangle surface ids and the vertex and
+       triangle blobs.
+     - Not read: where hr_conc's 30 | 8 boundary falls in the shipped soup. The vertex first-use order and RED2's
+       piece count do not pin it (the cut lies inside one connected run of 10 triangles); only the BVH's triangle
+       order does.

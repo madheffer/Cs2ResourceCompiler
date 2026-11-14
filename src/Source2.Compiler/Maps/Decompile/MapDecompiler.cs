@@ -508,7 +508,9 @@ public static class MapDecompiler
             foreach (var part in parts)
                 main.Builder!.AddMesh(main.Builder!.World, main.NewId!(), Vector3.Zero, Vector3.Zero,
                                       [.. part.Select(i => (mesh.Faces[i].Corners, mesh.Faces[i].Material))], mesh.Materials,
-                                      cornerTexcoords: [.. part.Select(i => mesh.Faces[i].Texcoords)]);
+                                      cornerTexcoords: [.. part.Select(i => mesh.Faces[i].Texcoords)],
+                                      cornerBlend: mesh.Paint is { } paint ? [.. part.Select(i => paint[i])] : null,
+                                      faceBiases: mesh.Bias is { } bias ? [.. part.Select(i => bias[i])] : null);
         }
         for (var slot = 0; slot < meshesBefore; slot++)
             WriteMesh(slot);

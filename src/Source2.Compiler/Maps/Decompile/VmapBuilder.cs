@@ -257,7 +257,8 @@ public sealed class VmapBuilder
                                      IReadOnlyList<(Vector3[] Corners, int Material)> faces, IReadOnlyList<string> materials,
                                      IReadOnlyList<Vector3>? vertexOrder = null, IReadOnlyList<Vector2[]?>? cornerTexcoords = null,
                                      IReadOnlyList<Vector3[]?>? cornerNormals = null, IReadOnlyList<Vector4[]?>? cornerTints = null,
-                                     string physicsType = "default")
+                                     string physicsType = "default", IReadOnlyList<Vector4[]?>? cornerBlend = null,
+                                     IReadOnlyList<int>? faceBiases = null)
     {
         // Vertices welded by exact position, in the order given, then first-use order.
         var vertexOf = new Dictionary<Vector3, int>();
@@ -394,6 +395,16 @@ public sealed class VmapBuilder
                     for (var i = 0; i < cornerEdges[f].Length && i < t.Length; i++)
                         tints[cornerEdges[f][i]] = t[i];
         }
+        // The blend paint, zero where not given (AddExtraAttributeStream's default for VertexPaintBlendParams).
+        object?[]? blend = null;
+        if (cornerBlend?.Any(t => t is not null) == true)
+        {
+            blend = Enumerable.Repeat((object?)Vector4.Zero, to.Count).ToArray();
+            for (var f = 0; f < loops.Count && f < cornerBlend.Count; f++)
+                if (cornerBlend[f] is { } b)
+                    for (var i = 0; i < cornerEdges[f].Length && i < b.Length; i++)
+                        blend[cornerEdges[f][i]] = b[i];
+        }
 
         static object?[] Ints(IEnumerable<int> xs) => xs.Select(x => (object?)x).ToArray();
         var cornerStreams = new List<DmxBinary.Element>
@@ -405,6 +416,9 @@ public sealed class VmapBuilder
         // Hammer's paint stream: no standard attribute, in the second vertex buffer (ze_hold_em_p's breakables).
         if (tints is not null)
             cornerStreams.Add(Stream("VertexPaintTintColor", 1, T.Vector4, tints, standard: "", bufferLocation: 1));
+        // As ze_hold_em_p's node 409 holds it: no standard attribute, the second vertex buffer, after the tint.
+        if (blend is not null)
+            cornerStreams.Add(Stream("VertexPaintBlendParams", 1, T.Vector4, blend, standard: "", bufferLocation: 1));
         var data = New("CDmePolygonMesh", "meshData")
             .Set("vertexEdgeIndices", T.Array(T.Int), Ints(vertexEdge))
             .Set("vertexDataIndices", T.Array(T.Int), Ints(Enumerable.Range(0, positions.Count)))
@@ -428,7 +442,7 @@ public sealed class VmapBuilder
                 Stream("textureAxisV", 0, T.Vector4, axes.Select(a => (object?)new Vector4(a.V, 0)).ToArray()),
                 Stream("materialindex", 8, T.Int, Ints(faces.Select(f => f.Material))),
                 Stream("flags", 3, T.Int, Ints(new int[loops.Count])),
-                Stream("lightmapScaleBias", 1, T.Int, Ints(new int[loops.Count]))))
+                Stream("lightmapScaleBias", 1, T.Int, Ints(Enumerable.Range(0, loops.Count).Select(f => faceBiases is not null && f < faceBiases.Count ? faceBiases[f] : 0)))))
             .Set("subdivisionData", T.Element, New("CDmePolygonMeshSubdivisionData")
                 .Set("subdivisionLevels", T.Array(T.Int), Ints(new int[to.Count]))
                 .Set("streams", T.Array(T.Element), Array.Empty<object?>()));

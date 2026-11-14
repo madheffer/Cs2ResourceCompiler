@@ -122,6 +122,33 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
         var doc = DmxBinary.ReadFile(Path.Combine(cs2, "content", "csgo_addons", p[0], "maps", p[1] + ".vmap"));
         Maps.MapPrefabs.Attach(doc, Maps.MapPrefabs.FromContent(Path.Combine(cs2, "content", "csgo_addons", p[0])));
         Maps.MapDeformers.Apply(doc, MapFixtures.GameSchema());
+        // WPBUILD_FLATTEN=<node>[|bytes]: that subdivided mesh replaced by a flat one of its baked triangles (each a face,
+        // in the bake's order, with its face's material and lightmap bias and the bake's corner paint; "bytes" rounds the
+        // paint to 8 bits as the render stores it): what a decompile that writes the tessellation needs to keep.
+        if (Environment.GetEnvironmentVariable("WPBUILD_FLATTEN") is { Length: > 0 } flatten)
+        {
+            var parts = flatten.Split('|');
+            var node = doc.Elements.First(e => e.GetValue<int>("nodeID")?.ToString() == parts[0]);
+            var md = node.Get<DmxBinary.Element>("meshData")!;
+            int[] FaceStream(string name) => (md.Get<DmxBinary.Element>("faceData")?.GetElements("streams").FirstOrDefault(x => x.Name.Split(':')[0] == name)?.Get<object?[]>("data") ?? [])
+                .Select(x => x is int i ? i : 0).ToArray();
+            var faceData = (md.Get<object?[]>("faceDataIndices") ?? []).Select(x => x is int i ? i : 0).ToArray();
+            var (mats, biases) = (FaceStream("materialindex"), FaceStream("lightmapScaleBias"));
+            var cut = Maps.SubdivisionBake.Bake(md, q => q);
+            var bytes = parts.Length > 1 && parts[1] == "bytes";
+            // As the render keeps it (truncated to 8 bits) and the decompile reads it back (the byte's middle).
+            static float B(float x) => Maps.Decompile.BlendFaces.Unpack(Maps.WorldNodeModels.Unorm8(x));
+            Vector4 Q(Vector4 v) => bytes ? new Vector4(B(v.X), B(v.Y), B(v.Z), B(v.W)) : v;
+            var tris = Enumerable.Range(0, cut.Faces.Count).ToList();
+            var builder = new Maps.Decompile.VmapBuilder("flatten");
+            var flat = builder.AddMesh(builder.World, 1, Vector3.Zero, Vector3.Zero,
+                [.. tris.Select(t => ((Vector3[])[cut.Positions[cut.Indices[t * 3]], cut.Positions[cut.Indices[t * 3 + 1]], cut.Positions[cut.Indices[t * 3 + 2]]], mats[faceData[cut.Faces[t]]]))],
+                [.. (md.Get<object?[]>("materials") ?? []).Select(x => x as string ?? "")],
+                cornerBlend: cut.Paint is null ? null : [.. tris.Select(t => (Vector4[]?)[Q(cut.Paint[t * 3]), Q(cut.Paint[t * 3 + 1]), Q(cut.Paint[t * 3 + 2])])],
+                faceBiases: [.. tris.Select(t => biases[faceData[cut.Faces[t]]])]);
+            node.Set("meshData", node.Types["meshData"], flat.Get<DmxBinary.Element>("meshData"));
+            output.WriteLine($"flatten: node {parts[0]}: {tris.Count} baked triangles as faces, paint {(cut.Paint is null ? "none" : bytes ? "8-bit" : "float")}");
+        }
         var notes = new List<string>();
         // WPBUILD_GPU=1: new-blending materials take their layers from the GPU sampler.
         using var gpu = Environment.GetEnvironmentVariable("WPBUILD_GPU") == "1"
@@ -149,6 +176,34 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
                 output.WriteLine($"nodeattr {part} streams: " + string.Join(", ", md?.Get<DmxBinary.Element>(part)?.GetElements("streams").Select(x => x.Name) ?? []));
             var fm = md?.Get<DmxBinary.Element>("faceData")?.GetElements("streams").FirstOrDefault(x => x.Name.StartsWith("materialindex", StringComparison.Ordinal))?.Get<object?[]>("data") ?? [];
             output.WriteLine("nodeattr face materials: " + string.Join(",", fm.GroupBy(x => x).Select(g => $"{g.Key}x{g.Count()}")));
+            // WPBUILD_FACES=1: each face's material, lightmap bias, subdivision level and loop size, and the
+            // bake's triangles per face.
+            if (Environment.GetEnvironmentVariable("WPBUILD_FACES") == "1" && md is not null)
+            {
+                int[] Ints(DmxBinary.Element e, string name) => (e.Get<object?[]>(name) ?? []).Select(x => x is int i ? i : -1).ToArray();
+                int[] FaceStream(string name) => (md.Get<DmxBinary.Element>("faceData")?.GetElements("streams").FirstOrDefault(x => x.Name.Split(':')[0] == name)?.Get<object?[]>("data") ?? [])
+                    .Select(x => x is int i ? i : 0).ToArray();
+                foreach (var st in md.Get<DmxBinary.Element>("faceVertexData")?.GetElements("streams") ?? [])
+                    output.WriteLine($"nodeattr corner stream {st.Name}: " + string.Join(", ", st.Attributes.Where(a => a.Key != "data").Select(a => $"{a.Key}={a.Value}")) +
+                                     $"; first {string.Join(" ", (st.Get<object?[]>("data") ?? []).Take(4))}");
+                var sub = md.Get<DmxBinary.Element>("subdivisionData");
+                foreach (var (k, v) in sub?.Attributes ?? [])
+                    output.WriteLine($"nodeattr subdivisionData {k} = {(v is object?[] arr ? $"[{arr.Length}] {string.Join(",", arr.Take(80))}" : v)}");
+                var levels = Ints(sub!, "subdivisionLevels");
+                var first = Ints(md, "faceEdgeIndices");
+                var next = Ints(md, "edgeNextIndices");
+                var faceData = Ints(md, "faceDataIndices");
+                var mats = FaceStream("materialindex");
+                var biases = FaceStream("lightmapScaleBias");
+                var cut = Maps.SubdivisionBake.Bake(md, p => p);
+                var perFace = cut.Faces.GroupBy(f => f).ToDictionary(g => g.Key, g => g.Count());
+                for (var f = 0; f < first.Length; f++)
+                {
+                    var (h, size) = (first[f], 0);
+                    do { size++; h = next[h]; } while (h != first[f] && size < 1000);
+                    output.WriteLine($"face {f}: material {mats[faceData[f]]} bias {biases[faceData[f]]} level {(f < levels.Length ? levels[f] : -1)} loop {size} baked {perFace.GetValueOrDefault(f)}");
+                }
+            }
             return;
         }
         // WPBUILD_SOUPIN=<capture_rnmesh.py bin>: our first soup's RnMeshCreate input
