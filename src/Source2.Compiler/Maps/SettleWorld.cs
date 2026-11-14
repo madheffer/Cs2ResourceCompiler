@@ -325,7 +325,8 @@ public static partial class SettleWorld
     {
         foreach (var child in node.GetElements("children"))
         {
-            if (hidden.Contains(child.GetValue<int>("nodeID") ?? -1))
+            // A hollow node has no slot in the block and no body (MapInstances.Hollow).
+            if (hidden.Contains(child.GetValue<int>("nodeID") ?? -1) || MapInstances.Hollow(child))
                 continue;
             var origin = child.GetValue<Vector3>("origin") ?? Vector3.Zero;
             var angles = child.GetValue<Vector3>("angles") ?? Vector3.Zero;
@@ -718,7 +719,7 @@ public static partial class SettleWorld
     /// the angle folded into [-90, 90] (sine) or [0, 180] (cosine), then the
     /// products in float.
     /// </summary>
-    private static float[] AngleMatrixDouble(Vector3 angles, Vector3 origin)
+    internal static float[] AngleMatrixDouble(Vector3 angles, Vector3 origin)
     {
         static double Fold(float degrees, bool cosine)
         {

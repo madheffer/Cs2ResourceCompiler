@@ -83,6 +83,10 @@ internal static class WorldNodeCompile
     {
         /// <summary>Lists whose compile is not ported, with the entries they held.</summary>
         public List<string> Unported { get; init; } = [];
+
+        /// <summary>The merge ran (three or more clusters, the vis builder's or the node's box grid):
+        /// CVisibilityMeshMerger::MergeMeshes reads debugColorClustering on entry (ledger 271).</summary>
+        public bool Clustered { get; init; }
     }
 
     /// <summary>Settings CompileNode reads: csgo_core's values by default.</summary>
@@ -132,6 +136,8 @@ internal static class WorldNodeCompile
         public List<string> Unported { get; } = [];
         // DAT_183bb3764: the instanced objects' counter.
         public int Instanced;
+        // Whether a layer's merge ran: CVisibilityMeshMerger::MergeMeshes reads debugColorClustering on entry (ledger 271).
+        public bool Clustered;
     }
 
     /// <param name="nodeBounds">The node's bounds (node +0), which the box grid of
@@ -161,7 +167,7 @@ internal static class WorldNodeCompile
         var allBoxes = new List<(Vector3 Min, Vector3 Max)>();
         for (var l = 0; l < layers.Count; l++)
             allBoxes.AddRange(CompileLayer(l, layers[l].ByKind, layers[l].Entries, visFlat, mutual, settings, nodeBounds, counters, objects, aggregates));
-        return new Result(objects, aggregates, allBoxes) { Unported = counters.Unported };
+        return new Result(objects, aggregates, allBoxes) { Unported = counters.Unported, Clustered = counters.Clustered };
     }
 
     private static List<(Vector3 Min, Vector3 Max)> CompileLayer(int layerIndex, Dictionary<MeshLists.Kind, List<Entry>> byKind,
@@ -183,7 +189,9 @@ internal static class WorldNodeCompile
             visFlat = [.. RenderClusters.Grid(grid.Min, grid.Max, settings.ClusterSize).Select(b => new List<(Vector3 Min, Vector3 Max)> { b })];
             mutual = [];
         }
-        if (settings.VisibilityGuidedMeshClustering && visFlat is { Count: >= 3 } && mutual != null)
+        var clustered = settings.VisibilityGuidedMeshClustering && visFlat is { Count: >= 3 } && mutual != null;
+        counters.Clustered |= clustered;
+        if (clustered)
         {
             foreach (var list in lists.Where(l => MeshLists.Merged.Contains(l.Kind)))
             {

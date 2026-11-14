@@ -153,8 +153,12 @@ public static class DmxText
             }
             _at++;
             var element = CreateElement(type, name, id);
-            foreach (var (attr, _, value, _) in attributes)
+            foreach (var (attr, typeName, value, _) in attributes)
+            {
                 element.Attributes[attr] = value;
+                if (DmxBinary.AttrType.FromName(typeName) is var code and not 0)
+                    element.Types[attr] = code;
+            }
             foreach (var (attr, index, target) in holder)
                 pending.Add((element, attr, index, target));
             elements[slot] = element;

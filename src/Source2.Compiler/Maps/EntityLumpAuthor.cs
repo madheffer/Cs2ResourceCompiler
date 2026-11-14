@@ -28,6 +28,9 @@ public static partial class EntityLumpAuthor
     /// </summary>
     private const string NameFixup = "[PR#]";
 
+    /// <summary>The prefix the map's entity-name fixup gives every name ("[PR#]").</summary>
+    internal const string NameFixupPrefix = NameFixup;
+
     /// <summary>Build the lump's DATA tree, with no template pass: every entity
     /// the walk (or <paramref name="emit"/>) ships, in order.</summary>
     /// <param name="entities">Entities in the order they should appear.</param>
@@ -206,6 +209,31 @@ public static partial class EntityLumpAuthor
         // with the prefab's own "<id>_" inside a prefab that asks for it.
         var fixup = entity.NamePrefix is { } own ? NameFixup + own : fixupEntityNames ? NameFixup : null;
 
+        // A prefab loaded at runtime is not merged: its node exports a point_prefab naming its map,
+        // these keys in this order and no compile_source_id (resourcecompiler on s2c_rtprefab: the
+        // prefab's contents gone, point_prefab under the prefab's id, prefab_load_dynamic 1,
+        // fixupNames from fixupEntityNames, the prefab's placement).
+        if (entity.Runtime is { } runtime)
+        {
+            values.Add("classname", new KVObject("point_prefab"));
+            values.Add("prefab_load_dynamic", Integer(1));
+            values.Add("fixupNames", Integer(runtime.FixupNames ? 1 : 0));
+            values.Add("targetMapName", new KVObject(runtime.TargetMapName));
+            values.Add("origin", Vector(entity.Origin));
+            values.Add("angles", Vector(entity.Angles));
+            values.Add("scales", Vector(entity.Scales));
+            values.Add("hammerUniqueId", new KVObject(entity.IdPath));
+            var prefabValues = KVObject.Collection();
+            prefabValues.Add("version", Integer(1));
+            prefabValues.Add("values", values);
+            prefabValues.Add("attributes", KVObject.Collection());
+            var prefab = KVObject.Collection();
+            prefab.Add("m_connections", Connections(entity, fixup, entityNames, schema));
+            prefab.Add("m_keyValuesData", KVObject.Blob([]));
+            prefab.Add("keyValues3Data", prefabValues);
+            return prefab;
+        }
+
         // worldspawn's exporter writes the compile's id before any key
         // (FUN_180fc1560); every other entity writes it after them (FUN_181004020).
         if (entity.IsWorld)
@@ -307,7 +335,11 @@ public static partial class EntityLumpAuthor
         // entity is pointed at it by name. The path is derived, not looked up:
         // Valve's cardtest compile names the model of brush entity 2138
         // "ImpModel" maps/cardtest/entities/impmodel_2138.vmdl.
-        if (entity.HasGeometry && worldName is { Length: > 0 })
+        // CMapEntity vf219 (rc 0923 1810045b0): a solid class always gets its model (the entity ships only with a
+        // child that counts, ReachesTheLump), any other only with a visible mesh child; a cable is its own geometry
+        // (atixref's path_particle_rope_clientside paths have path node children and no model; ledger 272).
+        if (entity.HasGeometry && worldName is { Length: > 0 }
+            && (schema is null || schema.IsSolidClass(entity.ClassName) || schema.IsCableClass(entity.ClassName) || entity.HasMeshChild))
         {
             var model = new KVObject(BrushModelPath(entity, worldName, fixup, schema));
             model.Flag = KVFlag.ResourceName;
@@ -318,7 +350,7 @@ public static partial class EntityLumpAuthor
         {
             if (worldName is { Length: > 0 })
                 values.Add("worldname", new KVObject(worldName));
-            values.Add("mapUsageType", new KVObject("standard"));
+            values.Add("mapUsageType", new KVObject(MapUsageTypeName(entity.MapUsageType)));
         }
 
         // An info_world_layer names its layer's lump (FUN_180240a60): its
@@ -746,6 +778,22 @@ public static partial class EntityLumpAuthor
         var file = $"entities/{name.ToLowerInvariant()}_{idPath}".Replace('.', '_').Replace('+', '_');
         return $"maps/{worldName}/{file}.vmdl";
     }
+
+    /// <summary>
+    /// The map usage types worldspawn's export knows, in its table's order (rc 20261103 table
+    /// 1830169f0: value, name, display name; 0 standard "Standard", 1 background "UI Background",
+    /// 2 skybox "3D Skybox", 3 minigame "Minigame", 4 sharedenvironment "Shared Environment").
+    /// </summary>
+    public static readonly string[] MapUsageTypes = ["standard", "background", "skybox", "minigame", "sharedenvironment"];
+
+    /// <summary>
+    /// The mapUsageType worldspawn ships for the CMapWorld's (CMapWorld +0x2bb8, declared a string with
+    /// "standard" by its constructor, rc 20261103 180fc21a0): the export (180fc2760) matches it with
+    /// V_stricmp_fast against <see cref="MapUsageTypes"/> and writes the table's name for the first
+    /// match, "standard" for none (GROUND_TRUTH 266).
+    /// </summary>
+    public static string MapUsageTypeName(string? value)
+        => MapUsageTypes.FirstOrDefault(t => value is not null && value.EqualsAscii(t)) ?? MapUsageTypes[0];
 
     private static bool IsPlacement(string key)
         => Placement.Contains(key);

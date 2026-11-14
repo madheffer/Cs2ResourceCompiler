@@ -143,14 +143,19 @@ public static class EntityPhysicsModels
                 return new CTransform(origin, 1f, CTransform.AngleQuaternion(angles));
             }
             : null;
-            // The lump points every brush entity at a model, but a hidden mesh is
-            // not compiled, and an entity left with none gets no file.
-            var meshes = Meshes(entity).Where(m => !hidden.Contains(m.GetValue<int>("nodeID") ?? -1)).ToList();
-            if (!entity.GetElements("children").Any(c => c.Type is "CMapMesh") || meshes.Count == 0)
+            // A model is built for the entities the lump keeps (MapEntities.CountsAsGeometry, ledger 269):
+            // one with no child that counts (a hidden or force_hidden mesh, a mesh with no faces) gets none,
+            // and one kept only by a point entity child gets an empty one (s2c_emptymesh's a_pointchild).
+            // A hidden mesh is not compiled.
+            if (!entity.GetElements("children").Any(c => MapEntities.CountsAsGeometry(c, hidden)))
                 return null;
+            var meshes = Meshes(entity).Where(m => !hidden.Contains(m.GetValue<int>("nodeID") ?? -1) && m.GetValue<bool>("force_hidden") != true).ToList();
             var props = entity.Get<DmxBinary.Element>("entity_properties");
             var className = props?.Get<string>("classname") ?? "";
             var targetName = props?.Get<string>("targetname") ?? "";
+            // A class other than a solid one gets a model only with a visible mesh child (CMapEntity vf219, ledger 272).
+            if (meshes.Count == 0 && schema is not null && !schema.IsSolidClass(className))
+                return null;
             // Inside a prefab with fixupEntityNames the name the path is built from
             // is the fixed-up one, "[PR#]<prefab id>_<name>" (MapEntities.Walk).
             var fixup = prefabs.FirstOrDefault(p => p.GetValue<bool>("fixupEntityNames") == true) is { } fixing
@@ -294,26 +299,62 @@ public static class EntityPhysicsModels
         if (CableCollision.Collides(element))
         {
             var settings = through.Count > 0 ? CableCollision.Copied(CableCollision.SettingsOf(element)) : CableCollision.SettingsOf(element);
-            var (controls, scales) = EntityLumpAuthor.PathControls(cable, schema);
-            var (local, indices) = WorldCollision.FirstUse(CableCollision.RenderTube(controls, scales, settings));
-            if (indices.Length > 0)
+            if (CableShape(cable, settings, schema) is { } shape)
             {
-                var transform = new CTransform(cable.Origin, 1f, CTransform.AngleQuaternion(cable.Angles));
-                var (toWorld, toEntity) = (transform.Matrix(), transform.Inverse().Matrix());
-                var placed = local.Select(p => MapMeshes.Transform(toEntity, MapMeshes.Transform(toWorld, p))).ToArray();
-                var faces = new int[indices.Length / 3][];
-                for (var t = 0; t < faces.Length; t++)
-                    faces[t] = [indices[t * 3], indices[(t * 3) + 1], indices[(t * 3) + 2]];
-                var (points, triangles) = BrushHulls.Simplified(BrushHulls.TriangleMesh(placed, faces, local), settings.Error);
-                var shapeIndices = new int[triangles.Count * 3];
-                for (var t = 0; t < triangles.Count; t++)
-                    (shapeIndices[t * 3], shapeIndices[(t * 3) + 1], shapeIndices[(t * 3) + 2]) = triangles[t];
-                var (shapePoints, shapeTriangles) = settings.Error > 0f ? WorldCollision.FirstUse(([.. points], shapeIndices)) : ([.. points], shapeIndices);
                 var physics = WorldCollision.ReadMaterial(material(name), collisionProperty, shaderTranslucency: false);
-                pieces.Add(new WorldCollision.Piece(cable.NodeId, 0, name, physics, shapePoints, shapeTriangles) { ToolMaterial = name });
+                pieces.Add(new WorldCollision.Piece(cable.NodeId, 0, name, physics, shape.Points, shape.Indices) { ToolMaterial = name });
             }
         }
         return new Model(cable.NodeId, cable.ClassName, path, false, WorldPhysics.Build(pieces, entityModel: true)) { Entity = element, Cable = true };
+    }
+
+    /// <summary>
+    /// One brush mesh's hulls as the entity model step makes them (the loop of <see cref="Build"/>
+    /// over a mesh: Pieces, Inputs, the map builder's hull, ShapePoints, the compile's hull), each
+    /// hull's vertex positions in order; no applied material, no deformer, no instance path.
+    /// </summary>
+    internal static List<Vector3[]> BrushMeshHulls(DmxBinary.Element mesh, DmxBinary.Element entity, string className, int formatVersion,
+                                                   Func<DmxBinary.Element, CTransform>? transformOf = null)
+    {
+        var result = new List<Vector3[]>();
+        var type = BrushHulls.Resolve(PhysicsTypeOf(mesh), true, className == "func_shatterglass", false, false);
+        if (type is BrushHulls.PhysicsType.None or BrushHulls.PhysicsType.Mesh)
+            return result;
+        var simplify = WorldCollision.SimplificationError(mesh, formatVersion);
+        foreach (var (_, positions, faces, local) in BrushHulls.Pieces(mesh, entity, transformOf: transformOf))
+            foreach (var input in BrushHulls.Inputs(positions, faces, type, local, simplify: simplify))
+            {
+                var qh = RnHullBuilder.BuildHull(input, RnHullBuilder.Options.MapBuilder, out _);
+                var points = qh == null ? null : BrushHulls.ShapePoints([.. qh.HullVertices.Select(v => new Vector3(v.X, v.Y, v.Z))]);
+                if (points != null && RnHullBuilder.Create(points, RnHullBuilder.Options.Compile, out _) is { } hull)
+                {
+                    RnHullBuilder.Transform(hull, RnHullBuilder.Identity);
+                    result.Add(hull.VertexPositions);
+                }
+            }
+        return result;
+    }
+
+    /// <summary>A collision cable's triangle mesh in its model (see <see cref="CableModel"/>): the render
+    /// tube, welded, placed, joined at the seam and simplified with the cable's error; null when the
+    /// tube is empty.</summary>
+    internal static (Vector3[] Points, int[] Indices)? CableShape(MapEntities.Entity cable, CableCollision.Settings settings, FgdSchema? schema)
+    {
+        var (controls, scales) = EntityLumpAuthor.PathControls(cable, schema);
+        var (local, indices) = WorldCollision.FirstUse(CableCollision.RenderTube(controls, scales, settings));
+        if (indices.Length == 0)
+            return null;
+        var transform = new CTransform(cable.Origin, 1f, CTransform.AngleQuaternion(cable.Angles));
+        var (toWorld, toEntity) = (transform.Matrix(), transform.Inverse().Matrix());
+        var placed = local.Select(p => MapMeshes.Transform(toEntity, MapMeshes.Transform(toWorld, p))).ToArray();
+        var faces = new int[indices.Length / 3][];
+        for (var t = 0; t < faces.Length; t++)
+            faces[t] = [indices[t * 3], indices[(t * 3) + 1], indices[(t * 3) + 2]];
+        var (points, triangles) = BrushHulls.Simplified(BrushHulls.TriangleMesh(placed, faces, local), settings.Error);
+        var shapeIndices = new int[triangles.Count * 3];
+        for (var t = 0; t < triangles.Count; t++)
+            (shapeIndices[t * 3], shapeIndices[(t * 3) + 1], shapeIndices[(t * 3) + 2]) = triangles[t];
+        return settings.Error > 0f ? WorldCollision.FirstUse(([.. points], shapeIndices)) : ([.. points], shapeIndices);
     }
 
     /// <summary>The model file for one that holds only physics (RED2 and DATA alone when it has no shapes).</summary>

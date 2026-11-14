@@ -1,0 +1,28 @@
+{
+ "functions": [
+  {
+   "addr": "180007fb0",
+   "name": "V_exp2f",
+   "module": "s2c:io",
+   "note": "export; the CRT's exp2f 1802bded0 (ledger 267)"
+  },
+  {
+   "addr": "1802bded0",
+   "name": "crt_exp2f",
+   "module": "s2c:io",
+   "note": "same code as 0923's 1802bdd90 (rip targets resolved); Simulation/CrtMath.Exp2 (ledger 267)"
+  },
+  {
+   "addr": "1802bdc94",
+   "name": "crt_expf_scaled",
+   "module": "s2c:io",
+   "note": "same code as 0923's 1802bdb54 (ledger 267)"
+  },
+  {
+   "addr": "1802d2a40",
+   "name": "crt_fdscale",
+   "module": "s2c:io",
+   "note": "same code as 0923's 1802d2900; Simulation/CrtMath.FdScale (ledger 267)"
+  }
+ ]
+}

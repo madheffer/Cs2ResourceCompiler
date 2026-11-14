@@ -44,6 +44,18 @@ public class GameContent : SettleWorld.IModels, IDisposable
     /// <summary>The pak01 this reads, as given.</summary>
     public string PakPath { get; }
 
+    private readonly List<Package> _addonPaks = [];
+
+    /// <summary>An addon's package (a workshop item's <c>_dir.vpk</c>, multi-part archives beside it),
+    /// searched after the loose folders and before the game's paks, as the game mounts an addon.</summary>
+    public GameContent AddPackage(string vpk)
+    {
+        var package = new Package();
+        package.Read(vpk);
+        _addonPaks.Add(package);
+        return this;
+    }
+
     /// <summary>A file's bytes by its game path, or null.</summary>
     public byte[]? Read(string path)
     {
@@ -51,7 +63,7 @@ public class GameContent : SettleWorld.IModels, IDisposable
         foreach (var dir in _loose)
             if (File.Exists(Path.Combine(dir, path)))
                 return File.ReadAllBytes(Path.Combine(dir, path));
-        foreach (var pak in new[] { _pak, _core })
+        foreach (var pak in _addonPaks.Append(_pak).Append(_core))
             if (pak?.FindEntry(path) is { } entry)
             {
                 pak.ReadEntry(entry, out var bytes);
@@ -269,6 +281,8 @@ public class GameContent : SettleWorld.IModels, IDisposable
             r.Dispose();
         _pak.Dispose();
         _core?.Dispose();
+        foreach (var package in _addonPaks)
+            package.Dispose();
         GC.SuppressFinalize(this);
     }
 }

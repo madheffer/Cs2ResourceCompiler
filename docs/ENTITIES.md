@@ -140,7 +140,9 @@ What goes in:
     useTargetNameAsPrefix is on and it has one, else its node id, then `_`;
     nested fixup prefabs append theirs to the outer prefix (`112_2156_`,
     `outerpre_tnpre_`), and a prefab without fixup keeps its parent's.
-  - A prefab with `loadAtRuntime` is skipped.
+  - A prefab with `loadAtRuntime` is not merged: it ships as a point_prefab (prefab_load_dynamic 1, fixupNames,
+    targetMapName = the path less maps/ and .vmap, its placement, no compile_source_id) where it stands in the tree,
+    taking no walk index (GROUND_TRUTH 189). prefabRuntimeEntity shows in no build.
   - The instances inside a prefab's map (GROUND_TRUTH 46, captured): the
     prefab collapses first, its block its map's copy count (every node,
     plus a target group's subtree again for an instance that precedes its

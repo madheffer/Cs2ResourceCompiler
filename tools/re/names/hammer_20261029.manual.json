@@ -1,0 +1,28 @@
+{
+ "functions": [
+  {
+   "addr": "180128660",
+   "name": "ConCommand_hammer_force_autosave",
+   "module": "s2c:containers/compile-map",
+   "note": "times 181497970(autosave manager +0x98, force = 1)"
+  },
+  {
+   "addr": "181497970",
+   "name": "HammerAutosave_Run",
+   "module": "s2c:containers/compile-map",
+   "note": "(this, force): each open document ([this]+0x60, count +0x58): vfunc +0x80 (needs an autosave) unless force; always skipped when byte +0x11 is set; vfunc +0x90 (doc, path, autosave path, 1, force) writes; marks the file's record +9; prunes the folder to the size limit"
+  },
+  {
+   "addr": "181497d40",
+   "name": "HammerAutosave_RecoveryPrompt",
+   "module": "s2c:containers/compile-map",
+   "note": "\"Recover Files?\" QMessageBox Yes|No (IAT 18169bfb0, called at 181497e74) when 181496bd0 lists files or the pending list ([this]+0x28, count +0x20) is not empty; Yes reloads (1814982c0), No marks the records handled (+8 = 1, +9 = 0) and empties the pending list, deleting nothing"
+  },
+  {
+   "addr": "181496bd0",
+   "name": "HammerAutosave_FilesToRecover",
+   "module": "s2c:containers/compile-map",
+   "note": "records ([this]+0x10, 16 bytes: path, +8 handled, +9 has autosave) with +8 clear and +9 set"
+  }
+ ]
+}

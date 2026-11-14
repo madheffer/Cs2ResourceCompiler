@@ -5607,6 +5607,131 @@ game can answer is raised with the user first, and runs with -insecure.
        model differs (s2c_edgecollapse: 235 Valve vertices against our 228; normals and two positions on the
        subdivided box).
 
+296. **Hollow nodes take no id in an instance's or a prefab's block** (numbered 182 on research/vmap-decompile until the 2026-11-15 merge) (2026-10-29, research/vmap-decompile: probe
+     maps compiled by resourcecompiler 1.41.9.3 -world -fshallow, each read off the copies' ids; numbered past main's
+     181 so a merge does not clash).
+     - Found: Valve's resourcecompiler on our decompile of atixref gave its instance copies other ids than our forward
+       on the same .vmap (tools/map-survey/decompile_rc_batch.ps1). The decompile's fillers were empty groups and
+       instances of empty groups, which our forward counted.
+     - Measured, ported (MapInstances.Hollow, Count, Emit, Collapse, PrefabSlots; SettleWorld.PrefabWalk; MapWorldOrder):
+       a CMapGroup with only hollow nodes under it (none included), a CMapMesh with no faces and a CMapInstance of a
+       hollow group take no slot in a collapse's block, and the collapse of a hollow target takes no block.
+       [light, X, light] (tools/map-survey/slot_probe_map.py): s2c_slotprobe (empty groups 0; a group of an info_target
+       2; an editor-only info_target 1), s2c_slotprobe3 (prop_static with or without model 1 and walks; a mesh with faces
+       1, no walk), s2c_slotprobe4 and 6 (instances of empty groups 0, a group holding only one 0), s2c_slotprobe5 (a
+       top-level instance of an empty group takes no block), s2c_slotprobe7 (no position effect: a trailing mesh with
+       faces counts), s2c_slotprobe8 (faceless meshes 0; a toolsskip mesh 1, no walk); a prefab map of a light and five
+       empty groups makes the block of the light alone (s2c_prefabslot, prefab_slot_probe_map.py). Not removed at load:
+       an empty group 106 ids past the rest moves the first block by as much (s2c_slotprobe2).
+     - Measured: a toolsskip mesh leaves Valve's world unchanged (s2c_slotprobe8 against 9, the toolsskip meshes faceless:
+       world_physics byte for byte with the map name masked, render meshes of one size). Our world builder does not drop
+       toolsskip faces yet.
+     - Measured: a brush entity with no meshes does not ship, any class (s2c_brushless, brushless_probe_map.py); one
+       whose meshes fail their model compile does. Our forward already agreed.
+     - Exact: EntityLumpAgainstValveTests on all 37 pinned maps (the 11 probes above included), 94 tests over instances,
+       world order, settle and lumps; the decompile check 19/20 as before; our lump author on each decompiled .vmap gives
+       the ids Valve's resourcecompiler gives it (atixref: all 736 entities).
+     - Not found in the code: where the clone drops a hollow node (CloneObjects 180f616e0 and the node clone 180f86a90
+       copy every child; the ids are assigned after).
+297. **Map variables are written into the keys bound to them as a map loads** (numbered 187 on research/vmap-decompile until the 2026-11-15 merge) (2026-10-30, research/vmap-decompile:
+     decompile of resourcecompiler 0923, and s2c_varprobe compiled by resourcecompiler 1.41.9.3 -world -fshallow;
+     numbered past research/map-authoring's 186).
+     - Read: CMapVariableSetStorage's attributes (180fcdf10): variableNames, variableValues, variableTypeNames,
+       variableTypeParameters, variableGroupNames (string arrays), m_ChoiceGroups (element array), variableAndChoiceOrder
+       (int array); a choice group (180fcdcc0): m_ChoiceVariables, m_Choices, m_ActiveValue, m_GroupName. A node's
+       bindings are a table at CMapNode +0x3d0 (accessor 180f8bc90), serialized sorted into variableTargetKeys /
+       variableNames (180f93000); a CMapPrefab's overrides are variableOverrideNames / Values at +0x588 / +0x5a8.
+     - Read: the prefab load (180f96d40) runs 18107d160 once the prefab holds its map's set. For each variable in set
+       order it takes the value from 18107a810 (a choice group driving the variable first; else the placing prefab's
+       override when its override names hold the variable's, 180fa0570, case-blind, the first match, an empty value
+       counting; else the variable's own value; a non-empty value inside a prefab with the flag +0x55f goes through
+       18107c510, a transform of vector values by the placement) and gives it to every node of the map (180f86e70) via
+       1810ec600: each binding naming the variable (case-blind) has its key set through the key's attribute (vf 0x7a0)
+       when the value differs (case-blind); attribute types 0x24/0x25/0x26 convert first.
+     - Measured (tools/map-survey/variable_probe_map.py; types "string", order = indices, which no Hammer save showed,
+       Hammer loaded both maps without a variable error): the map's own variable gives its spawn targetname
+       "[PR#]map_level" (the usual fixup, its world's fixupEntityNames on); the prefab placed with overrides ships
+       "[PR#]over_relay" and priority Int32 5, the one without its map's defaults "[PR#]def_relay" and Int64 0 (the KV3
+       0/1 typing).
+     - Ported: MapVariables.Apply, from MapPrefabs.Attach (the map itself, then each placement's freshly loaded map).
+       EntityLumpAgainstValveTests s2c_varprobe exact, the other 26 prefab probes as before. Choice groups throw; the
+       +0x55f rewrite and the 0x24-0x26 conversions are not measured; whether the walk reaches nodes of prefabs nested
+       in the map is not measured (only the map's own nodes take its variables).
+     - Decompile: a key a later placement of a shared prefab map ships differently becomes a variable of the map with
+       the first's value, overridden by that placement (MapDecompiler.PlanVariables); MapDecompilerTests s2c_varprobe
+       exact. A top-level bound key is indistinguishable from a plain one and comes back plain.
+
+188. **A subdivided face's lightmap texcoords do not show its lightmapScaleBias; a flat face's do** (2026-10-30,
+     research/vmap-decompile: resourcecompiler 1.41.9.3 lit builds, CS2 and Steam closed).
+     - Measured: ze_hold_em_p lit (`compile_fresh.py --full`): every tessellated triangle of node 409 (4480 slab, 570
+       hr_conc_i_tintdark, 15 concrete_9) reads log2(lightmap texcoord area / world area) -29.2 or -29.1, the flat
+       world faces -20.8 (`DECOMPILE_LMDENSITY`).
+     - Measured: s2c_zebias1 (ze_hold_em_p.vmap through dmxconvert's keyvalues2 round trip, unchanged; the round trip
+       alone upgrades vmap 37 -> 40 and changes the end_breakable_475-481 models, so it is the control) against
+       s2c_zebias0 (the same with node 409's 63 faces all at bias 0, 13 were 0 and 50 were 1; `bias_zero_map.py`),
+       both lit: the tessellated triangles read the same -29.2/-29.1 in both; 4 flat hr_conc triangles read -18.8 in
+       the control and -20.8 at bias 0, one bias step (x4 in area, as s2c_biasprobe4). The bias also changes the four
+       lightmap textures and lightmap_query_data.kv3, world_physics.vmdl_c, world_visibility.vvis_c, world.vwrld_c,
+       n0.vwnod_c, the concrete_9 / slabs / hr_conc / light housing aggregates (hr_conc 19 draws against 18, the
+       other draw splits equal) and 3 bytes of default_ents.
+     - So a decompile reads a flat face's bias as density steps (log2 area density = c + 2*bias, c per map), but a
+       subdivided face's bias only through what it changes elsewhere (the physics pieces, the render aggregates).
+       Why the tessellated texcoords collapse to one density is not read from a decompile (observed only).
+
+189. **A prefab loaded at runtime ships as a point_prefab and is not merged** (2026-10-31, research/vmap-decompile:
+     resourcecompiler 1.41.9.3 on probes from `tools/map-survey/runtime_prefab_probe_map.py`, CS2 and Steam closed).
+     - Measured: s2c_prefabprobe with its one prefab (maps/s2c_propover.vmap, node 108) at loadAtRuntime 1
+       (s2c_rtprefab, full build) against the same at 0 (s2c_rtprefab0): the prefab's four spawn points are gone, and
+       the lump has a point_prefab under hammerUniqueId 108 with exactly these keys in this order: classname
+       point_prefab, prefab_load_dynamic Int64 1, fixupNames Int64 0, targetMapName "s2c_propover", origin, angles,
+       scales (the prefab's placement), hammerUniqueId; no compile_source_id. The package drops the prefab's world
+       meshes (302 KB against 705 KB); the .vmap_c's RERL gains maps/s2c_propover.vmap, which both builds list among
+       the inputs (same CRC).
+     - Measured: prefabRuntimeEntity 1 changes nothing visible, alone (s2c_rtprefab2: every file the same size as
+       the base, the lump equal) or with loadAtRuntime (s2c_rtprefab3 = s2c_rtprefab but the map name's length).
+     - Measured: an info_target after the prefab in the world's children (s2c_rtprefab4, at loadAtRuntime 1; s2c_rtprefab5
+       at 0) is compile_source_id 13 in both, and ships after the point_prefab: the point_prefab stands where the prefab
+       does in the tree and takes no walk index, where a merged prefab's map is walked after its parent's children.
+     - Measured: targetMapPath maps/prefabs/s2c_prefabslot/p0.vmap with fixupEntityNames 1 (s2c_rtprefab6) ships
+       targetMapName "prefabs/s2c_prefabslot/p0" and fixupNames 1: the path less maps/ and .vmap. A path outside
+       maps/ is not measured (MapEntities.RuntimeMapName throws).
+     - Ported: MapEntities.Walk, EntityLumpAuthor.BuildEntity, MapEntities.SourceIds, MapInstances.Survey (the walk
+       list counts it), MapAssets and MapRootFile.PrefabMaps; our lump = Valve's on s2c_rtprefab, 3, 4, 5 and 6. The
+       decompile turns a point_prefab with prefab_load_dynamic and no compile_source_id back into the CMapPrefab.
+
+190. **Hammer's save drops an empty CMapGroup** (2026-10-31, research/vmap-decompile: Hammer in cubehost,
+     `hammer_autosave.py --force-all`, Steam and CS2 closed).
+     - Measured: the atixref decompile (4993 nodes, its highest id 7266 an empty group the decompile set to raise the
+       map's highest id, which instance copies' ids start after) saved by Hammer has 4992 nodes, highest id 7244, no
+       empty group. resourcecompiler on the save ships 154 light_omni2 copies under other ids than on our file (paired by
+       id, 43 of them then read as other origins, keys and compile_source_ids). resourcecompiler itself keeps an empty group at load (ledger 296,
+       s2c_slotprobe2), so the save, not the compile, removes it.
+     - Measured: Hammer's saves of the probe01 and s2c_prefabprobe9 decompiles compile to our files' lumps but for
+       the map name in model and bake paths (probe01: 12 such lines, none else; prefabprobe9: also 700 entities whose
+       keys Hammer reorders in the prefab maps a script wrote), every entity model PHYS equal (5/5, 65/65).
+     - So the decompile raises the main map's highest id with a toolsskip box (VmapBuilder.AddSlot), which Hammer
+       keeps and which walks, ships and compiles nothing (ledger 296). A prefab map's still uses an empty group (a box
+       would take a slot of its block), so a Hammer save of a prefab map can still move its copies.
+     - Measured after the change: Hammer's save of the new atixref decompile through resourcecompiler = resourcecompiler
+       on the decompile, 0 lump differences once the map name is taken out, 142/142 entity model PHYS and 58/58 render
+       blocks equal; the same for probe01 and s2c_rtprefab4 (0).
+
+191. **The .nav keeps the generation parameters the build used; a map hull without crawl arrays takes the default
+     hull's** (2026-10-31, research/vmap-decompile: resourcecompiler 1.41.9.3 full builds of probes from
+     `tools/map-survey/nav_settings_probe_map.py`, CS2 and Steam closed).
+     - Measured: s2c_navprobe (probe01 with settingsUseProjectDefaults 0, tile 256, cell 3, cell height 1, region
+       min 6, detail distance 90, edge error 30, its hull radius 20, height 64, short height on, climb 12, slope
+       40): the .nav's generation parameters (1818d0690, after the areas) hold exactly those numbers and that hull,
+       its crawl off at 17.5. probe01's Hammer save, which the probe copies, has no settingsAgentCrawl* arrays, and
+       our forward read their absence as crawl height 0: MapHulls now keeps the default hull's crawl values then.
+     - Measured: s2c_navprobe2 (the same with settingsAgentHullPreset "default" and its own cell 3, edge error 30):
+       the block holds the project's numbers (cell 1.5, edge error 45), the preset string and the preset's hull,
+       use-project-defaults 0, as NavGenSettings.FromMap (1818c95e0) gives.
+     - So a map's effective nav settings come back from its .nav (Decompile.NavSettings): our forward on the
+       decompile's CMapNavData gives the shipped block on probe01, probe_classes, s2c_prefabprobe9, s2c_navprobe
+       and s2c_navprobe2; with use-project-defaults or a preset the map's own numbers never reach the build and are
+       not recoverable.
+
 ## Resolved
 
 - **Prop bone overrides** (ledger 45, settled 2026-10-08 by decompile).
@@ -6833,3 +6958,475 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        texcoord stream is R32G32 in Valve's (format 16), R16G16 in ours: WRB_LoadPropMeshes marks the texcoord
        stream high precision when the geometry info's draw record +0x66 is set (+0x67 for tangent), not traced;
        the two walkway aggregates differ in MIDX only.
+265. **compile_source_id is written for every entity; lumps without it are an older compiler's** (2026-11-13;
+     rc decompile of 180f26160 in the cs2 Ghidra project, the only referrer of the string 182343a48):
+     - After the entity's key table (the loop over node +0x588's KV3 arena) the function writes
+       `compile_source_id` = node +0x17ec with no condition, then 180f7acf0. Every archived
+       resourcecompiler (tools/re/binaries, 0923 to 1103) holds the string.
+     - So a lump with hammerUniqueId and no compile_source_id is not a compile option: 208 of 269 workshop
+       maps swept on 11-13 ship that form (worldspawn ends with hammerUniqueId, worldname, mapUsageType;
+       placement keys follow classname), from a resourcecompiler older than any we have. Read since 11-13
+       (user's call) with the current layout, the table ending at origin, nodes in lump order; what that
+       compiler did is not known, so those maps are checked only by the entity round trip
+       (decompile-sweep --roundtrip, docs/DECOMPILE.md "Workshop sweep 11-13").
+
+266. **worldspawn's mapUsageType is the world's, through a five-name table** (2026-11-13; resourcecompiler
+     20261103, capstone disassembly via tools/re/disasm.py, string xrefs via tools/re/strxref.py):
+     - CMapWorld's constructor (180fc21a0) declares `mapUsageType` a string (type 5) at +0x2bb8 through the
+       attribute adder 180ce0960 and sets it to "standard" (1822c05c0) through 180ce9ef0.
+     - The worldspawn export (180fc2760, the third referrer of "mapUsageType" 1822c05d0) reads +0x2bb8 and
+       compares it with V_stricmp_fast (tier0 import) against the names of the table at 1830169f0 (32-byte
+       entries: value, name, display name): 0 standard, 1 background, 2 skybox, 3 minigame, 4
+       sharedenvironment. The first match's table name is written (key hash 0x102e9e21 through
+       180fa9df0); no match gives entry 0, "standard".
+     - Was: our forward wrote "standard" for every map, the decompile likewise. Workshop skyboxes
+       (ze_namviet_p_skybox, ze_inboxed_p_skybox, ze_sisyphus_skybox) ship "skybox".
+     - Now: `EntityLumpAuthor.MapUsageTypeName` from `MapEntities.Entity.MapUsageType` (the CMapWorld's), and
+       the decompiler writes the lump's value back on the world.
+
+267. **tier0's exp2f at its edges: zero, Inf, NaN, huge, overflow and the denormal tail** (2026-11-13;
+     tier0 20260923 capstone disassembly via tools/re/disasm.py; the same code in tier0 20261103 with rip
+     targets resolved; oracle: tier0_20261103's exported V_exp2f called through ctypes by
+     tools/re/exp2f_oracle.py, no game process):
+     - V_exp2f (1802bdd90; 1802bded0 in 1103) classes x with _fdtest (1802cf224: 2 NaN, 1 Inf, 0 zero,
+       -1 normal, -2 denormal). Zero gives 1; Inf gives +0 when negative, else x; NaN gives x.
+     - -2^31 >= x or x >= 2^31 skips the split (n 0, f x); otherwise the split as ledger 90.
+     - The float exp (1802bdb54) with scale 1: y = f ln2 of 0 is _fdscale(1, n); y under -229 gives +0,
+       over 229 +Inf; else the rational, then _fdscale(r, k + n).
+     - _fdscale (1802d2900): biased exponent c plus e past 254 is Inf of the sign; above 0 written in
+       place; else the mantissa with its hidden bit shifted right by 1 - (c + e) on 16-bit halves (a
+       signed zero past 24), the shifted-out bits a rounding word (sticky below), round to nearest, ties
+       to even.
+     - Oracle: 46 edge values and 40,000 seeded ones in [-160, 140] and [-152, -125] bit for bit.
+     - Was: Exp2 threw for a non-finite or huge x and for a result outside the normal range, which
+       stopped ze_por_island_p's forward on two light_omni2 with brightness "-Infinity".
+     - Now: `CrtMath.Exp2` / `CrtMath.FdScale` (a zero, denormal, Inf or NaN v into FdScale still throws;
+       Exp2 never passes one). That map's two lights come out at 0 lumens; its older compile wrote 1000.
+
+268. **An empty brush model comes from a mesh with physicsType "none" and faces that draw nothing**
+     (2026-11-13; resourcecompiler 20261103 compiles of s2c_rc_probe/maps/s2c_emptymesh.vmap, written by
+     VmapBuilder, run standalone at low priority with CS2 open; models read with s2c decompile, DATA and
+     PHYS blocks):
+     - A func_water whose CMapMesh has no faces, and one with no mesh at all: neither is in the lump and
+       no model is built.
+     - A func_water box (16 units) in each of 26 tool materials (toolsskip, toolsnodraw, toolsclip,
+       toolstrigger, toolsinvisible, toolsskybox and the rest of core's tools) or a missing material: every
+       one gets a model with a PHYS block (2 shape records); a single quad, a triangle, a two-sided quad and
+       a 0.002-thick box likewise. A func_water's render is never in its model.
+     - The same box with physicsType "none": no PHYS block, m_refMeshes empty, m_modelInfo flags 8388608
+       and zero bounds. In toolsskip that model (1.9 KB) is the same for func_water, func_brush,
+       trigger_once and func_door; in reflectivity_50 func_brush and func_door get a render (4.5 KB).
+     - ze_por_island_p's func_water 416 (older lump format) ships unnamed_416.vmdl in exactly that form,
+       the only difference being two fields today's compile adds (m_animGraph2Refs, m_vecNmSkeletonRefs).
+     - Was: the decompile wrote no mesh for a model with no hulls, so the forward dropped the solid
+       entity (ReachesTheLump) and the round trip missed it.
+     - Now: MapDecompiler gives such a model (no hulls, no triangle shapes, no render, not a cable) a
+       16-unit toolsskip cube at the entity's origin with physicsType "none", noted; its shape is not in
+       the model and is not recovered.
+     - The forward's side (a brush entity with a face-less mesh) is ledger 269.
+
+269. **Which children keep a brush entity, and the one that is not in the walk** (2026-11-13;
+     resourcecompiler 20260923 decompile through ReVa, export 180240a60; 20261103 compiles of
+     s2c_rc_probe/maps/s2c_emptymesh.vmap and s2c_emptymesh2.vmap, written by VmapBuilder, run standalone
+     at low priority with CS2 open):
+     - The export keeps a solid class entity (FGD class type 5, CMapGameDataNode +0x88's +0xc) only when
+       its data provider gives a child: CMapNodeDataProvider vf2 (180f74dd0) counts the node's "children"
+       (+0x1f8; the array at +0x200 is typed CMapNode by the node's attribute set, 180f8f920), vf3
+       (180f73c00) returns child i when it IsA that type, is visible (+0x370, CMapNode_SetVisible
+       180f7a350, starts 1) and no node refers to it (180f8e9e0: MapNode_ReferrerCount > 0 fails). No
+       child gives the early out (LAB_180244267, result 1), no lump entry and no model.
+     - Measured (lump and package): a func_brush with only an info_target child ships, with a model
+       (empty, 1.9 KB, byte for byte our empty model); one with an empty mesh and an info_target ships
+       too; one with no children, a mesh the visibility manager hides (flag 1) or a force_hidden mesh is
+       not in the lump and gets no model.
+     - Numbering (compile_source_id, the node's +0x17ec from 180f180a0 over every CMapGameDataNode
+       180f163b0 gathers): those three still take their numbers (t1 3, t2 5, t3 7 around them), but a
+       func_brush whose only child is a mesh with no faces takes none (the next info_target is 8, one past
+       7). So that entity is gone before the walk; where (load or a pass before the numbering) is not
+       read. The map check CMapCheckIssue_EmptyEntities (detector 18111be50: a solid or type 10 class, or
+       should_have_children, with no children) is not it: a childless func_brush keeps its number.
+     - Was: HasGeometry was any CMapMesh child (so a face-less mesh kept the entity and an info_target
+       child did not), and EntityPhysicsModels wrote a model for a hidden or face-less mesh.
+     - Now: MapEntities.CountsAsGeometry (a child not force_hidden, not in the map's hidden set, not a
+       face-less mesh) for HasGeometry and EntityPhysicsModels; MapEntities.OnlyFacelessMeshes leaves such a
+       CMapEntity out of the walk. Both probe packages: every entity model byte for byte, the lumps' rows
+       (class, name, compile_source_id, model) Valve's.
+     - Not modelled: references (180f8e9e0), faceless meshes beside other faceless meshes deeper than
+       the entity's own children. RC writes these builder maps' names with [PR#] though their world
+       says fixupEntityNames false: ledger 270.
+
+270. **The map's own [PR#] name fixup is unconditional; the world's fixupEntityNames is not read** (2026-11-13;
+     resourcecompiler 20260923 decompile through ReVa; 20261103 compiles of s2c_emptymesh and s2c_emptymesh2):
+     - The compile driver (180f1d770, CompileMap's preprocess) calls 180fca750(world, "[PR#]") with no test.
+       It collects the world's name list (+0x1828) and runs vf157 (180f24170, CMapWorld and CMapEntity alike):
+       each key whose type is a name (bits 0x830006 of the type) and whose value passes EntityLump_FixupValue
+       (180fefb60: not empty, not starting '!', '*', '?' or '@', and not an FGD class name) gets the prefix;
+       entity_name_fixup_persist classes keep _entname_fixup_prefix; then the outputs (CMapEntityIONode vf157
+       180feb390) and every child that IsA CMapNode (CMapNode vf157 180f787b0). CMapPrefab (180f98d10) and
+       CMapGroup have their own.
+     - CMapWorld's constructor (180fc0fa0) declares fixupEntityNames (bool, +0x2ba8, default true); the only
+       other access is its setter (180fcbe00, from the editor's UI table). Nothing in the compile reads it.
+     - Measured: s2c_emptymesh and s2c_emptymesh2 save it false and ship [PR#] on every name. Every lump
+       checked carries it (atixref 354/354 names, prefabprobe4 343/343; c2m2's environment prefab 59/60, the
+       60th "keyframe" a class name). An earlier byte search said otherwise because the lumps are compressed.
+     - Was: MapEntities.FixupEntityNames read the world's flag, so a map saved with it off compiled without
+       the prefix. Now: it is always true; a prefab's own fixupEntityNames ("[PR#]<id>_") is unchanged.
+     - Both probe maps: default_ents.vents_c byte for byte Valve's, every entity model too.
+
+271. **debugColorClustering is read only when a world node's meshes are merged** (2026-11-13; resourcecompiler
+     20260923 decompile through ReVa; 20261103 compiles of s2c_emptymesh and s2c_emptymesh2):
+     - CVisibilityMeshMerger::MergeMeshes (180234180) reads debugColorClustering on entry. Its one caller,
+       Step_BuildingVertexOverrideStreams (180277ade, the call at 180278812), runs it only when
+       VisibilityGuidedMeshClustering is set and there are three or more clusters: the vis builder's
+       (param_3 vf 0x120) or, with fewer, the node's box grid (CWorldRendererBuilderNode_BoxGrid 180283520;
+       under three boxes it skips the merge), and the mutual visibility (vf 0x130) is there. Then it merges
+       each of its three lists, the read coming first.
+     - Measured: both probes (one 64-unit world box) have a world node model but no merge; Valve's .vmap_c
+       lists meshletMaxTriangles / meshletMaxVertices and not debugColorClustering (ledger 272: the merge also runs
+       with no node model left). Ledger 119 had the three
+       together "with world node models", from maps large enough to merge.
+     - Now: WorldNodeCompile.Result.Clustered (the same three-cluster condition our merge already took),
+       WorldNodeFiles.Build's readArguments, MapRootFile.Compile.NodeArguments; a build whose node compile
+       did not run here keeps the old reading.
+     - Both probes, with Valve's .vwrld stamp pinned (S2C_WORLD_STAMP): every file of the package byte for
+       byte Valve's.
+
+272. **The .vmap_c over every probe package: what reads force_up_to_date_materials and debugColorClustering, a
+     runtime prefab's map, snapshot paths** (2026-11-13; 20261103 compiles in game/csgo_addons/s2c_rc_probe; a scan
+     of every package's RED2 against its outputs; MapRootFileTests, MapAssetsTests, MapSubassetsTests):
+     - force_up_to_date_materials: in every package exactly when the build compiles a world node model or an entity
+       model with a render mesh (a brush entity's is embedded: its DATA's m_refLODGroupMasks has an entry), or fails
+       one (ze_doom_p2_c_gameplay's missing materials). 13 -world builds of maps with neither (s2c_dec_probe01 and
+       the other decompiles) lack it; ModelCompile_ReadMeshArgs (1802f9cc0) is its reader (ledger 119). Was: always
+       outside an Only Entities build.
+     - debugColorClustering: whenever the merge runs, node models or not (s2c_dec_atixref and
+       s2c_dec_s2c_prefabprobe9 read it and keep no node model; probe_classes' decompile and both s2c_emptymesh
+       probes have node models and no merge). Without this build's own node compile, node models stand for it.
+     - A prefab loaded at runtime (a visible point_prefab): its map's entities, worldspawn included, join the
+       subasset table where the point_prefab stands, and its map's own references join the RERL (s2c_rtprefab,
+       s2c_rtprefab3/4/6, their decompiles: s2c_propover.vmap's worldspawn, spawns, props, material and models).
+     - The particle snapshot path the compile writes into snapshot_file (EntityLumpSet.WithParticleSnapshot) is
+       in the RERL whether or not the snapshot is built (s2c_snapprobe's node_1 and node_67).
+     - The test now: the inputs as MapCompile lists them (runtime prefabs too), the entity models' render read
+       from the package, a map with neither node models nor world physics as a -world build, our own world node
+       build for whether the merge runs (no vis), and a package whose input .vmap has changed since (its recorded
+       CRC) skipped as stale: s2c_dec_s2c_prefabinst, s2c_dec_s2c_prefabprobe4 and 8, s2c_navmovable,
+       s2c_sanavcover, s2c_zebias1 and two Hammer re-saves.
+     - Result: every non-stale probe package's .vmap_c byte for byte (MapRootEqualsValves passes), RERL externals
+       and subasset tables too.
+     - Which entities get a model (found when ledger 269's rule gave atixref's four path_particle_rope_clientside
+       paths, whose children are path nodes, a model key): the export builds one when the data provider's vf 0x160
+       (180f73db0 -> the node's vf219) is 1 or 2. CMapEntity vf219 (1810045b0, CMapPath and CMapPathNode too): a
+       solid class (type 5) 1, or 2 with render_as_world_but_physics_as_entity; any other class 1 only with a
+       visible child whose vf 0x138 is not null, which only CMapMesh and CMapTileMesh give (1800ddd70; every other
+       node 1800cc720, null). CMapCable has its own (18114d2b0). Ported as MapEntities.Entity.HasMeshChild:
+       EntityLumpAuthor writes model for a solid class that ships, a cable, or a class with a mesh child, and
+       EntityPhysicsModels builds none for a class other than a solid one without a mesh.
+
+273. **A prop still falling when the settle ends comes back from where it started** (2026-11-13; our settle
+     port, SettleWorld.Run, against Valve's package of s2c_prefabprobe3):
+     - Measured: SettleWorld.Run on s2c_prefabprobe3's source leaves prop_physics 2140:2239 at
+       (2600.06, -730.72, -11680.223), angles (0 135 0), awake: Valve's lump to the bit. Settled again from
+       that pose (what a decompile written there gives) it falls on to -16373.6 and goes to sleep
+       (spawnflags 1), so the pose a package holds is not a source for such a prop.
+     - Now: MapDecompiler.Unsettle, when the decompile has the game's content: our settle on the rebuilt maps;
+       for each prop it does not land on the lump's pose (x, y and angles unchanged), the start is searched
+       along z: the settle's drop added, then the miss taken off, then single floats, until it lands the
+       lump's origin bit for bit, awake. 2140:2239 lands; Entities_CompileAsTheSourceDoes passes on all 26
+       maps. A prop that does not land is noted and written at the lump's pose.
+     - Inside a prefab the decompile's brush corners are fitted and checked through the forward's moves
+       (EntityPhysicsModels' transformOf: SettleWorld.PrefabPlacement over the prefab nodes as MapNodeAngles
+       holds them, then CTransform(origin, AngleQuaternion(angles))); a prefab that moves its map gets an
+       inverse estimate and a float search (LocalCorner). s2c_prefabprobe2's prefab 108 is at the origin,
+       unturned: its two hulls left (carousel_door01_108_27, shootgame_mountain_climber_train_108_119) are not
+       a placement gap but a vertex no searched corner places exactly through those moves, now noted.
+     - Measured on those two (a probe of the source beside the decompile): our forward on the source gives
+       Valve's eight vertices to the bit, so the forward is right. The source places prefab 108 turned 90 in yaw
+       and moved (entity 27 at (-2240, -5376, 84) unturned, its mesh 80 units off it in y); the decompile's
+       prefab placement is the identity, which lands every lump entity bit for bit too, so the lump alone does
+       not tell them apart. Only these hulls' rounding does: the forward's moves of a mesh turned with its prefab
+       are not reachable from an unturned mesh at the entity's origin, nor from one turned with the entity or at
+       the world's origin (all three tried through the forward's moves). Open: search the prefab's placement
+       (the common yaw of its entities, a translation) against hull exactness.
+     - Measured further (11-13): the source prefab is origin (1024 512 64), yaw 90, and the source mesh's
+       world pose is (6320.0586, -1728, 148) turned 90, its pivot the mesh's middle. The decompile can put a
+       mesh at exactly that pose (an identity prefab, the mesh turned with the entity, pivoted at the hull
+       box's centre on a 1/1024 grid), so the placement is not the gap either. The source mesh is not quite
+       planar (corner y 15.542969 and 15.538086 on one face), and the hull build recomputes its vertices:
+       Valve's top vertices have z 4.000001 and 3.9999998, finer than a float at the world's z of 152 holds,
+       while the corners place at 4. No corner set reached them in 24 rounds of moving each corner by its
+       vertex's miss through the forward's hull build. Open: the hull builder's plane step inverted, to
+       rebuild a non-planar mesh from a hull it reshaped. Tried and taken out again: that pivot and the
+       iteration.
+
+274. **ze_doom's teleportrandom2_458: a vertex only the hull builder can make, from corners the hull dropped**
+     (2026-11-13; our forward, Valve's to the bit on the source, run on the source's and the decompile's inputs):
+     - The source mesh has 20 corners; the hull keeps 16. Two near-collinear corners at (-256, 127.98535, +-64),
+       beside (-256, 128, +-64), are dropped, and the corner at y -127.989746 ships as -127.98975.
+     - Measured: the hull builder (RnHullBuilder.BuildHull, ShapePoints, Create) on the source's 18 input points
+       gives Valve's 16 bit for bit; on the same points without the two at 127.98535 it keeps -127.989746. So
+       those dropped corners are what moves that vertex. Valve's 16 vertices fed straight to the builder also give
+       themselves, but through a mesh at the entity's origin -127.98975 is not reachable: the entity's inverse
+       is an exact subtraction near y 6488 (a float spacing of 1/2048), and -127.98975 is not on that grid.
+     - So no corner or pivot places it, and the decompile would have to add corners the shipped hull no longer
+       holds. Open, with s2c_prefabprobe2's two (ledger 273): a mesh rebuilt with points the builder drops,
+       chosen so its recompute lands the shipped vertex. Tried and taken out: corners stepped by the miss of the
+       forward's own hull build (no corner set reaches it). The BrushPhysics test tolerates this model.
+
+275. **ze_doom's teleportlab_4_953 is not a vertex order: its hull's mass data keep a skew the vertices lost**
+     (2026-11-13; our hull builder, Valve's to the bit on the source):
+     - Measured: every one of the 40320 orders of Valve's own 8 vertices, as the hull builder's input, gives
+       Valve's vertex order, and the decompile's mesh does too: the order is fixed by the points. What differs
+       is the hull's centroid (z -0.00196075 against Valve's -0.001953125) and mass properties.
+     - The source mesh is skewed by a few floats (its local corners z 256.0019 and 256.00195, -255.99805 and
+       -256.00195, y +-191.99902; its pivot the box's centre), so the builder's input holds 255.99994 and -256
+       where the shipped vertices are 256 and -256.0039: the build recomputes the vertices, and the centroid is
+       taken from the points before. The shipped vertices carry none of that skew; it would have to be solved
+       back from the hull's planes and mass data. The same class as ledgers 273 and 274: a hull the builder
+       reshaped. The note "vertex order no face order searched gives" is the wrong name for this one.
+     - Tried and taken out: the mesh re-pivoted at the box's centre (the source's pivot) with its corners
+       fitted again: the points land, the centroid does not.
+
+298. **Older lumps' path keys and worldname; the decompile's time** (numbered 276 on research/vmap-decompile until the 2026-11-15 merge) (2026-11-14; the 11-13 workshop sweep's
+     round trip, then one-map runs; DECOMPILE_PROFILE=1 and dotnet-trace for the time):
+     - An older lump writes a path's folded keys (pathNodes, pathNodeRadiusScales) inside the key table, ahead
+       of origin (ze_boatescape101_p's path_particle_rope_clientside 588), so the inverse kept them as keys and
+       the forward wrote them again from the nodes: 41 maps' round trips stopped on the duplicate. Once the path
+       is rebuilt, the keys PathKeys writes leave the table. The worldname of info_world_layer and worldspawn is
+       the map's, which BuildEntity appends: where the table holds it (ze_purification_a1, ze_sky_bridge_a01_skybox)
+       it is dropped. ze_boatescape101_p and ze_purification_a1 round-trip again (245 and 1579 alike).
+     - Time: ze_purification_a1 never finished (over 40 minutes): every sample was BrushRender.FitDensity's two at
+       a time stage, whose bisections grow with the square of a piece's packed values. On the probe maps its one
+       success came within its first 1000 bisections, so it stops at 4000 (DECOMPILE_DENSITY_PAIRS). HullOrder
+       ran 3000 shuffles for each hull it could not order (purification: 667 hulls, 368 s); every order found on
+       the probes, purification and ze_sky_bridge_a01_fix3 came within 300, so 300 (DECOMPILE_HULL_BUDGET).
+       Brush entities are solved ahead on half the cores (PlanBrushGeometry), added in walk order after, and
+       CornerFor's walk reads per-axis tables when neither move turns (both are a plain add per axis then).
+       Checked: the decompile's .vmap, prefab maps and notes byte for byte with planning off (DECOMPILE_NO_PLAN=1:
+       ze_hold_em_p, probe_classes, atixref, s2c_prefabprobe2 and 9) and with the full corner walk
+       (DECOMPILE_SLOW_CORNERS=1: purification, atixref, probe_classes), and CornerForTests (600 seeded corners).
+       ze_purification_a1 now 49 s, atixref 35 s (19 of them FrameSolver's real searches), the probes 1-2 s.
+     - Open, found on the way: ze_sky_bridge_a01_fix3's 150 instance copies come back under other ids (the
+       decompile's one mesh per hull takes node ids past the copies' block, 247); a hull's meshes would have to
+       share a node.
+
+299. **A prefab's frame search: its landings budget; the addon's materials** (numbered 277 on research/vmap-decompile until the 2026-11-15 merge) (2026-11-14; ze_minecraft_sakura from the
+     workshop pool, DECOMPILE_PROFILE=1, the SolveFrame.found counter):
+     - ze_minecraft_sakura took 2 min 13 s, 118 s of it FrameSolver: prefab 48128's four placements tried the
+       whole 2M frames (1.54G landings) and none lands. The prefab solve had no landings budget (InstancePlan's has
+       50M). Every prefab frame solved on the probe maps (s2c_prefabprobe9, 11, 12, s2c_varprobe) and on sakura
+       (4882, 4895) was the first frame tried, 7 of 7, and the budget is read between frames, so a first frame's
+       own landings (prefabprobe9's: under 1e8) are never cut: the prefab solve now takes the same 50M. Sakura 18 s.
+       Checked: sakura's .vmap and the .vmap + prefab maps of 19 probe maps (s2c_prefabprobe 1-12, prefabinst,
+       prefabslot, pinst, pinst7, pinstbrush, varprobe, atixref, ze_hold_em_p) byte for byte before and after.
+     - decompile-map --addon <addon _dir.vpk or game folder> adds the addon's .vmat_c names to the material table,
+       as decompile-sweep does: without it at least 110 of sakura's brush hulls (the 6 entities its output's tail listed) had "material hash
+       no known material has"; with it, none.
+     - Measured, not changed: s2c_prefabprobe4 takes 104 s, 88 s of it InstancePlan's frames, each solved one on its
+       first or second frame but with up to 320M landings in that frame (group 708): the preimage walk per frame is
+       the cost, not the frame count.
+     - Open, found on the way: sakura's func_button 53035 "drawn hull 1 does not pair with render piece 1 in order"
+       (deepslate_diamond_ore, 0 of 10 hull points on the piece); func_breakable 42379 and others' hull vertex order
+       and corners (same points, other order); its .nav is not version 36.
+
+300. **World meshes Hammer can hold: one face per directed edge, one fan per vertex, boundaries a permutation** (numbered 278 on research/vmap-decompile until the 2026-11-15 merge)
+     (2026-11-14; Workshop Tools, Steam open, CS2 closed: cs2.exe -tools -insecure -addon s2c_dec_sakura, open_asset over
+     netcon; then s2c vmap-check on Valve-saved sources and our decompiles):
+     - Hammer opened the entity-only decompiles at once (ze_hold_em_p 1.4 s, ze_minecraft_sakura 2.4 s) and hung on
+       the world-mesh ones (DECOMPILE_WORLD_MESHES=1; hold em's 14 meshes stopped responding for minutes, as on 10-30).
+     - s2c vmap-check (new) tests every CDmePolygonMesh against the half-edge rules. Valve-saved sources keep every
+       rule: ze_hold_em_p (114 meshes), probe01 (23), c2m2 (23) and the source1import c2m2_fairgrounds_csgo_multi
+       (2,095 meshes, 2.18M faces, 2.65M boundary half-edges, largest mesh 6,525 faces), so mesh size and open
+       boundaries are not what Hammer stalls on. One rule Valve does break: a face visiting a vertex twice (atixref 11,
+       c2m2_fairgrounds_csgo_environment_prefab 65), so the check only reports it; none of our decompiles have one. Ours broke three: (1) VmapBuilder's boundary next took the first
+       faceless edge leaving the target, so where two boundaries meet two edges shared one next (next not a
+       permutation: the 10-30 Hammer re-save of the world decompile carries it, 1 mesh); (2) a soup piece where an
+       edge carries two faces on one side (sakura: 4102 pieces), which a half-edge mesh cannot hold, so face and
+       next were overwritten; (3) a vertex where two face fans touch (hold em: 1), which Valve never writes.
+     - Fixed: boundary next found by turning about the target within its fan (twin, then the face's edge before it);
+       a world piece split into parts with each directed edge used once (HalfEdgeParts: a source Hammer mesh can
+       never reuse one, so a piece that does joins two source meshes); a vertex on a further fan gets its own vertex
+       at the same position. hold em's world: 105 meshes, every rule kept; sakura's: 48,443 meshes, 170,500 faces,
+       every rule kept. Brush entity meshes kept every rule already, so their bytes do not change (checked: the
+       19 probe decompiles byte for byte).
+     - Not yet seen in Hammer: the fixed world copies (s2c_dec_ze_hold_em_p_world2, ze_minecraft_sakura_world2 in
+       s2c_dec_sakura) wait for the next CS2-closed window. Sakura's world still has 78,395 triangles with no
+       material (toolsnodraw) and 5,447 by surface only.
+
+279. **World soup triangles that are props' mesh physics; clip faces by collision attribute** (2026-11-15;
+     ze_minecraft_sakura, DECOMPILE_PROFILE=1 counters and DECOMPILE_WORLDDEBUG notes, CS2 open, offline):
+     - Sakura's world decompile left 78,395 soup triangles with no material. Counted by cause: 67,876 carried a surface
+       (Wood 29,395, concrete 14,198, foliage 7,701, grass 6,260, Cloth 5,661, glass 4,661) that no drawn material has,
+       and 16,540 had three corners on the render but on two materials. The addon's own materials were not the gap
+       (decompile-map --addon now also gives GameContent the addon's files, folder or workshop _dir.vpk, AddPackage):
+       only 3 of sakura's 624 .vmat_c set PhysicsSurfaceProperties, read through our material reader.
+     - The surfaces are the props': the .vmap_c names 45 models, 13 with mesh physics (281,550 triangles), and the
+       forward moves a prop's mesh points by the prop matrix and joins them to the world soup with the model's surfaces
+       (WorldCollision prop pieces, StaticPropHulls.Meshes), while its render is baked apart: those triangles land on
+       no world render corner. The world node lists no prop at all (ze_hold_em_p's n0.vwnod_c: 0 scene objects, 0
+       transformed fragments: props are baked), so placements come from the soup.
+     - StaticProps.FindMeshProps: offsets voted from 8 model points to every soup point at each right-angle yaw, each
+       peak checked through StaticPropHulls.Meshes and its origin solved axis by axis over float steps by the most
+       points landing bit for bit. Accepted when every point within reach of a soup point (its 1/16 cell holds one) is
+       one, or is welded to one within RnMeshBuilder's 1/32 (its default weld tolerance: seams where two chunk models
+       meet, up to 0.0069 apart on sakura), and at least 99% land bit for bit (the world build drops a few). Sakura:
+       10 models placed, stone/wood/grass/leaves/glass/cloth all at <2560, 1536, 639.4286> unturned, the boat, eggs
+       (eggland at yaw 90) and boundary elsewhere; 279,873 soup triangles leave the world for prop_statics. Not placed:
+       door_25, door_27, panda (entity models, no vote peak).
+     - A shape with no tool material whose collision attribute is not the default takes the tool material whose
+       collision (group, interact-as) it is, read from the game's materials/tools/*.vmat_c through
+       WorldCollision.ReadMaterial (first by name where several share it: same physics): sakura's npcclip+playerclip
+       soup -> toolsclip, its window soup likewise. The default soup's 8,532 invisible triangles stay toolsnodraw,
+       whose collision is the default's.
+     - Sakura's world: 653 meshes, 8,868 faces (was 48,443 meshes), 5.2 MB (was 173 MB), every half-edge rule kept.
+       ze_hold_em_p's world and entity decompiles and the 19 probe decompiles byte for byte unchanged.
+     - Open: whether the 8,532 default-collision invisible triangles were nodraw, invisible or hidden faces in the
+       source (the package keeps no per-triangle tool material); props with mesh physics under other yaws or scales.
+
+280. **What the world draws with no collision: packed texcoords, props without collision, render-only meshes** (2026-11-15;
+     ze_minecraft_sakura, DECOMPILE_WORLDDEBUG counts, CS2 open, offline):
+     - The world render reader skipped every draw whose TEXCOORD0 is not R32G32_FLOAT: sakura's 968 draws (mesh
+       overlays and others) store R16G16_SNORM. They are read now as BrushRender.Texcoord reads them (SNORM raw/32767
+       clamped at -1, halves as halves). With them, sakura's world soups take a drawn material on 7,820 triangles (was
+       453) and the "neither" (toolsnodraw) count falls from 8,532 to 46: those faces were drawn, in SNORM draws.
+     - Of sakura's 406,153 draw triangles, 116,463 have a corner off every soup point by more than the render's 1/32
+       weld; 46,773 of them are the placed props' own render (their model's LOD 0 render, GameContent.RenderMeshes,
+       moved by the placement). ze_hold_em_p: 0 of 5,140.
+     - The rest is mostly props with no world collision: the .vmap_c names 11 models without physics
+       (models/noncollision/nonco.vmdl 43,746 render triangles, noncollisionrrrrrrrrrrrrrealtime 5,384, iteeeem 9,622,
+       pigvalvepig 4,844, the wolf, cats, fox, creepers, boss). StaticProps.FindRenderProps places them over the
+       drawn-only corners: offsets from one sample corner to every corner, kept when the other samples land within one
+       1/32 cell, then 99% of 256 spread corners, then 99% of all render corners within 1/32 of a draw corner. The
+       draws keep only the weld's representatives, so the origin is the mean offset of the corners that land, not a
+       bit-exact solve (noted in the output). Sakura: nonco at <2560, 1536, 639.4286> (the chunk models' own origin),
+       iteeeem <2560, 1536, 640.04285>, noncollisionrrrrrrrrrrrrrealtime <2560, 1536, 639.3044>, pigvalvepig
+       <2561.2449, 1533.2136, 637.7768>, all unturned; 63,297 draw triangles theirs. Not found in the world draws:
+       the wolf, cats, fox, creepers, boss and the prefab characters (entity models).
+     - The last 6,393 drawn-only triangles are rebuilt as world meshes with physicsType none (the shipped physics has
+       no collision there), one per connected run, faces the draw triangles with materials and texcoords as drawn,
+       corners at the render weld's representatives (WorldGeometry.RenderOnlyMeshes): 400 meshes.
+     - Speed: both prop searches take offsets from one lead sample and test the others by a one-cell-grown hash set
+       (one lookup), check 256 spread points before the full test, and FindMeshProps scores origin candidates on 2,048
+       points moved as StaticPropHulls.Meshes moves them. Sakura's world decompile 3 min 12 s -> 50 s on two cores at
+       idle priority, its .vmap byte for byte the same.
+     - Sakura's world: 1,135 meshes, 15,210 faces, every half-edge rule kept. ze_hold_em_p's world decompile and the
+       19 probe decompiles byte for byte unchanged.
+
+281. **World props from the world nodes' transforms; draw faces as polygons; one material per member** (2026-11-15;
+     s2c vmap-world-compare against the sources of probe01, atixref and ze_hold_em_p; the hold em blend session's
+     WORLDPHYS_PIECE_TRIS truth for the material split; CS2 open, offline):
+     - s2c vmap-world-compare (new) maps each decompiled world face to the source face its centroid lies on.
+       Before this entry: probe01 136 of 146 faces equal a source face, its 18 source meshes back as 4; atixref 6,876
+       source faces split into 31,349 of ours and 58,902 of ours on no source face.
+     - atixref's world node lists its props with their transforms: 194 scene objects (model + m_vTransform, rows of
+       four) and 4,463 aggregate fragments with m_fragmentTransforms (flat twelve), whose draws are stored in the
+       model's space. ze_hold_em_p's lists none (its props are baked; the hull search places them). The render reader
+       read those fragment draws as world positions. Now RenderTriangles leaves them out (TransformedDraws), and
+       StaticProps.SceneProps places them: a scene object's model is named; a fragment group (one transform) takes
+       the .vmap_c model whose LOD 0 render vertices of the same material hold 99% of its draw corners. Origin and
+       scales read from the matrix (PropMatrix: angle matrix, origin as translation, columns times scales), the
+       angles searched in float steps about MatrixAngles until the matrix returns bit for bit: atixref 3,598 props,
+       2,122 bit for bit, 1,476 at the nearest angles found, 432 fragment groups matching no model.
+     - Render-only meshes come back as faces: draw triangles sharing an edge merge when coplanar, of one material,
+       with the same texcoords at both shared corners, and PolygonTriangulator cuts the merged loop back into exactly
+       those triangles (WorldGeometry.DrawFaces). atixref: 6,876 -> 1,016 source faces split, 2,386 -> 3,571 of our
+       faces equal a source face; sakura's 6,393 render-only triangles -> 2,876 faces. Soup faces keep the quad cap:
+       uncapped merging on probe01 dropped equal faces 136 -> 125 (merges across source faces).
+     - A package without world_physics.vmdl_c (atixref's fixture) writes render-only meshes with default physics:
+       no collision under a draw says nothing there.
+     - Material pass: a soup triangle takes the material of the coplanar draw triangle holding its centroid
+       (DrawMaterialAt; it agrees with the corner pick on all 4,534 drawn ze_hold_em_p triangles); a triangle no draw
+       holds (14 on ze) goes to the surface/edge-neighbour pass. WorldGeometry.Members keeps a member to one material:
+       triangles a vertex introduces under another material's lead join the latest member of their own material that
+       shares a vertex, else form their own. ze_hold_em_p: concrete_9 18 -> 16, hr_conc_i_tintdark 48 -> 50, the
+       counts the blend session measured on Valve's source (its two hr triangles at y 398, soup 4544 and 4545).
+     - Checked: the 19 probe decompiles byte for byte unchanged; sakura's world copy 1,105 meshes, every half-edge
+       rule kept, 52 s on two idle cores; atixref 44 s.
+     - Open: atixref's skybox geometry (z near 14,200) comes from a map the source references, so vmap-world-compare
+       counts it on no source face (the tool reads one .vmap); 1,476 props at the nearest angles; 432 fragment groups;
+       source mesh identity (probe01 18 -> 4: touching meshes weld in the physics, and draws merge meshes by material).
+
+282. **Lightmap charts keep (nearly) to one source mesh but never join one; mesh identity is not in the package**
+     (2026-11-15; s2c world-charts on probe01.vpk against probe01.vmap, CS2 open, offline):
+     - Draw triangles joined where they share a corner position with one lightmap texcoord (TEXCOORD3, R16G16_UNORM)
+       form 70 charts over probe01's 15 drawn source world meshes: 69 keep to one source mesh, 1 (2 triangles of
+       reflectivity_30, on touching source meshes 91 and 92) spans two; every source mesh lies over several charts
+       (up to 15). So charts can split a merged piece where meshes touch, but say nothing of which charts make one
+       mesh. atixref's fixture has no TEXCOORD3 (not checked there); the blend session notes node 409's tessellated
+       triangles have near-degenerate lightmap density (ledger 188), so a subdivided mesh needs its own check.
+     - With ledger 281's facts (the physics welds touching meshes and gives the same PHYS for one mesh or several
+       holding the same pieces, the blend session's measurement; draws merge meshes by material per cluster), no
+       file of the package found so far keeps which faces formed one CMapMesh. The decompile keeps its soup members
+       (one material each) as meshes; the per-material split is noted, not guessed into meshes.
+
+290. **A painted subdivided world mesh's physics is its flat bake; the render keeps its paint truncated to 8 bits**
+     (2026-11-15, research/vmap-decompile, ze_hold_em_p node 409; offline, our forward on the true source, which is
+     exact against Valve's package: world_physics PHYS 0, RED2 0).
+     - Measured: node 409 (63 faces: concrete_9 x8 at bias 0, hr_conc_i_tintdark x19 (4 at 0, 15 at 1),
+       concrete_slabs_wet_1 x36: face 9 flat at bias 0, faces 19-53 subdivided at bias 1, 128 triangles each)
+       replaced in the source by a flat mesh of its 4,536 baked triangles, one face each in the bake's order, each
+       with its face's material and lightmapScaleBias and the bake's corner paint: our forward's world physics is
+       Valve's byte for byte, with the paint as floats and with it truncated to 8 bits and read back at the byte's
+       middle (`WPBUILD_FLATTEN=409|bytes`, WorldPhysicsAuthorTests). A decompile needs no subdivision cage for
+       the physics.
+     - Measured: each of node 409's 13,494 baked corners has, at the render vertex within 1/32 of it on a draw
+       triangle of its material facing its way, the bake's paint packed as ConvertFloatToChannel packs it
+       (181363b90: clamped, times 255, truncated; WorldNodeModels.Unorm8): 13,494 of 13,494, none missing
+       (BlendFacesTests.RenderPaintIsTheBakesAtEightBits). The draw layout names the field by its ShaderSemantic
+       `VertexPaintBlendParams` (ze: TEXCOORD4, R8G8B8A8_UNORM); a byte b stands for [b/255, (b+1)/255), and the
+       decompile writes (b + 0.5)/255 (1 for 255), which packs back to b.
+     - From the forward (WorldCollision.TessellatedPieces, BrushHulls.PiecesWithCorners): one piece per (bias,
+       material index) face set in sorted order, a splitting blend's piece then cut per layer (empty layers kept);
+       the physics sees the biases only through that order. The least biases for node 409's order of materials are
+       its own (0,0) (0,1) (0,2) (1,1) (1,2) (BlendFacesTests.BiasesFromThePieceOrder; BlendFaces.AssignBiases).
+     - Effect on the decompile (`DECOMPILE_WORLD_MESHES=1`, paint from the render): the soup's name is Valve's
+       (" [concrete_block]"). Still different: the piece sequence (ours 16 with the empty layer pieces, Valve's 9),
+       and with it the surface order (wet / concrete_block), the per-triangle surface ids and the vertex and
+       triangle blobs.
+     - Not read: where hr_conc's 30 | 8 boundary falls in the shipped soup. The vertex first-use order and RED2's
+       piece count do not pin it (the cut lies inside one connected run of 10 triangles); only the BVH's triangle
+       order does.
+
+301. **The world part's pieces in walk order: empty layer pieces, the props' hull runs, the surface table** (numbered 291 on research/vmap-decompile until the 2026-11-15 merge)
+     (2026-11-15, research/vmap-decompile, ze_hold_em_p; offline, our forward on the true source, exact against
+     Valve's package).
+     - Measured (`WPBUILD_WALK` on the true source): the part's walk is node 12, node 13 (6 hr_conc triangles each),
+       the 43 fluorescent fixtures' 86 hulls, node 409's 7 pieces (concrete_9 16, hr_conc 8, slabs 2 then its empty
+       layer piece, hr_conc 30, slabs 4480 then its empty layer piece), the 43 bulbs' hulls: 138 items, the props'
+       hulls in two runs, and a slab's filled layer piece before its empty one. In the part (the type sort after
+       every append, WorldCollision.PartOrder) the 9 mesh pieces stand hr 6 | empty | slab 2 | c9 16 | empty | hr 6 |
+       hr 30 | hr 8 | slab 4480, behind the 129 hulls.
+     - From the forward (WorldPhysics.Build): spheres, capsules and hulls register their surfaces first, then each
+       mesh piece in part order, empty ones included; so the shipped table's entries no other shape uses are the
+       mesh pieces' first surfaces in part order (ze: wet before concrete_block, from the empty layer piece
+       ahead of the slab's filled one).
+     - From the forward (WorldCollision.Group): each piece is appended to its attribute's newest soup in part order,
+       so the soup is the pieces joined in part order. Where adjacent pieces of one material are cut changes no
+       PHYS byte, only the count does (RED2 physics_shape_mesh_count), unless a soup would pass its CountLimit.
+     - Effect (`BlendFaces.PieceLayout`, decompile with the layout on and off): ze_hold_em_p's decompile through
+       our forward goes from PHYS 4,507 / RED2 3 differences to PHYS 18 / RED2 0 (9 mesh pieces, 138 shapes, the
+       surface table Valve's). The decompiled walk differs from the source's (props after 2 and 7 meshes; empty
+       pieces in other part slots) and builds the same bytes. probe01 and atixref decompiles are byte for byte
+       the same with the layout on and off.
+     - Left (the 18): m_Vertices from vertex 52, m_Triangles and 16 per-triangle surface ids, all triangle order
+       inside pieces. The shipped vertex order pins the slab 4480 piece's: vertices 52-54 are the bake's first
+       slab triangle, (1241.6001,-167.875,17) (1241.6001,-105,17) (1165.5,-105,17), then a triangle of another
+       face, as the bake interleaves faces. Not pinned by the vertex order: the y = 398 hr_conc quad, which brings
+       no new vertex (the source has it in the bias-0 hr 8 piece; the BVH order would place it).
+
+302. **The world's rebuilt prop_statics take walk numbers; they belong in the walk positions that shipped nothing** (numbered 292 on cs2-map-decompiler until the 2026-11-15 merge)
+     (2026-11-15, cs2-map-decompiler, written after the split; s2c_prefabprobe2 and ze_hold_em_p, offline).
+     - Measured: with world meshes on (the default since 501cbf6) s2c_prefabprobe2's entity round trip had 80
+       differences, every compile_source_id in prefab 108 three above Valve's (info_player_start#108:2 17 vs 14),
+       and with DECOMPILE_WORLD_MESHES=0 none. The world pass had added 1 world mesh, 3 prop_statics and 4
+       render-only meshes after the map's own nodes, which walk before a prefab map's nodes (MapEntities.Walk,
+       ledger 296's numbering): the 3 prop_statics took a number each, the meshes none.
+     - So a rebuilt prop_static is a node that walked and shipped nothing to the lump, which is what the
+       decompile's placeholders stand for: each takes a placeholder's place at the world's root, in walk order
+       (which one changes no number), and the world meshes move next to the props in the order written, which
+       keeps the physics walk's order of meshes and props (WorldCollision.Pieces: the world's own meshes and
+       entities in child order). Only root placeholders are used, as a prop moved into a group or layer would
+       walk after the world's own meshes.
+     - Result: s2c_prefabprobe2's entity round trip 0 differences with world meshes on and off; ze_hold_em_p's
+       86 props take 86 of its 114 placeholders and its world physics through our forward is unchanged (PHYS 18,
+       RED2 0, ledger 301).

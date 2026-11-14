@@ -154,6 +154,12 @@ implement Valve's asset-processing options. Where the output differs from a
 stock compile, the differences are measured and written down in
 [docs/RESOURCES.md](docs/RESOURCES.md) rather than assumed away.
 
+It does not decompile maps or port Source 1 maps: those are their own repositories, each with this one as
+its `compiler/` submodule. The map decompiler (compiled map package back to Hammer `.vmap`) is
+**cs2-map-decompiler** (`dev@192.168.20.32:repos/cs2-map-decompiler.git`, docs/DECOMPILE.md there), split
+out on 2026-11-15; the CS:GO map porter is **s2port** (`repos/s2port.git`). [docs/DECOMPILE.md](docs/DECOMPILE.md)
+here says where each piece of the decompiler went.
+
 The contract this project holds itself to is **decoded-tree identity**, not byte
 identity. The KV3 wire format matches: this writes binary v5, the two-buffer
 split layout Valve's compiler writes, and picks each block's compression the way

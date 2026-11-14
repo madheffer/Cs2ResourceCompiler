@@ -31,7 +31,10 @@ public static class MapPrefabs
     /// (targetMapPath, e.g. maps/prefabs/x.vmap).
     /// </summary>
     public static void Attach(DmxBinary.Document doc, Func<string, DmxBinary.Document?> load)
-        => Attach(doc, load, nested: false, depth: 0);
+    {
+        MapVariables.Apply(doc, prefab: null);
+        Attach(doc, load, nested: false, depth: 0);
+    }
 
     private static void Attach(DmxBinary.Document doc, Func<string, DmxBinary.Document?> load, bool nested, int depth)
     {
@@ -50,6 +53,9 @@ public static class MapPrefabs
                 continue;
             if (loaded.OfType("CMapWorld").FirstOrDefault() is not { } world)
                 continue;
+            // The prefab's map takes its variables as this placement sets them (rc 0923 180f96d40 ->
+            // 18107d160); load gives each placement a document of its own (FromContent reads the file).
+            MapVariables.Apply(loaded, prefab);
             Attach(loaded, load, nested: true, depth + 1);
             prefab.Attributes[WorldKey] = world;
             prefab.Attributes[DocumentKey] = loaded;

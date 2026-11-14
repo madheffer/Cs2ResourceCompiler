@@ -361,6 +361,102 @@
    "note": "the visibility state byte +0x370 (180f8f920 starts it at 1)"
   },
   {
+   "addr": "180f74dd0",
+   "name": "CMapNodeDataProvider::ChildCount",
+   "module": "s2c:entities/lump",
+   "note": "vf2: the node's children count (+0x1f8); the export's geometry test (ledger 269)"
+  },
+  {
+   "addr": "180f73c00",
+   "name": "CMapNodeDataProvider::GeometryChild",
+   "module": "s2c:entities/lump",
+   "note": "vf3: child i when it IsA CMapNode, is visible (+0x370) and nothing refers to it (180f8e9e0), else null; a solid class entity with none is not exported (ledger 269)"
+  },
+  {
+   "addr": "180f8e9e0",
+   "name": "MapNode_IsReferred",
+   "module": "s2c:entities/lump",
+   "note": "MapNode_ReferrerCount (180f8ba70) > 0"
+  },
+  {
+   "addr": "180f163b0",
+   "name": "MapNode_GatherGameDataNodes",
+   "module": "s2c:entities/lump",
+   "note": "every CMapGameDataNode under a node (MapNode_CollectByClass 180f86e70, filter 8); the list 180f180a0 numbers (ledger 269)"
+  },
+  {
+   "addr": "180f180a0",
+   "name": "MapWorld_NumberGameDataNodes",
+   "module": "s2c:entities/lump",
+   "note": "compile_source_id (+0x17ec) per gathered node, keyed by path and nodeID so a repeated prefab reuses its numbers (ledger 269)"
+  },
+  {
+   "addr": "180f26160",
+   "name": "CMapGameDataNode::WriteKeys",
+   "module": "s2c:entities/lump",
+   "note": "vf217: the node keys, then compile_source_id = +0x17ec"
+  },
+  {
+   "addr": "180fca750",
+   "name": "MapWorld_FixupNames",
+   "module": "s2c:entities/lump",
+   "note": "the world name list (+0x1828), then vf157 with the prefix; called by the compile driver with \"[PR#]\" unconditionally (ledger 270)"
+  },
+  {
+   "addr": "180f24170",
+   "name": "CMapGameDataNode::FixupNames",
+   "module": "s2c:entities/lump",
+   "note": "vf157: name-typed keys (0x830006) through EntityLump_FixupValue get the prefix; entity_name_fixup_persist; outputs, then children (ledger 270)"
+  },
+  {
+   "addr": "180fefb60",
+   "name": "EntityLump_FixupValue",
+   "module": "s2c:entities/lump",
+   "note": "not empty, not '!' '*' '?' '@' first, not an FGD class name (ledger 270)"
+  },
+  {
+   "addr": "180f787b0",
+   "name": "CMapNode::FixupNames",
+   "module": "s2c:entities/lump",
+   "note": "vf157: every child that IsA CMapNode (ledger 270)"
+  },
+  {
+   "addr": "180fcbe00",
+   "name": "CMapWorld_SetFixupEntityNames",
+   "module": "s2c:entities/lump",
+   "note": "the only access to +0x2ba8 besides the constructor; the compile never reads it (ledger 270)"
+  },
+  {
+   "addr": "180278812",
+   "name": "Step_BuildingVertexOverrideStreams_Merge",
+   "module": "s2c:entities/lump",
+   "note": "the MergeMeshes call: VisibilityGuidedMeshClustering, three or more clusters (vis, else the box grid 180283520) and mutual visibility (ledger 271)"
+  },
+  {
+   "addr": "180f73db0",
+   "name": "CMapNodeDataProvider::ModelKind",
+   "module": "s2c:entities/lump",
+   "note": "vf44 (0x160): the node vf219; the export builds a model when it is 1 or 2 (ledger 272)"
+  },
+  {
+   "addr": "1810045b0",
+   "name": "CMapEntity::ModelKind",
+   "module": "s2c:entities/lump",
+   "note": "vf219: solid class 1 (2 with render_as_world_but_physics_as_entity); else 1 only with a visible child whose vf 0x138 is not null (CMapMesh, CMapTileMesh) (ledger 272)"
+  },
+  {
+   "addr": "180234180",
+   "name": "CVisibilityMeshMerger::MergeMeshes",
+   "module": "s2c:entities/lump",
+   "note": "reads debugColorClustering on entry (ledger 271)"
+  },
+  {
+   "addr": "18111be50",
+   "name": "MapCheck_EmptyEntities",
+   "module": "s2c:entities/lump",
+   "note": "Hammer map check: a CMapEntity of class type 5 or 10 (or should_have_children) with no children; not run by the compile (ledger 269)"
+  },
+  {
    "addr": "180fb15e0",
    "name": "NavGen_CollectLadders",
    "module": "s2c:baked/nav",
@@ -2189,6 +2285,78 @@
    "name": "CMapPrefab_Collapse",
    "module": "s2c:geometry/mesh-export",
    "note": "a group at the prefab's transform, 181018e50 places the map, its nodes move into the group (vf 0x1c8), then the remap"
+  },
+  {
+   "addr": "180fcdf10",
+   "name": "CMapVariableSetStorage_Construct",
+   "module": "s2c:entities",
+   "note": "variableNames +0x98, variableValues +0xb8, variableTypeNames +0xd8, variableTypeParameters +0xf8, variableGroupNames +0x118, m_ChoiceGroups +0x138, variableAndChoiceOrder +0x160"
+  },
+  {
+   "addr": "180fcdcc0",
+   "name": "CMapVariableChoiceGroupStorage_Construct",
+   "module": "s2c:entities",
+   "note": "m_ChoiceVariables, m_Choices, m_ActiveValue, m_GroupName"
+  },
+  {
+   "addr": "180f8bc90",
+   "name": "CMapNode_VariableBindings",
+   "module": "s2c:entities",
+   "note": "lea rax, [rcx+0x3d0]: the node's key -> variable table"
+  },
+  {
+   "addr": "180f93000",
+   "name": "CMapNode_WriteVariableBindings",
+   "module": "s2c:entities",
+   "note": "the +0x3d0 table sorted into variableTargetKeys (+0x3f8) / variableNames (+0x418)"
+  },
+  {
+   "addr": "180fa07d0",
+   "name": "CMapPrefab_ConstructOverrides",
+   "module": "s2c:entities",
+   "note": "registers variableOverrideNames +0x588, variableOverrideValues +0x5a8; zeroes +0x5c8 (180f96d40 runs 18107d160 when it and its +0x1b0 are set)"
+  },
+  {
+   "addr": "180fa0570",
+   "name": "CMapPrefab_HasVariableOverride",
+   "module": "s2c:entities",
+   "note": "the name among variableOverrideNames (V_stricmp_fast, first match) with a value, an empty one included"
+  },
+  {
+   "addr": "180fa03d0",
+   "name": "CMapPrefab_GetVariableOverride",
+   "module": "s2c:entities",
+   "note": "that override's value"
+  },
+  {
+   "addr": "18107d160",
+   "name": "CMapVariableSet_ApplyToNodes",
+   "module": "s2c:entities",
+   "note": "each variable in order: its value (18107a810), then 1810ec600 on every node of the map (180f86e70 flags 0, 1, 1)"
+  },
+  {
+   "addr": "18107a810",
+   "name": "CMapVariableSet_ResolveValue",
+   "module": "s2c:entities",
+   "note": "a choice group driving it first, else the prefab's override (180fa0570), else the variable's value; prefab +0x55f sends a non-empty value through 18107c510"
+  },
+  {
+   "addr": "18107c510",
+   "name": "CMapVariableSet_TransformValue",
+   "module": "s2c:entities",
+   "note": "a value rewritten by the placing prefab's transform (vector math); not ported"
+  },
+  {
+   "addr": "1810ec600",
+   "name": "CMapNodeBindings_SetVariable",
+   "module": "s2c:entities",
+   "note": "each binding naming the variable (case-blind): the value through the key's attribute (types 0x24-0x26 convert), set by vf 0x7a0 when it differs case-blind"
+  },
+  {
+   "addr": "1810ec540",
+   "name": "CMapNodeBindings_FindKey",
+   "module": "s2c:entities",
+   "note": "the binding of a key (181006440 asks it of parentname)"
   },
   {
    "addr": "181114940",
