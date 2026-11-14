@@ -431,6 +431,7 @@ public static class MapDecompiler
             {
                 var stats = StaticProps.Models(files, mapName).Select(m => (Model: m, Phys: content.Physics(m))).ToList();
                 var withMeshes = stats.Where(x => x.Phys?.Parts.Any(p => p.Shape.Meshes.Length > 0) == true).ToList();
+                notes.Add($"world debug: models without physics: {string.Join(" ", stats.Where(x => x.Phys is null).Select(x => $"{x.Model}:{content.RenderMeshes(x.Model).Sum(m => m.Count)}"))}");
                 notes.Add($"world debug: the .vmap_c names {stats.Count} models, {stats.Count(x => x.Phys is null)} without physics, {withMeshes.Count} with mesh shapes " +
                           $"({withMeshes.Sum(x => x.Phys!.Parts.Sum(p => p.Shape.Meshes.Sum(m => m.Shape.GetTriangles().Length)))} triangles once each); " +
                           $"e.g. {string.Join(" ", withMeshes.Take(8).Select(x => $"{x.Model}:{x.Phys!.Parts.Sum(p => p.Shape.Meshes.Sum(m => m.Shape.GetTriangles().Length))}"))}");
@@ -519,6 +520,28 @@ public static class MapDecompiler
         foreach (var prop in meshProps)
             main.Builder!.AddEntity(main.NewId!(), [new("classname", "prop_static"), new("model", prop.Model)],
                                     prop.Origin, prop.Angles, Vector3.One, []);
+        // What the world draws with no collision under it: props without world collision (placed from the render),
+        // then the rest as world meshes with no physics.
+        if (Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" && content is not null)
+        {
+            var drawnOnly = DrawnWithoutCollision(files, mapName, [.. props, .. meshProps], content);
+            var placedModels = props.Concat(meshProps).Select(x => x.Model).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var (renderProps, covered) = StaticProps.FindRenderProps(drawnOnly,
+                StaticProps.Models(files, mapName).Where(m => content.Physics(m) is null || !placedModels.Contains(m)), content.RenderMeshes, notes);
+            foreach (var prop in renderProps)
+                main.Builder!.AddEntity(main.NewId!(), [new("classname", "prop_static"), new("model", prop.Model)],
+                                        prop.Origin, prop.Angles, Vector3.One, []);
+            var rest = drawnOnly.Where((_, i) => !covered[i]).ToList();
+            var renderOnly = WorldGeometry.RenderOnlyMeshes(rest);
+            foreach (var mesh in renderOnly)
+                foreach (var part in HalfEdgeParts(mesh.Faces.Select(f => f.Corners).ToList(), out _))
+                    main.Builder!.AddMesh(main.Builder!.World, main.NewId!(), Vector3.Zero, Vector3.Zero,
+                                          [.. part.Select(i => (mesh.Faces[i].Corners, mesh.Faces[i].Material))], mesh.Materials,
+                                          cornerTexcoords: [.. part.Select(i => mesh.Faces[i].Texcoords)], physicsType: "none");
+            if (rest.Count > 0)
+                notes.Add($"world: {rest.Count} draw triangles with no collision under them and no prop's render rebuilt as {renderOnly.Count} " +
+                          "mesh(es) with no physics (corners at the render's 1/32 weld, materials and texcoords as drawn)");
+        }
         if (splitMeshes > 0 || droppedFaces > 0)
             notes.Add($"world: {splitMeshes} mesh(es) split into {extraParts} more where a directed edge would carry two faces " +
                       $"(a Hammer mesh cannot: two source meshes in one soup piece), {droppedFaces} face(s) with a repeated corner dropped");
@@ -2370,6 +2393,41 @@ public static class MapDecompiler
             }
         if (first.Variables.Count > 0)
             notes.Add($"prefab {first.Chain}: {first.Variables.Count} map variables for keys its {placements.Count} placements ship differently");
+    }
+
+    /// <summary>
+    /// The world nodes' draw triangles with a corner on no world soup point (beyond the render's 1/32 weld) that are
+    /// not the given props' own render (their model's LOD 0 render moved by the placement): what the world draws
+    /// with no collision under it.
+    /// </summary>
+    internal static List<WorldGeometry.RenderTriangle> DrawnWithoutCollision(IReadOnlyDictionary<string, byte[]> files, string mapName,
+                                                                           IReadOnlyList<StaticProps.Placed> props, GameContent content)
+    {
+        using var profiled = DecompileProfile.Time("DrawnWithoutCollision");
+        static (int, int, int) Cell(Vector3 p) => ((int)MathF.Floor(p.X * 32), (int)MathF.Floor(p.Y * 32), (int)MathF.Floor(p.Z * 32));
+        static bool Near(HashSet<(int, int, int)> cells, Vector3 p)
+        {
+            var (x, y, z) = Cell(p);
+            for (var dx = -1; dx <= 1; dx++)
+                for (var dy = -1; dy <= 1; dy++)
+                    for (var dz = -1; dz <= 1; dz++)
+                        if (cells.Contains((x + dx, y + dy, z + dz)))
+                            return true;
+            return false;
+        }
+        var soupCells = StaticProps.WorldSoups(files, mapName).SelectMany(s => s.Vertices).Select(Cell).ToHashSet();
+        var propCells = new HashSet<(int, int, int)>();
+        foreach (var prop in props)
+        {
+            var matrix = Physics.StaticPropHulls.PropMatrix(new Physics.StaticPropHulls.Prop(-1, prop.Model, prop.Origin, prop.Angles, Vector3.One));
+            foreach (var mesh in content.RenderMeshes(prop.Model))
+                foreach (var (a, b, c, _) in mesh)
+                    foreach (var p in (Vector3[])[a, b, c])
+                        propCells.Add(Cell(MapMeshes.Transform(matrix, p)));
+        }
+        return [.. WorldGeometry.RenderTriangles(files, mapName)
+            .Where(t => !(Near(soupCells, t.A) && Near(soupCells, t.B) && Near(soupCells, t.C)))
+            .Where(t => !(Near(propCells, t.A) && Near(propCells, t.B) && Near(propCells, t.C)))];
     }
 
     /// <summary>

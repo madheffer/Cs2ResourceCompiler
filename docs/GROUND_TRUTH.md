@@ -6933,3 +6933,32 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        ze_hold_em_p's world and entity decompiles and the 19 probe decompiles byte for byte unchanged.
      - Open: whether the 8,532 default-collision invisible triangles were nodraw, invisible or hidden faces in the
        source (the package keeps no per-triangle tool material); props with mesh physics under other yaws or scales.
+
+280. **What the world draws with no collision: packed texcoords, props without collision, render-only meshes** (2026-11-15;
+     ze_minecraft_sakura, DECOMPILE_WORLDDEBUG counts, CS2 open, offline):
+     - The world render reader skipped every draw whose TEXCOORD0 is not R32G32_FLOAT: sakura's 968 draws (mesh
+       overlays and others) store R16G16_SNORM. They are read now as BrushRender.Texcoord reads them (SNORM raw/32767
+       clamped at -1, halves as halves). With them, sakura's world soups take a drawn material on 7,820 triangles (was
+       453) and the "neither" (toolsnodraw) count falls from 8,532 to 46: those faces were drawn, in SNORM draws.
+     - Of sakura's 406,153 draw triangles, 116,463 have a corner off every soup point by more than the render's 1/32
+       weld; 46,773 of them are the placed props' own render (their model's LOD 0 render, GameContent.RenderMeshes,
+       moved by the placement). ze_hold_em_p: 0 of 5,140.
+     - The rest is mostly props with no world collision: the .vmap_c names 11 models without physics
+       (models/noncollision/nonco.vmdl 43,746 render triangles, noncollisionrrrrrrrrrrrrrealtime 5,384, iteeeem 9,622,
+       pigvalvepig 4,844, the wolf, cats, fox, creepers, boss). StaticProps.FindRenderProps places them over the
+       drawn-only corners: offsets from one sample corner to every corner, kept when the other samples land within one
+       1/32 cell, then 99% of 256 spread corners, then 99% of all render corners within 1/32 of a draw corner. The
+       draws keep only the weld's representatives, so the origin is the mean offset of the corners that land, not a
+       bit-exact solve (noted in the output). Sakura: nonco at <2560, 1536, 639.4286> (the chunk models' own origin),
+       iteeeem <2560, 1536, 640.04285>, noncollisionrrrrrrrrrrrrrealtime <2560, 1536, 639.3044>, pigvalvepig
+       <2561.2449, 1533.2136, 637.7768>, all unturned; 63,297 draw triangles theirs. Not found in the world draws:
+       the wolf, cats, fox, creepers, boss and the prefab characters (entity models).
+     - The last 6,393 drawn-only triangles are rebuilt as world meshes with physicsType none (the shipped physics has
+       no collision there), one per connected run, faces the draw triangles with materials and texcoords as drawn,
+       corners at the render weld's representatives (WorldGeometry.RenderOnlyMeshes): 400 meshes.
+     - Speed: both prop searches take offsets from one lead sample and test the others by a one-cell-grown hash set
+       (one lookup), check 256 spread points before the full test, and FindMeshProps scores origin candidates on 2,048
+       points moved as StaticPropHulls.Meshes moves them. Sakura's world decompile 3 min 12 s -> 50 s on two cores at
+       idle priority, its .vmap byte for byte the same.
+     - Sakura's world: 1,135 meshes, 15,210 faces, every half-edge rule kept. ze_hold_em_p's world decompile and the
+       19 probe decompiles byte for byte unchanged.

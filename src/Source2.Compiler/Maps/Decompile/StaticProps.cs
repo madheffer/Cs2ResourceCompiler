@@ -93,12 +93,14 @@ internal static class StaticProps
         IReadOnlyList<(Vector3[] Vertices, (int A, int B, int C)[] Triangles)> soups, IReadOnlyList<string> models,
         Func<string, PhysAggregateData?> physics, List<string> notes)
     {
+        using var profiled = DecompileProfile.Time("FindMeshProps");
         var props = new List<Placed>();
         var taken = new HashSet<((int, int, int), (int, int, int), (int, int, int))>();
         var soupPoints = soups.SelectMany(s => s.Vertices).ToHashSet();
         var soupList = soupPoints.ToArray();
         var soupKeys = soups.SelectMany(s => s.Triangles.Select(t => TriangleKey(s.Vertices[t.A], s.Vertices[t.B], s.Vertices[t.C]))).ToHashSet();
         var near = soupList.Select(Cell).ToHashSet();
+        var reach = Dilated(near);
         var byCell = soupList.GroupBy(Cell).ToDictionary(g => g.Key, g => g.ToList());
         // A prop point as the soup holds it: itself, or the soup point the world's build welded it to (RnMeshBuilder
         // welds within 1/32, its default tolerance: seams where two chunk models meet), else null.
@@ -132,56 +134,18 @@ internal static class StaticProps
             for (var quarter = 0; quarter < 4 && placedHere == 0; quarter++)
             {
                 Vector3 Turn(Vector3 p) => quarter switch { 1 => new(-p.Y, p.X, p.Z), 2 => new(-p.X, -p.Y, p.Z), 3 => new(p.Y, -p.X, p.Z), _ => p };
-                var votes = new Dictionary<(long, long, long), (int Count, Vector3 Offset)>();
-                foreach (var p in sample.Select(Turn))
-                {
-                    var seen = new HashSet<(long, long, long)>();
-                    foreach (var s in soupList)
-                    {
-                        var d = s - p;
-                        var key = ((long)MathF.Round(d.X * 8), (long)MathF.Round(d.Y * 8), (long)MathF.Round(d.Z * 8));
-                        if (!seen.Add(key))
-                            continue;
-                        votes[key] = votes.TryGetValue(key, out var v) ? (v.Count + 1, v.Offset) : (1, d);
-                    }
-                }
-                if (DecompileProfile.On && votes.Count > 0)
-                {
-                    var best = votes.Values.MaxBy(v => v.Count);
-                    var landing = local.Select(Turn).Count(p => near.Contains(Cell(p + best.Offset)));
-                    notes.Add($"prop_static debug: {model} quarter {quarter}: best {best.Count}/{samples} votes at {best.Offset:R}, " +
-                              $"{landing} of {local.Length} points within 1/16 of a soup point; peaks >= {samples - 2}: {votes.Values.Count(v => v.Count >= samples - 2)}");
-                }
-                foreach (var (_, (count, offset)) in votes.Where(kv => kv.Value.Count >= samples - 2).OrderByDescending(kv => kv.Value.Count))
+                var spread = Enumerable.Range(0, Math.Min(256, local.Length)).Select(i => Turn(local[(int)((long)i * local.Length / Math.Min(256, local.Length))])).ToArray();
+                foreach (var offset in Offsets([.. sample.Select(Turn)], soupList, p => reach.Contains(Cell(p)), samples - 2))
                 {
                     var angles = new Vector3(0f, quarter * 90f, 0f);
+                    // At least 99% of 256 spread points within reach before the exact solve.
+                    if (spread.Count(p => reach.Contains(Cell(p + offset))) < spread.Length * 0.99)
+                        continue;
+                    if (props.Any(x => x.Model == model && Vector3.Distance(x.Origin, offset) < 1f / 8))
+                        continue;
                     if (ExactOrigin(model, phys, angles, offset, soupPoints, near, Snap) is not { } origin)
                     {
                         approximate++;
-                        if (DecompileProfile.On && count == samples)
-                        {
-                            var best = (Exact: -1, Miss: 0, Total: 0, Z: 0f);
-                            foreach (var z in Steps(offset.Z, 64))
-                            {
-                                var (exact, miss, total) = (0, 0, 0);
-                                foreach (var p in StaticPropHulls.Meshes(new StaticPropHulls.Prop(-1, model, new Vector3(MathF.Round(offset.X), MathF.Round(offset.Y), z), angles, Vector3.One), phys).SelectMany(n => n.Points))
-                                {
-                                    total++;
-                                    if (soupPoints.Contains(p)) exact++;
-                                    else if (near.Contains(Cell(p))) miss++;
-                                }
-                                if (exact > best.Exact)
-                                    best = (exact, miss, total, z);
-                            }
-                            var sampleMiss = StaticPropHulls.Meshes(new StaticPropHulls.Prop(-1, model, new Vector3(MathF.Round(offset.X), MathF.Round(offset.Y), best.Z), angles, Vector3.One), phys)
-                                .SelectMany(n => n.Points).Where(p => !soupPoints.Contains(p) && near.Contains(Cell(p))).Take(2)
-                                .Select(p => $"{p:R} vs {soupList.MinBy(q => Vector3.DistanceSquared(q, p)):R}");
-                            var distances = StaticPropHulls.Meshes(new StaticPropHulls.Prop(-1, model, new Vector3(MathF.Round(offset.X), MathF.Round(offset.Y), best.Z), angles, Vector3.One), phys)
-                                .SelectMany(n => n.Points).Where(p => !soupPoints.Contains(p) && near.Contains(Cell(p)))
-                                .Select(p => MathF.Sqrt(soupList.Min(q => Vector3.DistanceSquared(q, p)))).OrderBy(d => d).ToList();
-                            notes.Add($"prop_static debug: {model} at <{MathF.Round(offset.X)}, {MathF.Round(offset.Y)}, {best.Z:R}>: {best.Exact} exact, {best.Miss} near misses of {best.Total}; " +
-                                      $"miss distances median {distances.ElementAtOrDefault(distances.Count / 2):R} max {distances.LastOrDefault():R}, over 1/256: {distances.Count(d => d > 1f / 256)}: {string.Join(" ", distances.Where(d => d > 1f / 256).Take(6).Select(d => d.ToString("R")))}; e.g. {string.Join("; ", sampleMiss)}");
-                        }
                         continue;
                     }
                     if (props.Any(x => x.Model == model && Bits(x.Origin) == Bits(origin) && Bits(x.Angles) == Bits(angles)))
@@ -207,6 +171,150 @@ internal static class StaticProps
         return (props, taken);
     }
 
+    /// <summary>
+    /// prop_statics with no collision in the world (no physics, or none the soups hold), back from the world
+    /// render: the prop's render is baked into the world nodes' draws, its model's LOD 0 render meshes
+    /// (<see cref="GameContent.RenderMeshes"/>) moved by the prop matrix, then welded at 1/32 into the
+    /// aggregates. Placements are voted as <see cref="FindMeshProps"/> does, over the draw corners given, and
+    /// kept where at least 99% of the model's render corners land within 1/32 of one. The draws keep only the
+    /// weld's representatives, so the origin is the mean offset of the corners that land, not a bit-exact
+    /// solve (noted). Returns the props and, per draw triangle given, whether a prop's render covers it.
+    /// </summary>
+    internal static (List<Placed> Props, bool[] Covered) FindRenderProps(IReadOnlyList<WorldGeometry.RenderTriangle> drawn, IEnumerable<string> models,
+                                                                     Func<string, IReadOnlyList<List<(Vector3 A, Vector3 B, Vector3 C, string Material)>>> renderMeshes,
+                                                                     List<string> notes)
+    {
+        using var profiled = DecompileProfile.Time("FindRenderProps");
+        var props = new List<Placed>();
+        var covered = new bool[drawn.Count];
+        static (int, int, int) Cell32(Vector3 p) => ((int)MathF.Floor(p.X * 32), (int)MathF.Floor(p.Y * 32), (int)MathF.Floor(p.Z * 32));
+        var points = drawn.SelectMany(t => (Vector3[])[t.A, t.B, t.C]).Distinct().ToArray();
+        var byCell = points.GroupBy(Cell32).ToDictionary(g => g.Key, g => g.ToList());
+        var reach32 = Dilated(byCell.Keys);
+        Vector3? Nearest(Vector3 p)
+        {
+            var (x, y, z) = Cell32(p);
+            Vector3? best = null;
+            var bestDistance = 1f / 1024f;
+            for (var dx = -1; dx <= 1; dx++)
+                for (var dy = -1; dy <= 1; dy++)
+                    for (var dz = -1; dz <= 1; dz++)
+                        foreach (var q in byCell.GetValueOrDefault((x + dx, y + dy, z + dz)) ?? [])
+                            if (Vector3.DistanceSquared(p, q) is var d && d <= bestDistance)
+                                (best, bestDistance) = (q, d);
+            return best;
+        }
+        var placedCorners = new HashSet<(int, int, int)>();
+        var skipped = new List<string>();
+        foreach (var model in models.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var local = renderMeshes(model).SelectMany(m => m.SelectMany(t => (Vector3[])[t.A, t.B, t.C])).Distinct().ToArray();
+            if (local.Length < 4 || points.Length == 0)
+                continue;
+            const int samples = 8;
+            var sample = Enumerable.Range(0, samples).Select(i => local[(int)((long)i * local.Length / samples)]).ToArray();
+            var placedHere = 0;
+            for (var quarter = 0; quarter < 4; quarter++)
+            {
+                Vector3 Turn(Vector3 p) => quarter switch { 1 => new(-p.Y, p.X, p.Z), 2 => new(-p.X, -p.Y, p.Z), 3 => new(p.Y, -p.X, p.Z), _ => p };
+                var spread = Enumerable.Range(0, Math.Min(256, local.Length)).Select(i => Turn(local[(int)((long)i * local.Length / Math.Min(256, local.Length))])).ToArray();
+                foreach (var offset in Offsets([.. sample.Select(Turn)], points, p => reach32.Contains(Cell32(p)), samples - 1))
+                {
+                    var angles = new Vector3(0f, quarter * 90f, 0f);
+                    // At least 99% of 256 spread corners within reach, and no prop of this model there yet, before the full check.
+                    if (spread.Count(p => reach32.Contains(Cell32(p + offset))) < spread.Length * 0.99
+                        || props.Any(x => x.Model == model && x.Angles == angles && Vector3.Distance(x.Origin, offset) < 1f / 8))
+                        continue;
+                    var matrix = StaticPropHulls.PropMatrix(new StaticPropHulls.Prop(-1, model, offset, angles, Vector3.One));
+                    var moved = local.Select(p => MapMeshes.Transform(matrix, p)).ToArray();
+                    var landing = moved.Select(Nearest).ToArray();
+                    if (landing.Count(l => l is not null) < moved.Length * 0.99)
+                        continue;
+                    // The origin: the estimate moved by the mean miss of the corners that land.
+                    var shift = Vector3.Zero;
+                    var n = 0;
+                    for (var i = 0; i < moved.Length; i++)
+                        if (landing[i] is { } l)
+                            (shift, n) = (shift + (l - moved[i]), n + 1);
+                    var origin = offset + (shift / n);
+                    if (props.Any(x => x.Model == model && Vector3.Distance(x.Origin, origin) < 1f / 16 && x.Angles == angles))
+                        continue;
+                    var placed = StaticPropHulls.PropMatrix(new StaticPropHulls.Prop(-1, model, origin, angles, Vector3.One));
+                    foreach (var p in local)
+                        placedCorners.Add(Cell32(MapMeshes.Transform(placed, p)));
+                    props.Add(new Placed(model, origin, angles, []));
+                    placedHere++;
+                }
+            }
+            if (placedHere == 0)
+                skipped.Add(Path.GetFileNameWithoutExtension(model));
+        }
+        bool OnProp(Vector3 p)
+        {
+            var (x, y, z) = Cell32(p);
+            for (var dx = -1; dx <= 1; dx++)
+                for (var dy = -1; dy <= 1; dy++)
+                    for (var dz = -1; dz <= 1; dz++)
+                        if (placedCorners.Contains((x + dx, y + dy, z + dz)))
+                            return true;
+            return false;
+        }
+        for (var i = 0; i < drawn.Count; i++)
+            covered[i] = OnProp(drawn[i].A) && OnProp(drawn[i].B) && OnProp(drawn[i].C);
+        if (props.Count > 0 || skipped.Count > 0)
+            notes.Add($"prop_static: {props.Count} with no world collision placed from the render (origin within the render's 1/32 weld, " +
+                      $"not bit for bit), {covered.Count(c => c)} draw triangles theirs; not found: {string.Join(" ", skipped)}; " +
+                      string.Join("; ", props.Select(x => $"{x.Model} at {x.Origin} yaw {x.Angles.Y}")));
+        return (props, covered);
+    }
+
+    // A cell set grown by one cell each way: membership is "within one cell" in a single lookup.
+    private static HashSet<(int, int, int)> Dilated(IEnumerable<(int, int, int)> cells)
+    {
+        var grown = new HashSet<(int, int, int)>();
+        foreach (var (x, y, z) in cells)
+            for (var dx = -1; dx <= 1; dx++)
+                for (var dy = -1; dy <= 1; dy++)
+                    for (var dz = -1; dz <= 1; dz++)
+                        grown.Add((x + dx, y + dy, z + dz));
+        return grown;
+    }
+
+    private static HashSet<(long, long, long)> Dilated(HashSet<(long, long, long)> cells)
+    {
+        var grown = new HashSet<(long, long, long)>();
+        foreach (var (x, y, z) in cells)
+            for (var dx = -1; dx <= 1; dx++)
+                for (var dy = -1; dy <= 1; dy++)
+                    for (var dz = -1; dz <= 1; dz++)
+                        grown.Add((x + dx, y + dy, z + dz));
+        return grown;
+    }
+
+    // The offsets that move the lead sample (turned) onto a target point and put at least `need` of all the
+    // samples within reach, one per 1/8 cell, in target order; the next sample leads when the first gives none
+    // (a lead point the target set lacks).
+    private static List<Vector3> Offsets(Vector3[] turned, Vector3[] targets, Func<Vector3, bool> reach, int need)
+    {
+        for (var lead = 0; lead < Math.Min(2, turned.Length); lead++)
+        {
+            var found = new Dictionary<(long, long, long), Vector3>();
+            foreach (var q in targets)
+            {
+                var d = q - turned[lead];
+                var misses = 0;
+                for (var i = 0; i < turned.Length && misses <= turned.Length - need; i++)
+                    if (i != lead && !reach(turned[i] + d))
+                        misses++;
+                if (misses <= turned.Length - need)
+                    found.TryAdd(((long)MathF.Round(d.X * 8), (long)MathF.Round(d.Y * 8), (long)MathF.Round(d.Z * 8)), d);
+            }
+            if (found.Count > 0)
+                return [.. found.Values];
+        }
+        return [];
+    }
+
     // A point's 1/16 cell: "within reach" of a soup point.
     private static (long, long, long) Cell(Vector3 p) => ((long)MathF.Round(p.X * 16), (long)MathF.Round(p.Y * 16), (long)MathF.Round(p.Z * 16));
 
@@ -219,6 +327,24 @@ internal static class StaticProps
                                         HashSet<(long, long, long)> near, Func<Vector3, Vector3?> snap)
     {
         Vector3[] Placed(Vector3 origin) => [.. StaticPropHulls.Meshes(new StaticPropHulls.Prop(-1, model, origin, angles, Vector3.One), phys).SelectMany(n => n.Points)];
+        // The first 2048 mesh points as StaticPropHulls.Meshes moves them (prop matrix times each body's bind
+        // pose), without building the nodes: what a candidate is scored on.
+        var subset = new List<(int Part, Vector3 Point)>();
+        for (var part = 0; part < phys.Parts.Length && subset.Count < 2048; part++)
+            foreach (var desc in phys.Parts[part].Shape.Meshes)
+                foreach (var v in desc.Shape.GetVertices().ToArray())
+                    if (subset.Count < 2048)
+                        subset.Add((part, v));
+        int Score(Vector3 origin)
+        {
+            var m = StaticPropHulls.PropMatrix(new StaticPropHulls.Prop(-1, model, origin, angles, Vector3.One));
+            var locals = new float[phys.Parts.Length][];
+            var count = 0;
+            foreach (var (part, v) in subset)
+                if (soup.Contains(MapMeshes.Transform(locals[part] ??= MapMeshes.Concat(m, StaticPropHulls.BindPose(phys, part)), v)))
+                    count++;
+            return count;
+        }
         bool Lands(Vector3 origin)
         {
             var points = Placed(origin);
@@ -248,7 +374,7 @@ internal static class StaticProps
                 foreach (var c in Steps(Of(estimate), 64).Concat(Steps(MathF.Round(Of(estimate) * 1000f) / 1000f, 64)).Concat(Steps(MathF.Round(Of(estimate)), 4)))
                 {
                     var o = axis == 0 ? origin with { X = c } : axis == 1 ? origin with { Y = c } : origin with { Z = c };
-                    var count = Placed(o).Take(2048).Count(soup.Contains);
+                    var count = Score(o);
                     if (count > bestCount)
                         (best, bestCount) = (c, count);
                 }

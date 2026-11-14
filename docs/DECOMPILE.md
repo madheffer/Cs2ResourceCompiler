@@ -1354,6 +1354,8 @@ parentname...), differ, missing. "%f" strings compare with what our float prints
   toolsskip cube with physics none, noted; missing 0, 229 of 383 alike. The forward's rule for which
   children keep a brush entity is now RC's (ledger 269): any visible child, a point entity too, but not a
   face-less mesh, and an entity with only face-less meshes is not in the walk (takes no number).
+- 11-15 later: packed (SNORM/half) world draws read, props without world collision placed from the render,
+  the rest of the drawn-only triangles rebuilt as no-physics meshes (ledger 280); sakura's world 50 s, 1,135 meshes.
 - 11-15: world soup triangles that are props' mesh physics come back as prop_statics (StaticProps.FindMeshProps,
   sakura: 10 models, 279,873 triangles), clip-type shapes take the tool material of their collision (ledger 279).
   Sakura's world copy: 653 meshes, 5.2 MB, in s2c_dec_sakura as ze_minecraft_sakura_world2; Hammer check still open.

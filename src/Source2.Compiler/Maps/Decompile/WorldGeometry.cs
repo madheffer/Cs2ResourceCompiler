@@ -32,6 +32,7 @@ internal static class WorldGeometry
                                   IReadOnlySet<((int, int, int), (int, int, int), (int, int, int))>? propTriangles = null,
                                   Func<string, IReadOnlyList<string>, string?>? toolFor = null)
     {
+        using var profiled = DecompileProfile.Time("WorldGeometry.Read");
         var result = new List<Mesh>();
         if (!files.TryGetValue($"maps/{mapName}/world_physics.vmdl_c", out var physicsBytes))
             return result;
@@ -2080,10 +2081,65 @@ internal static class WorldGeometry
     /// <summary>A render corner: its material, texcoord and its triangle's (unnormalised) normal.</summary>
     private readonly record struct RenderCorner(Vector3 Position, string Material, Vector2 Texcoord, Vector3 Normal);
 
+    /// <summary>
+    /// Draw triangles with no collision under them, as world meshes: each connected run (corners shared by exact
+    /// position: the render's weld representatives) one mesh, its faces the draw triangles with their materials
+    /// and texcoords as drawn. The positions are the 1/32 weld's representatives, not the source's corners.
+    /// </summary>
+    internal static List<Mesh> RenderOnlyMeshes(IReadOnlyList<RenderTriangle> triangles)
+    {
+        var parent = Enumerable.Range(0, triangles.Count).ToArray();
+        int Find(int x)
+        {
+            while (parent[x] != x)
+                x = parent[x] = parent[parent[x]];
+            return x;
+        }
+        var firstAt = new Dictionary<Vector3, int>();
+        for (var i = 0; i < triangles.Count; i++)
+            foreach (var p in (Vector3[])[triangles[i].A, triangles[i].B, triangles[i].C])
+                if (firstAt.TryGetValue(p, out var j))
+                    parent[Find(i)] = Find(j);
+                else
+                    firstAt[p] = i;
+        var meshes = new List<Mesh>();
+        foreach (var group in Enumerable.Range(0, triangles.Count).GroupBy(Find).OrderBy(g => g.Key))
+        {
+            var materials = group.Select(i => triangles[i].Material).Distinct(StringComparer.Ordinal).ToList();
+            var faces = group.Where(i => Vector3.Cross(triangles[i].B - triangles[i].A, triangles[i].C - triangles[i].A).LengthSquared() > 0f)
+                .Select(i => (Corners: (Vector3[])[triangles[i].A, triangles[i].B, triangles[i].C], Material: materials.IndexOf(triangles[i].Material),
+                              Texcoords: (Vector2[]?)[triangles[i].TA, triangles[i].TB, triangles[i].TC])).ToList();
+            if (faces.Count > 0)
+                meshes.Add(new Mesh(materials, faces, "render-only"));
+        }
+        return meshes;
+    }
+
+    /// <summary>A world node draw triangle: its corners, their texcoords, its material and the node model it is in.</summary>
+    internal readonly record struct RenderTriangle(Vector3 A, Vector3 B, Vector3 C, Vector2 TA, Vector2 TB, Vector2 TC, string Material, string Model);
+
     /// <summary>Every render triangle's corners by 1/32 cell, from the world nodes' models.</summary>
     private static Dictionary<(int, int, int), List<RenderCorner>> RenderCorners(IReadOnlyDictionary<string, byte[]> files, string mapName)
     {
         var corners = new Dictionary<(int, int, int), List<RenderCorner>>();
+        foreach (var t in RenderTriangles(files, mapName))
+        {
+            var normal = Vector3.Cross(t.B - t.A, t.C - t.A);
+            foreach (var (p, uv) in (ValueTuple<Vector3, Vector2>[])[(t.A, t.TA), (t.B, t.TB), (t.C, t.TC)])
+            {
+                var key = Cell(p);
+                if (!corners.TryGetValue(key, out var list))
+                    corners[key] = list = [];
+                list.Add(new RenderCorner(p, t.Material, uv, normal));
+            }
+        }
+        return corners;
+    }
+
+    /// <summary>Every draw triangle of the world nodes' models (worldnodes/*.vmdl_c), draw by draw in index order.</summary>
+    internal static List<RenderTriangle> RenderTriangles(IReadOnlyDictionary<string, byte[]> files, string mapName)
+    {
+        var triangles = new List<RenderTriangle>();
         foreach (var (path, bytes) in files.Where(f => f.Key.StartsWith($"maps/{mapName}/worldnodes/", StringComparison.Ordinal) && f.Key.EndsWith(".vmdl_c", StringComparison.Ordinal)))
         {
             using var resource = new Resource();
@@ -2107,7 +2163,8 @@ internal static class WorldGeometry
                         var (pb, tb) = (withPosition.Buffer, withTexcoord.Buffer);
                         var position = pb.InputLayoutFields.First(f => f.SemanticName.Equals("POSITION", StringComparison.OrdinalIgnoreCase));
                         var texcoord = tb.InputLayoutFields.First(f => f.SemanticName.Equals("TEXCOORD", StringComparison.OrdinalIgnoreCase) && f.SemanticIndex == 0);
-                        if (position.Format.ToString() != "R32G32B32_FLOAT" || texcoord.Format.ToString() != "R32G32_FLOAT")
+                        var texcoordFormat = texcoord.Format.ToString();
+                        if (position.Format.ToString() != "R32G32B32_FLOAT" || texcoordFormat is not ("R32G32_FLOAT" or "R16G16_SNORM" or "R16G16_FLOAT"))
                         {
                             if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
                                 Console.Error.WriteLine($"world debug: render draw {path} {material} skipped: {string.Join(" | ", buffers.Select(b => string.Join(", ", b.Buffer.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}@{f.Offset}"))))}");
@@ -2116,8 +2173,18 @@ internal static class WorldGeometry
                         Vector3 P(int v) => new(BitConverter.ToSingle(pb.Data, withPosition.Offset + v * (int)pb.ElementSizeInBytes + (int)position.Offset),
                                                 BitConverter.ToSingle(pb.Data, withPosition.Offset + v * (int)pb.ElementSizeInBytes + (int)position.Offset + 4),
                                                 BitConverter.ToSingle(pb.Data, withPosition.Offset + v * (int)pb.ElementSizeInBytes + (int)position.Offset + 8));
-                        Vector2 T(int v) => new(BitConverter.ToSingle(tb.Data, withTexcoord.Offset + v * (int)tb.ElementSizeInBytes + (int)texcoord.Offset),
-                                                BitConverter.ToSingle(tb.Data, withTexcoord.Offset + v * (int)tb.ElementSizeInBytes + (int)texcoord.Offset + 4));
+                        // Texcoords as stored: floats, SNORM16 (raw / 32767, clamped at -1) or halves, as BrushRender.Texcoord reads them.
+                        float TC(int v, int c)
+                        {
+                            var at = withTexcoord.Offset + v * (int)tb.ElementSizeInBytes + (int)texcoord.Offset;
+                            return texcoordFormat switch
+                            {
+                                "R32G32_FLOAT" => BitConverter.ToSingle(tb.Data, at + c * 4),
+                                "R16G16_SNORM" => MathF.Max(BitConverter.ToInt16(tb.Data, at + c * 2) / 32767f, -1f),
+                                _ => (float)BitConverter.UInt16BitsToHalf(BitConverter.ToUInt16(tb.Data, at + c * 2)),
+                            };
+                        }
+                        Vector2 T(int v) => new(TC(v, 0), TC(v, 1));
                         int I(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
                         var start = call.GetInt32Property("m_nStartIndex");
                         var count = call.GetInt32Property("m_nIndexCount");
@@ -2147,18 +2214,11 @@ internal static class WorldGeometry
                         for (var i = start; i + 2 < start + count; i += 3)
                         {
                             int a = I(i) + bas, b = I(i + 1) + bas, c = I(i + 2) + bas;
-                            var normal = Vector3.Cross(P(b) - P(a), P(c) - P(a));
-                            foreach (var v in (int[])[a, b, c])
-                            {
-                                var key = Cell(P(v));
-                                if (!corners.TryGetValue(key, out var list))
-                                    corners[key] = list = [];
-                                list.Add(new RenderCorner(P(v), material, T(v), normal));
-                            }
+                            triangles.Add(new RenderTriangle(P(a), P(b), P(c), T(a), T(b), T(c), material, path));
                         }
                     }
         }
-        return corners;
+        return triangles;
     }
 
     /// <summary>The nearest render corner within the closing weld's 1/32 of <paramref name="at"/> on a triangle
