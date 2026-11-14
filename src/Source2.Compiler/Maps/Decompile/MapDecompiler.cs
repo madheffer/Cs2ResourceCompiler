@@ -411,9 +411,9 @@ public static class MapDecompiler
         // prop_statics with mesh physics first: their triangles sit in the world soups and leave them.
         var meshProps = new List<StaticProps.Placed>();
         HashSet<((int, int, int), (int, int, int), (int, int, int))>? propTriangles = null;
-        if (Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" && content is not null)
+        if (WorldMeshes && content is not null)
             (meshProps, propTriangles) = StaticProps.FindMeshProps(StaticProps.WorldSoups(files, mapName), StaticProps.Models(files, mapName), content.Physics, notes);
-        var worldMeshes = Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" ? WorldGeometry.Read(files, mapName, table, notes,
+        var worldMeshes = WorldMeshes ? WorldGeometry.Read(files, mapName, table, notes,
             content is null ? null : name => Physics.WorldCollision.ReadMaterial(name, content.Material, content.CollisionProperty).SurfaceKey,
             content is null ? null : content.SurfaceName, propTriangles, content is null ? null : ToolsByCollision(table, content)) : [];
         // The prop_statics from the world's hulls (StaticProps), written after the world meshes. The part
@@ -422,7 +422,7 @@ public static class MapDecompiler
         // hulls in its model's order, the props in the order that inverse asks for.
         var props = new List<StaticProps.Placed>();
         var shippedHulls = 0;
-        if (Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" && content is not null)
+        if (WorldMeshes && content is not null)
         {
             var (hulls, _) = StaticProps.WorldHulls(files, mapName);
             shippedHulls = hulls.Count;
@@ -600,7 +600,7 @@ public static class MapDecompiler
                                     prop.Origin, prop.Angles, Vector3.One, []);
         // What the world draws with no collision under it: props without world collision (placed from the render),
         // then the rest as world meshes with no physics.
-        if (Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" && content is not null)
+        if (WorldMeshes && content is not null)
         {
             // Props the world nodes keep with their transforms first: their placement is in the package as is.
             var (sceneProps, _, _) = StaticProps.SceneProps(files, mapName, content.RenderMeshes, notes);
@@ -1107,6 +1107,7 @@ public static class MapDecompiler
         if (UnsettleFalling())
             prefabFiles = scopes.Values.Where(sc => sc.Parent is not null && sc.Builder is not null && sc.SameAs is null)
                                 .ToDictionary(sc => sc.Path(mapName), sc => sc.Builder!.Write(), StringComparer.OrdinalIgnoreCase);
+        main.Builder!.FrameCamera();
         return new Result(main.Builder!.Write(), entities, placeholders, notes)
         {
             Prefabs = prefabFiles, Overshoot = overshoot, IdsMatched = matched,
@@ -2150,6 +2151,10 @@ public static class MapDecompiler
     /// exactly. With no exact point in reach, the nearest one found.
     /// </summary>
     /// <summary>DECOMPILE_SLOW_CORNERS=1: CornerFor's full walk for every corner (the per-axis one's check).</summary>
+    /// <summary>Whether the world's meshes and props are rebuilt (on unless DECOMPILE_WORLD_MESHES=0): the world's
+    /// geometry back from its physics soups and draws, its props from hulls, soups, transforms and draws.</summary>
+    internal static bool WorldMeshes => Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") != "0";
+
     internal static bool SlowCorners = Environment.GetEnvironmentVariable("DECOMPILE_SLOW_CORNERS") == "1";
 
     internal static Vector3 CornerFor(Vector3 target, Vector3 meshOrigin, float[] toWorld, float[] toEntity, float[] fromEntity,

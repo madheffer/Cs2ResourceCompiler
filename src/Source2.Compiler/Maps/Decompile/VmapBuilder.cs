@@ -679,6 +679,69 @@ public sealed class VmapBuilder
     }
 
     /// <summary>The file: vmap 40, binary 9.</summary>
+    /// <summary>
+    /// Points Hammer's stored default camera at what the map holds: the first player spawn seen from 384 units
+    /// back and up, else the bounds of every node's origin under the world and of the vertex positions of meshes at
+    /// the origin (the world meshes), seen from a raised corner.
+    /// An editor setting only: the compile does not read it. Leaves the camera at the origin when nothing is placed.
+    /// </summary>
+    public void FrameCamera()
+    {
+        var (lo, hi) = (new Vector3(float.MaxValue), new Vector3(float.MinValue));
+        void Take(Vector3 p)
+        {
+            if (!float.IsFinite(p.X) || !float.IsFinite(p.Y) || !float.IsFinite(p.Z))
+                return;
+            (lo, hi) = (Vector3.Min(lo, p), Vector3.Max(hi, p));
+        }
+        void Walk(DmxBinary.Element node)
+        {
+            foreach (var child in node.Get<object?[]>("children") ?? [])
+            {
+                if (child is not DmxBinary.Element e)
+                    continue;
+                var origin = e.Attributes.TryGetValue("origin", out var o) && o is Vector3 v ? v : Vector3.Zero;
+                if (origin != Vector3.Zero)
+                    Take(origin);
+                else if (e.Get<DmxBinary.Element>("meshData")?.Get<DmxBinary.Element>("vertexData") is { } vertexData)
+                    foreach (var stream in vertexData.Get<object?[]>("streams") ?? [])
+                        if (stream is DmxBinary.Element st && st.Name.StartsWith("position", StringComparison.Ordinal))
+                            foreach (var value in st.Get<object?[]>("data") ?? [])
+                                if (value is Vector3 position)
+                                    Take(position);
+                Walk(e);
+            }
+        }
+        Walk(World);
+        if (lo.X > hi.X)
+            return;
+        var camera = Root.Get<DmxBinary.Element>("defaultcamera")!;
+        // A spawn point first: a player stands there, so the world is in view (a whole ze map is too long to frame).
+        DmxBinary.Element? Spawn(DmxBinary.Element node)
+        {
+            foreach (var child in node.Get<object?[]>("children") ?? [])
+                if (child is DmxBinary.Element e)
+                {
+                    var classname = e.Get<DmxBinary.Element>("entity_properties")?.Get<string>("classname") ?? "";
+                    if (classname.StartsWith("info_player_", StringComparison.OrdinalIgnoreCase) && e.Attributes.TryGetValue("origin", out var o) && o is Vector3)
+                        return e;
+                    if (Spawn(e) is { } found)
+                        return found;
+                }
+            return null;
+        }
+        if (Spawn(World) is { } spawn && spawn.Attributes["origin"] is Vector3 at)
+        {
+            var eye = at + new Vector3(0, 0, 64);
+            camera.Set("position", T.Vector3, eye + new Vector3(-384, -384, 192)).Set("lookat", T.Vector3, eye);
+            return;
+        }
+        var centre = (lo + hi) / 2;
+        var size = hi - lo;
+        var position = centre + new Vector3(-0.6f * size.X, -0.6f * size.Y, 0.4f * MathF.Max(size.Z, 0.25f * MathF.Max(size.X, size.Y)));
+        camera.Set("position", T.Vector3, position).Set("lookat", T.Vector3, centre);
+    }
+
     public byte[] Write()
     {
         var prefix = DmxBinary.NewElement("$prefix_element$", "", Guid.Empty)
