@@ -24,7 +24,7 @@ public class EntryFieldsProbe(ITestOutputHelper output)
             return;
         var all = NodeEntriesFromVmap.Read(path);
         var world = all.Count(c => c.Stage == "BuildNode:in");
-        var entries = all.Where(c => c.Stage == "Step256690:in").ToList();
+        var entries = all.Where(c => c.Stage == (Environment.GetEnvironmentVariable("ENTRYFLAGS_STAGE") ?? "Step256690:in")).ToList();
         var game = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(pak)!, ".."));
         var addon = Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(vmap)))!;
         using var content = new GameContent(pak, Path.Combine(game, "csgo_addons", addon));

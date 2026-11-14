@@ -6654,3 +6654,27 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        17 extra aggregates and 3 differing files). probe01, cardtest, ze_hold_em_p -world unchanged (all but the
        stamp); atixref unchanged at 548 of 553 (metal_door_001's two buckets and n0.vwnod's fragment order,
        Valve variance; default_ents' two settled angles).
+
+293. **Visibility disabled (pvstype 0) and the map root's children** (2026-11-15, CS2 open: visbuilder 0923
+     decompiles of VisEntry 180049df0 and FUN_180047cf0; Valve's `-world -vis -fshallow` compile of
+     ze_obj_christmas_factory with the installed resourcecompiler at below-normal, %TEMP%/fresh_compile/xmas_vis.vpk
+     and its log). READ + MEASURED.
+     - VisEntry reads the .viscfg's pvstype (FUN_180127780, default 0) and takes the disabled path when it is 0
+       (base.fgd's "Disabled"), when the compile has `-disablevis` (vf 0x50), or when pvstype is set but the
+       loaded trace scene's count (local_1ac) is 0 (logged as an error). The disabled path skips VisBuild and
+       fills FUN_180047cf0's fixed vis: grid 32, bounds -+1048560 (0x497fff00), one leaf node (offset 0, one
+       region, enclosed list 0xffffff), one region (cluster 0, no geometry flag, leaf 0, mask 0), the mask
+       0xffffffffffffffff, 2 base clusters with 4 PVS bytes, 8 vis block bytes of 0xff, sky and sun cluster 0.
+       RC logs "Visibility complete in 0.01s" and a 467-byte resource. Ported as
+       WorldNodeFiles.DisabledVisibility (DisabledVisibilityTests: VXVS and scalars equal Valve's).
+     - The disabled build publishes neither FlatVisClusterVector nor MutualVisibilityMatrix: its RED2 lists
+       only ___OverrideInputData___ and disablevis (VisibilityAuthor.Container published: false), and the world
+       renderer, given no flat clusters, clusters by the node's box grid. Every one of christmas_factory's 266
+       world node models and its n0.vwnod are Valve's from that.
+     - `-disablevis` is refused for now: its RED2 records the argument's fingerprint, not read.
+     - The map root's children are the files this build wrote (ledger 119's rule, now measured for -world):
+       Valve's -world -vis root over a package that holds world_physics from an earlier build does not list it.
+       compile-map listed every package file under maps/<map>/; it now lists those it wrote this run.
+     - Result: ze_obj_christmas_factory -world -vis 431 of 432 files Valve's (the .vwrld stamp); was 168 of 477
+       with real clusters. probe01, cardtest, ze_hold_em_p, atixref and both elf maps unchanged.
+     - Not read: the count local_1ac (which trace scene field), and where FUN_180047cf0's flat box (+0x118) goes.

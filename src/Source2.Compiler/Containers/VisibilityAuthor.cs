@@ -90,7 +90,7 @@ public static class VisibilityAuthor
         return root;
     }
 
-    public static KVObject Red2(uint inputFingerprint)
+    public static KVObject Red2(uint inputFingerprint, bool published = true)
     {
         KVObject Argument(string name, string type, long fingerprint)
         {
@@ -104,8 +104,13 @@ public static class VisibilityAuthor
         var args = KVObject.Array();
         args.Add(Argument("___OverrideInputData___", "BinaryBlobArg", inputFingerprint));
         args.Add(Argument("disablevis", "FloatArg", 0));
-        args.Add(Argument("FlatVisClusterVector", "CustomArg", uint.MaxValue));
-        args.Add(Argument("MutualVisibilityMatrix", "CustomArg", uint.MaxValue));
+        // VisBuild publishes these two for the world renderer; a build with vis disabled (FUN_180047cf0) does
+        // not, and its RED2 lists neither (ze_obj_christmas_factory, pvstype 0).
+        if (published)
+        {
+            args.Add(Argument("FlatVisClusterVector", "CustomArg", uint.MaxValue));
+            args.Add(Argument("MutualVisibilityMatrix", "CustomArg", uint.MaxValue));
+        }
         var user = KVObject.Collection();
         user.Add("IsChildResource", new KVObject(1L));
         var root = KVObject.Collection();
@@ -120,12 +125,14 @@ public static class VisibilityAuthor
         return root;
     }
 
-    public static byte[] Container(VoxelVisibility vis, uint inputFingerprint = 0)
+    /// <param name="published">Whether the build published FlatVisClusterVector and MutualVisibilityMatrix
+    /// (VisBuild does; the disabled build does not).</param>
+    public static byte[] Container(VoxelVisibility vis, uint inputFingerprint = 0, bool published = true)
     {
         var generic = KV3IDLookup.Get("generic");
         using var resource = new Resource();
         Source2ContainerAuthor.SetResourceVersion(resource, 7);
-        resource.Blocks.Add(AuthoredKv3.Block(Red2(inputFingerprint), generic, BlockType.RED2, resource));
+        resource.Blocks.Add(AuthoredKv3.Block(Red2(inputFingerprint, published), generic, BlockType.RED2, resource));
         resource.Blocks.Add(AuthoredKv3.Block(Data(vis), generic, BlockType.DATA, resource));
         resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.VXVS, vis.WriteVxvs(), resource));
         return ValveLayout.Serialize(resource);

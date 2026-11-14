@@ -44,7 +44,7 @@ public static class WorldNodeFiles
         float[][]? mutual = null;
         if (vis)
         {
-            var (vvis, visFlat) = visibility ?? Visibility(document, addon, map, content, schema, game, RendersAsWorld);
+            var (vvis, visFlat) = visibility ?? Visibility(document, addon, map, content, schema, game, RendersAsWorld, arguments);
             outputs.Add(new($"maps/{map}/world_visibility.vvis_c", vvis));
             flat = visFlat;
             mutual = VisOutput.MutualVisibility(VoxelVisibilityReader.Read(vvis));
@@ -194,8 +194,17 @@ public static class WorldNodeFiles
     /// before the lumps and hands it to <see cref="Build"/>.
     /// </summary>
     public static (byte[] Vvis, List<(Vector3 Min, Vector3 Max)>[] Flat) Visibility(DmxBinary.Document document, string addon, string map,
-        GameContent content, FgdSchema schema, string game, Func<string, bool> rendersAsWorld)
+        GameContent content, FgdSchema schema, string game, Func<string, bool> rendersAsWorld, IReadOnlyDictionary<string, object>? arguments = null)
     {
+        // VisEntry (visbuilder 180049df0): worldspawn's pvstype 0 ("Disabled") or the -disablevis argument
+        // writes the fixed open vis (FUN_180047cf0) instead of VisBuild.
+        if (DisablesVis(arguments))
+            throw new NotSupportedException("-disablevis: the vis is the disabled one, but its RED2 argument fingerprint is not ported");
+        if (VisConfig.FromMap(MapEntities.From(document), schema).PvsType == 0)
+        {
+            var fingerprint = VisibilityAuthor.InputFingerprint(Path.GetTempPath(), game, Path.Combine(Path.GetDirectoryName(Path.GetFullPath(game))!, "content"), addon, map);
+            return (VisibilityAuthor.Container(DisabledVisibility(), fingerprint, published: false), []);
+        }
         var packages = new[] { "csgo", "core" }.Select(d => { var pk = new Package(); pk.Read(Path.Combine(game, d, "pak01_dir.vpk")); return pk; }).ToList();
         try
         {
@@ -221,6 +230,40 @@ public static class WorldNodeFiles
             foreach (var p in packages)
                 p.Dispose();
         }
+    }
+
+    // The argument as the builder's vf 0x50 reads it (an int or a float, non-zero).
+    private static bool DisablesVis(IReadOnlyDictionary<string, object>? arguments)
+        => arguments is not null && arguments.TryGetValue("disablevis", out var v) && v switch { int i => i != 0, float f => (int)f != 0, _ => false };
+
+    /// <summary>
+    /// FUN_180047cf0 (visbuilder 0923), the vis of a build with visibility disabled: grid 32, bounds +-1048560
+    /// (0x497fff00), one leaf node (offset 0, one region, no enclosed list), one region (cluster 0, mask 0), the
+    /// mask 0xffffffffffffffff, 4 PVS bytes a cluster over two clusters, eight 0xff vis block bytes, sky and sun
+    /// cluster 0. Its flat cluster list (+0x118, the one bounds box) is not published (the RED2 lists no
+    /// FlatVisClusterVector), so the world renderer gets none and clusters by the node's box grid.
+    /// ze_obj_christmas_factory (pvstype 0): the vvis and every world model Valve's.
+    /// </summary>
+    internal static VoxelVisibility DisabledVisibility()
+    {
+        var bound = BitConverter.Int32BitsToSingle(0x497fff00);
+        var (min, max) = (new Vector3(-bound), new Vector3(bound));
+        return new VoxelVisibility
+        {
+            BaseClusterCount = 2,
+            PVSBytesPerCluster = 4,
+            MinBounds = min,
+            MaxBounds = max,
+            GridSize = 32f,
+            SkyVisibilityCluster = 0,
+            SunVisibilityCluster = 0,
+            Nodes = [new VisNode(true, 0, 1, VisNode.NoEnclosedList)],
+            Regions = [new VisRegion(0, false, 0, 0)],
+            EnclosedClusterList = [],
+            EnclosedClusters = [],
+            Masks = [ulong.MaxValue],
+            VisBlocks = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+        };
     }
 
     // RC builds the node and world manifest paths with Windows separators.

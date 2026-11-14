@@ -242,6 +242,9 @@ public static class MapCompile
         MapDeformers.Apply(document, schema);
         using var assets = new GameContent(Path.Combine(game, "csgo", "pak01_dir.vpk"), Path.Combine(game, "csgo_addons", addon));
         var entries = startsEmpty ? new Dictionary<string, byte[]>(StringComparer.Ordinal) : Io.VpkWriter.ReadAll(package);
+        // The package as it came in: the map root's children are what this build writes (ledger 119), not the
+        // files an earlier build left (ze_obj_christmas_factory's -world -vis root lists no world_physics).
+        var before = new Dictionary<string, byte[]>(entries, StringComparer.Ordinal);
         if (startsEmpty)
         {
             log.WriteLine("  starting from an empty package (a full build)");
@@ -276,7 +279,7 @@ public static class MapCompile
             if (bakes && steps.Contains("vis"))
             {
                 bool WorldClass(string cls) => schema.IsSolidClass(cls) && schema.HasFlag(cls, "render_as_world_but_physics_as_entity");
-                visibility = WorldNodeFiles.Visibility(document, addon, Io.Tier0Strings.LowerAscii(map), assets, schema, game, WorldClass);
+                visibility = WorldNodeFiles.Visibility(document, addon, Io.Tier0Strings.LowerAscii(map), assets, schema, game, WorldClass, args.Arguments);
             }
             var lumps = EntityLumps(document, map, schema, assets, args.Settle, bakes, entitiesOnly: false, lighting: l => lighting = l,
                                     visClusterBoxes: visibility?.Flat);
@@ -452,12 +455,13 @@ public static class MapCompile
         }
         if (steps.Contains("world"))
         {
-            // The map root over what the package now holds (MapRootFile): the children are the
-            // map's compiled resources, the inputs the map and its prefabs' maps. An Only Entities
+            // The map root (MapRootFile): the children are the map's resources this build compiled,
+            // the inputs the map and its prefabs' maps. An Only Entities
             // build writes it too, with its own argument table (ledger 119).
             var rootPath = $"maps/{map}.vmap_c".ToLowerInvariant();
             var childPrefix = $"maps/{map}/".ToLowerInvariant();
-            var children = (args.EntitiesOnly ? entitiesOnlyChildren : entries.Keys.Where(k => k.StartsWithAscii(childPrefix) && k.EndsWithAscii("_c")))
+            bool Written(string k) => !before.TryGetValue(k, out var old) || !ReferenceEquals(old, entries[k]);
+            var children = (args.EntitiesOnly ? entitiesOnlyChildren : entries.Keys.Where(k => k.StartsWithAscii(childPrefix) && k.EndsWithAscii("_c") && Written(k)))
                 .Select(k => k[..^2])
                 .Concat(failedModels.Select(Tier0Strings.LowerAscii)).ToList();
             var addonContent = Path.Combine(root, "content", "csgo_addons", addon);

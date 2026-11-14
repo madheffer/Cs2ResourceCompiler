@@ -147,6 +147,30 @@ heavy runs with the game open at below-normal priority):
      6 words, brick02's 23 forced): compare the tangentcompute floats with ours bit for bit. A blanket renormalise of
      our output fixes trim but breaks 7 mesh_overlay models, so it is not the rule.
 
+15. **ze_shaurma's no-vis merge** (real-map sweep 2026-11-15; ledger 292 has the maps that are exact). Our
+   `compile-map -world` of s2p_shaurma's ze_shaurma_v3_b07_t5 against Valve's 11-12 package (inputs unchanged
+   since): 626 of 1,004 files equal. The world node has 54 agg_merge aggregates Valve does not make and 142
+   shared ones with more fragments than Valve's (assault_brick2a 17 vs 12): Valve's merger joins meshes ours
+   keeps apart, and a lone fragment then drops to the base list (ported, 0x360 indices). The map has no vis, so
+   the merger runs over the node's 1,024-unit box grid (26 x 21 x 3, the same node bounds as Valve's .vwrld).
+   Example: materials/brick/brickwall031d.vmat, two panels meeting at (-10656, 11598) on the grid line y 11608:
+   every CanMerge field equal (WrbMeshEntry.CanMerge), yet they stay two entries in ours. Static reads of
+   CanAggregate (18026d4a0) and CAggregateMeshList::Accepts (180272aa0) match the port. Frida on a standalone
+   resourcecompiler compiling s2p_shaurma ze_shaurma_v3_b07_t5 `-world -fshallow` (package backed up and
+   cmp-restored): log CVisibilityMeshMerger::MergeMeshes' (180234180) members for that material, their
+   cluster sets (FUN_1802307f0), the triangle split (FUN_180231200) and each MergeSmall join (FUN_1802334e0,
+   FUN_1802321b0 targets), and compare with ours (VisibilityMeshMerger.Trace prints the same events). A first
+   step that needs no merger hooks: capture_nodeentries.py s2p_shaurma ze_shaurma_v3_b07_t5 --stages BuildNode
+   for the entries' attributes, then ENTRYFLAGS=1 ENTRYFLAGS_STAGE=BuildNode:out (EntryFieldsProbe).
+16. ~~ze_obj_christmas_factory's vis~~ (done 2026-11-15 with CS2 open, ledger 293: worldspawn pvstype 0 is "Disabled"; VisEntry writes a fixed open vis; ported, 431 of 432 files Valve's). Was: (same sweep). Valve's package (11-14) has a 1,056-byte world_visibility,
+   the two-cluster "everything visible" result (m_nBaseClusterCount 2, bounds +-1048560), and every world model
+   follows from it; ours builds 4.9 MB of real clusters, so 139 files differ and 170 / 168 are only on one side.
+   The switches of Valve's build are not known (nav and vis present, no lighting). Run
+   `compile_fresh.py ze_obj_christmas_factory ze_obj_christmas_factory --over --out %TEMP%/fresh_compile/xmas_vis.vpk
+   -- -world -vis -fshallow` and read the log's visbuilder lines: if Valve's vis gives up (a leak, an open map,
+   no sealed region), find that branch in visbuilder.dll and port it (VisOutside / VisRegions); if Valve's own
+   compile makes real clusters, the 11-14 package was built without -vis and is the wrong reference.
+
 ## B. CS2 and Steam closed (cubehost)
 
 1. ~~The colour-adjust cubes~~ (done 2026-11-04): three cubehost runs of Valve's s2c_coloradjust package
@@ -162,6 +186,24 @@ heavy runs with the game open at below-normal priority):
    16 to 34 pixels: the skinned agent models that terrorist_team_intro, counterterrorist_team_intro and team_select
    spawn. Capture which models they spawn, with which pose and transform (cubehost Frida on client.dll's
    CAnimatableSceneObjectDesc creation), and their AO proxy splat (aoproxy_splat, 2 instances in the RenderDoc run).
+   Tried 2026-11-06 (tools/cubehost/scene_objects.js + scene_objects_summary.py, %TEMP%/cubehost_run/holdem_sceneobj*):
+   any Interceptor patch of scenesystem's create 1800d5aa0 (onLeave, entry-only, an epilogue probe) took cubehost down
+   18 s in; the real cause was the agent's blind reads into engine guard pages (a no-op agent ran clean), now range
+   checked. The hardware-breakpoint version that then worked traps every create and is far too slow (the map had not
+   loaded after 484 s; 16 tool/menu objects logged). Next: go back to an Interceptor entry hook with the range-checked
+   reads (or filter in the hook to client.dll callers before any JS work), and run_probe now reconnects netcon after
+   the map change (1.41.9.6 drops it).
+   Later 2026-11-06: hooks on the create are not usable on this build (an epilogue probe with a JS callback stalled
+   the level load, "[ToolsStallMonitor] Stall detected"; a CModule C callback hung it too). What works is
+   tools/cubehost/scene_scan.js, which patches nothing: it finds CSceneAnimatableObject's vtable from RTTI
+   (scenesystem 1805e5e50 in the installed build) and scans committed private PAGE_READWRITE memory (VirtualQuery)
+   for it at fixed seconds. %TEMP%/cubehost_run/holdem_scan2 (settle 60, build finished, no crash): 19 hits at 70 s
+   and 90 s, about 44 s a scan. The live ones carry a 3 x 4 matrix at +0x30 (e.g. (-1226, -436, 126), (-46, -247,
+   60): the menu / match_mvp UI scenes); the rest look like freed blocks. None sits near the team intro AO proxies
+   (-12841, -338): the agents are not alive at 70-90 s, or not this class. Next: scan right after buildcubemaps
+   starts (a --before command, or SCAN_AT past the build with a longer timeout; run_probe unloads the agent after
+   the build) and also scan for CAnimatableSceneObjectDesc-made objects by the vtables of every class whose RTTI
+   name has "SceneObject".
 3. **s2c_l5probe's -X viewmodel** (CUBEMAPS.md B): the pawn's viewmodel draws, if the build state is decided
    (ledger 149).
 4. **Animated maps** (CUBEMAPS.md D): after the offline pixel diff of atixref_srt_1 against _srt_2 has localised

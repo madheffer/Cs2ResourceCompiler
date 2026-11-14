@@ -231,7 +231,28 @@ the addon).
     Debug test build; time a Release build and Valve's own step before sizing it. Any change
     that could alter bytes waits for the user's OK (parity before speed).
 
-## Latest session (2026-11-06 evening, CS2 open: atixref bake material blocks)
+## Latest session (2026-11-15, real maps through compile-map; CS2 closed, then open from 04:31)
+
+The test maps are at parity, so this session ran compile-map on real ZE maps it had never seen, each against
+Valve's own package of the same .vmap (outputs in %TEMP%/s2c_realmaps/<map>, recipe below).
+- Merged fix/ze-refusals (local-space props, prop stream formats, T-junction twins; its ledger renumbered 291).
+- Ledger 292 (d12f403): standalone prop objects' flags from WRBNode_FinishLists (0x20 for disableshadows 1/3,
+  emissive_mode 1, renderwithdynamic, lighting origin), the overlay list's 0x2000 on every entry
+  (COverlayMeshList::OnAdd), the tint alpha from renderamt, and a generated .vmap's missing prop keys as the FGD
+  default (csgo.fgd's lodlevel "0"; smart props keep the code defaults).
+- Results, the .vwrld stamp aside: ze_obj_elf_penis_factory 271/272 and _mat 300/301 (exact). probe01,
+  cardtest, ze_hold_em_p -world unchanged; atixref 548/553 as before (Valve variance).
+- Ledger 293: worldspawn pvstype 0 ("Disabled") makes visbuilder write a fixed open vis
+  (WorldNodeFiles.DisabledVisibility), and the map root lists only the files this build wrote.
+  ze_obj_christmas_factory -world -vis: 431/432 (was 168/477).
+- Open, queued as CS2_CLOSED_QUEUE A.15: ze_shaurma_v3_b07_t5 (626/1,004; our no-vis merger joins fewer meshes
+  than Valve's, so 54 extra aggregates; needs a Frida trace of Valve's merger).
+- Recipe: copy Valve's package to `<out>/csgo_addons/<addon>/maps/`, run `s2c compile-map -i <vmap> -outroot <out>
+  -world [--gpu]` (the builders Valve's package shows), then `s2c map-diff <valve.vpk> -c <ours.vpk>`.
+- heavy.py: a waiter without --allow-cs2 holds the lock while it waits for CS2 to close, which blocks every
+  --allow-cs2 job behind it; run short below-normal jobs directly then (`cmd /c start /belownormal /wait`).
+
+## Earlier session (2026-11-06 evening, CS2 open: atixref bake material blocks)
 
 - Ledger 259: the default hit group's LightSim_Albedo from the vmat_c's m_vectorAttributes (toolsblocklight /
   toolssolidblocklight: black, no colour texture; MaterialInfo.VectorAttributes, RtxMaterials.DefaultBlock), and
