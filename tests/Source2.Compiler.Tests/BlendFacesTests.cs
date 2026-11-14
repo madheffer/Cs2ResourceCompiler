@@ -32,6 +32,33 @@ public sealed class BlendFacesTests(ITestOutputHelper output)
         => (meshData.Get<DmxBinary.Element>("faceData")?.GetElements("streams").FirstOrDefault(x => x.Name.Split(':')[0] == name)?.Get<object?[]>("data") ?? [])
             .Select(x => x is int i ? i : 0).ToArray();
 
+    /// <summary><c>SOUP_FIND=&lt;vpk&gt;|x,y,z;x,y,z...</c>: the shipped world soups' triangles with all corners among the
+    /// points, with their index and winding normal.</summary>
+    [Fact]
+    public void ShippedSoupTriangles()
+    {
+        if (Environment.GetEnvironmentVariable("SOUP_FIND") is not { Length: > 0 } spec || spec.Split('|') is not [var vpk, var pointsText])
+            return;
+        var points = pointsText.Split(';').Select(p => p.Split(',').Select(float.Parse).ToArray()).Select(a => new Vector3(a[0], a[1], a[2])).ToHashSet();
+        var files = MapDecompiler.ReadPackage(vpk);
+        using var resource = new ValveResourceFormat.Resource();
+        resource.Read(new MemoryStream(files[files.Keys.First(k => k.EndsWith("/world_physics.vmdl_c", StringComparison.Ordinal))]));
+        var phys = (ValveResourceFormat.ResourceTypes.PhysAggregateData)resource.GetBlockByType(ValveResourceFormat.BlockType.PHYS)!;
+        foreach (var part in phys.Parts)
+            for (var s = 0; s < part.Shape.Meshes.Length; s++)
+            {
+                var mesh = part.Shape.Meshes[s].Shape;
+                var v = mesh.GetVertices().ToArray();
+                var tris = mesh.GetTriangles().ToArray();
+                for (var t = 0; t < tris.Length; t++)
+                {
+                    var (a, b, c) = (v[tris[t].X], v[tris[t].Y], v[tris[t].Z]);
+                    if (points.Contains(a) && points.Contains(b) && points.Contains(c))
+                        output.WriteLine($"soup {s} triangle {t}: {a} {b} {c} normal {Vector3.Normalize(Vector3.Cross(b - a, c - a))}");
+                }
+            }
+    }
+
     /// <summary>The mesh's (bias, material) face sets in the forward's sorted order give back its biases.</summary>
     [Fact]
     public void BiasesFromThePieceOrder()
