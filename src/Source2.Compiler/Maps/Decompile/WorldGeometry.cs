@@ -39,7 +39,9 @@ internal static class WorldGeometry
         var result = new List<Mesh>();
         if (!files.TryGetValue($"maps/{mapName}/world_physics.vmdl_c", out var physicsBytes))
             return result;
-        var render = RenderCorners(files, mapName);
+        var drawTriangles = RenderTriangles(files, mapName);
+        var render = CornersOf(drawTriangles);
+        var drawIndex = DrawIndex(drawTriangles);
         var paint = BlendFaces.Read(files, mapName);
         using var resource = new Resource();
         resource.Read(new MemoryStream(physicsBytes));
@@ -95,8 +97,31 @@ internal static class WorldGeometry
                     var (ia, ib, ic) = triangles[k];
                     Vector3[] corners = [vertices[ia], vertices[ib], vertices[ic]];
                     var normal = Vector3.Cross(corners[1] - corners[0], corners[2] - corners[0]);
-                    var hits = corners.Select(c => Corner(render, c, normal)).ToArray();
-                    if (hits.All(h => h is not null) && hits.Select(h => h!.Value.Material).Distinct().Count() == 1)
+                    // The material the draw shows at the triangle's centroid (a coplanar draw triangle holding it):
+                    // where two materials' corners meet at one position in one plane the nearest corner alone can
+                    // take the neighbour's (ze_hold_em_p: 2 hr_conc triangles on concrete_9 corners). Its corners'
+                    // texcoords then from that material's corners; else the nearest corners as before.
+                    var at = DrawMaterialAt(drawTriangles, drawIndex, (corners[0] + corners[1] + corners[2]) / 3, normal);
+                    var facing = normal;
+                    var hits = corners.Select(c => Corner(render, c, facing, at)).ToArray();
+                    if (at is not null && hits.Any(h => h is null))
+                        hits = corners.Select(c => Corner(render, c, facing)).ToArray();
+                    if (Environment.GetEnvironmentVariable("DECOMPILE_TRIDEBUG") is { Length: > 0 } box
+                        && box.Split(',').Select(float.Parse).ToArray() is [var x0, var y0, var z0, var x1, var y1, var z1]
+                        && (corners[0] + corners[1] + corners[2]) / 3 is var centroid
+                        && centroid.X >= x0 && centroid.X <= x1 && centroid.Y >= y0 && centroid.Y <= y1 && centroid.Z >= z0 && centroid.Z <= z1)
+                        notes.Add($"world tri debug: soup {k} {corners[0]:R} {corners[1]:R} {corners[2]:R} normal {Vector3.Normalize(normal):R}: centroid draw {at ?? "none"}, " +
+                                  $"corners {string.Join(" | ", hits.Select(h => h is { } x ? Path.GetFileNameWithoutExtension(x.Material) : "-"))}");
+                    if (DecompileProfile.On)
+                    {
+                        var plain = corners.Select(c => Corner(render, c, normal)).ToArray();
+                        var plainMaterial = plain.All(h => h is not null) && plain.Select(h => h!.Value.Material).Distinct().Count() == 1 ? plain[0]!.Value.Material : null;
+                        DecompileProfile.Count($"world.centroid {(at is null ? "none" : plainMaterial is null ? "corners mixed" : at == plainMaterial ? "agrees" : $"differs {Path.GetFileNameWithoutExtension(plainMaterial)}->{Path.GetFileNameWithoutExtension(at)}")}");
+                    }
+                    // A triangle no draw holds at its centroid is not drawn (hidden or cut away): its corners touching a
+                    // drawn face's corners say nothing of its own material, so it goes to the surface pass below with
+                    // the other undrawn ones (its neighbours across an edge).
+                    if (at is not null && hits.All(h => h is not null) && hits.Select(h => h!.Value.Material).Distinct().Count() == 1)
                     {
                         soupMaterial[k] = hits[0]!.Value.Material;
                         (uv[(k, ia)], uv[(k, ib)], uv[(k, ic)]) = (hits[0]!.Value.Texcoord, hits[1]!.Value.Texcoord, hits[2]!.Value.Texcoord);
@@ -155,6 +180,10 @@ internal static class WorldGeometry
                         (soupMaterial[k], resolved[k], stalls) = (pick, true, 0);
                         (bySurface, unknown) = (bySurface + 1, unknown - 1);
                     }
+                    if (DecompileProfile.On)
+                        for (var k = 0; k < triangles.Count; k++)
+                            if (shown[k] && SurfaceAt(k) is { } wanted && Surface(soupMaterial[k]) != wanted)
+                                DecompileProfile.Count($"world.drawn-surface-differs {Path.GetFileNameWithoutExtension(soupMaterial[k])} drawn, soup surface {surfaceName?.Invoke(wanted) ?? wanted.ToString()}");
                     if (DecompileProfile.On)
                         foreach (var k in pending)
                         {
@@ -2002,9 +2031,24 @@ internal static class WorldGeometry
         string? currentMaterial = null;
         for (var v = 0; v < vertexCount; v++)
         {
-            if (introducing[v] is not { } list)
+            if (introducing[v] is not { } all)
                 continue;
-            var joins = current is not null && list.All(t => material[t] == currentMaterial)
+            // A member is one material (the forward cuts pieces by material): the triangles of the leading one's
+            // material go on as before; the others a vertex introduces with them (they bring no vertex of their own:
+            // ze_hold_em_p's hr_conc quad at y 398, under a concrete_9 run) join the latest member of their own
+            // material they share a vertex with, else make a member of their own.
+            var list = all.Where(t => material[t] == material[all[0]]).ToList();
+            foreach (var other in all.Where(t => material[t] != material[all[0]]).GroupBy(t => material[t]))
+            {
+                var used = other.SelectMany(t => (int[])[triangles[t].A, triangles[t].B, triangles[t].C]).ToHashSet();
+                var host = members.LastOrDefault(m => material[m.Item1[0]] == other.Key
+                    && m.Item1.Any(t => used.Contains(triangles[t].A) || used.Contains(triangles[t].B) || used.Contains(triangles[t].C)));
+                if (host.Item1 is not null)
+                    host.Item1.AddRange(other);
+                else
+                    members.Add(([.. other], v + 1));
+            }
+            var joins = current is not null && material[list[0]] == currentMaterial
                         && list.Any(t => new[] { triangles[t].A, triangles[t].B, triangles[t].C }.Any(u => u >= start && u < v));
             if (!joins)
             {
@@ -2112,23 +2156,122 @@ internal static class WorldGeometry
         foreach (var group in Enumerable.Range(0, triangles.Count).GroupBy(Find).OrderBy(g => g.Key))
         {
             var materials = group.Select(i => triangles[i].Material).Distinct(StringComparer.Ordinal).ToList();
-            var faces = group.Where(i => Vector3.Cross(triangles[i].B - triangles[i].A, triangles[i].C - triangles[i].A).LengthSquared() > 0f)
-                .Select(i => (Corners: (Vector3[])[triangles[i].A, triangles[i].B, triangles[i].C], Material: materials.IndexOf(triangles[i].Material),
-                              Texcoords: (Vector2[]?)[triangles[i].TA, triangles[i].TB, triangles[i].TC])).ToList();
+            var kept = group.Where(i => Vector3.Cross(triangles[i].B - triangles[i].A, triangles[i].C - triangles[i].A).LengthSquared() > 0f).ToList();
+            var faces = DrawFaces([.. kept.Select(i => triangles[i])])
+                .Select(f => (Corners: f.Corners, Material: materials.IndexOf(f.Material), Texcoords: (Vector2[]?)f.Texcoords)).ToList();
             if (faces.Count > 0)
                 meshes.Add(new Mesh(materials, faces, "render-only"));
         }
         return meshes;
     }
 
+    /// <summary>
+    /// Draw triangles back as faces: two faces sharing an edge (the other way round) merge when they are in one
+    /// plane (unit normals within 1e-5, offsets within 1/64), of one material, with the same texcoords at both
+    /// shared corners, and PolygonTriangulator (the compile's cut) cuts the merged loop, from some start, into
+    /// exactly the triangles merged; the most-shared edges first. A draw keeps no face boundaries (meshopt
+    /// reorders its triangles), so coplanar neighbours with one mapping can merge into one face where the source
+    /// had several (probe01's soups: the quad cap keeps more faces equal there; vmap-world-compare measures it).
+    /// </summary>
+    internal static List<(Vector3[] Corners, string Material, Vector2[] Texcoords)> DrawFaces(IReadOnlyList<RenderTriangle> triangles)
+    {
+        var id = new Dictionary<Vector3, int>();
+        var positions = new List<Vector3>();
+        int Id(Vector3 p)
+        {
+            if (!id.TryGetValue(p, out var v))
+            {
+                id[p] = v = positions.Count;
+                positions.Add(p);
+            }
+            return v;
+        }
+        var faces = new List<(int[] Loop, Vector2[] Uv, string Material, List<int> Triangles)?>();
+        foreach (var t in triangles)
+            faces.Add(([Id(t.A), Id(t.B), Id(t.C)], [t.TA, t.TB, t.TC], t.Material, [faces.Count]));
+        var plane = triangles.Select(t => Vector3.Cross(t.B - t.A, t.C - t.A) is var n && n.LengthSquared() > 0 ? Vector3.Normalize(n) : Vector3.Zero).ToArray();
+        var cuts = triangles.Select(t => Norm((Id(t.A), Id(t.B), Id(t.C)))).ToArray();
+        var byEdge = new Dictionary<(int, int), int>();
+        void Index(int f)
+        {
+            var loop = faces[f]!.Value.Loop;
+            for (var i = 0; i < loop.Length; i++)
+                byEdge[(loop[i], loop[(i + 1) % loop.Length])] = f;
+        }
+        void Unindex(int f)
+        {
+            var loop = faces[f]!.Value.Loop;
+            for (var i = 0; i < loop.Length; i++)
+                if (byEdge.TryGetValue((loop[i], loop[(i + 1) % loop.Length]), out var g) && g == f)
+                    byEdge.Remove((loop[i], loop[(i + 1) % loop.Length]));
+        }
+        for (var f = 0; f < faces.Count; f++)
+            Index(f);
+        bool Cuts(int[] loop, HashSet<(int, int, int)> want)
+        {
+            for (var r = 0; r < loop.Length; r++)
+            {
+                var rotated = loop.Skip(r).Concat(loop.Take(r)).ToArray();
+                var cut = PolygonTriangulator.Triangulate([.. rotated.Select(v => positions[v])]);
+                if (cut.Length != (loop.Length - 2) * 3)
+                    continue;
+                var got = new HashSet<(int, int, int)>();
+                for (var i = 0; i < cut.Length; i += 3)
+                    got.Add(Norm((rotated[cut[i]], rotated[cut[i + 1]], rotated[cut[i + 2]])));
+                if (got.SetEquals(want))
+                    return true;
+            }
+            return false;
+        }
+        var queue = new Queue<int>(Enumerable.Range(0, faces.Count));
+        while (queue.Count > 0)
+        {
+            var i = queue.Dequeue();
+            if (faces[i] is not { } p)
+                continue;
+            for (var x = 0; x < p.Loop.Length; x++)
+            {
+                int a = p.Loop[x], b = p.Loop[(x + 1) % p.Loop.Length];
+                if (!byEdge.TryGetValue((b, a), out var j) || j == i || faces[j] is not { } q || q.Material != p.Material)
+                    continue;
+                var (n, m) = (plane[p.Triangles[0]], plane[q.Triangles[0]]);
+                if (Vector3.Dot(n, m) < 1 - 1e-5f || MathF.Abs(Vector3.Dot(n, positions[p.Loop[0]] - positions[q.Loop[0]])) > 1f / 64)
+                    continue;
+                var y = Array.IndexOf(q.Loop, b);
+                // The same texcoords at both shared corners: one mapping across the edge.
+                if (p.Uv[x] != q.Uv[(y + 1) % q.Loop.Length] || p.Uv[(x + 1) % p.Loop.Length] != q.Uv[y])
+                    continue;
+                var between = Enumerable.Range(2, q.Loop.Length - 2).Select(t => (Vertex: q.Loop[(y + t) % q.Loop.Length], Uv: q.Uv[(y + t) % q.Loop.Length])).ToArray();
+                if (between.Any(v => p.Loop.Contains(v.Vertex)))
+                    continue;
+                var loop = p.Loop.Take(x + 1).Concat(between.Select(v => v.Vertex)).Concat(p.Loop.Skip(x + 1)).ToArray();
+                if (!Cuts(loop, [.. p.Triangles.Concat(q.Triangles).Select(t => cuts[t])]))
+                    continue;
+                var uv = p.Uv.Take(x + 1).Concat(between.Select(v => v.Uv)).Concat(p.Uv.Skip(x + 1)).ToArray();
+                Unindex(i);
+                Unindex(j);
+                var (keep, drop) = i < j ? (i, j) : (j, i);
+                faces[keep] = (loop, uv, p.Material, [.. p.Triangles, .. q.Triangles]);
+                faces[drop] = null;
+                Index(keep);
+                queue.Enqueue(keep);
+                break;
+            }
+        }
+        return [.. faces.OfType<(int[] Loop, Vector2[] Uv, string Material, List<int> Triangles)>().Select(f => ((Vector3[])[.. f.Loop.Select(v => positions[v])], f.Material, f.Uv))];
+    }
+
     /// <summary>A world node draw triangle: its corners, their texcoords, its material and the node model it is in.</summary>
-    internal readonly record struct RenderTriangle(Vector3 A, Vector3 B, Vector3 C, Vector2 TA, Vector2 TB, Vector2 TC, string Material, string Model);
+    internal readonly record struct RenderTriangle(Vector3 A, Vector3 B, Vector3 C, Vector2 TA, Vector2 TB, Vector2 TC, string Material, string Model, int Draw = -1);
 
     /// <summary>Every render triangle's corners by 1/32 cell, from the world nodes' models.</summary>
     private static Dictionary<(int, int, int), List<RenderCorner>> RenderCorners(IReadOnlyDictionary<string, byte[]> files, string mapName)
+        => CornersOf(RenderTriangles(files, mapName));
+
+    private static Dictionary<(int, int, int), List<RenderCorner>> CornersOf(IReadOnlyList<RenderTriangle> triangles)
     {
         var corners = new Dictionary<(int, int, int), List<RenderCorner>>();
-        foreach (var t in RenderTriangles(files, mapName))
+        foreach (var t in triangles)
         {
             var normal = Vector3.Cross(t.B - t.A, t.C - t.A);
             foreach (var (p, uv) in (ValueTuple<Vector3, Vector2>[])[(t.A, t.TA), (t.B, t.TB), (t.C, t.TC)])
@@ -2143,19 +2286,26 @@ internal static class WorldGeometry
     }
 
     /// <summary>Every draw triangle of the world nodes' models (worldnodes/*.vmdl_c), draw by draw in index order.</summary>
-    internal static List<RenderTriangle> RenderTriangles(IReadOnlyDictionary<string, byte[]> files, string mapName)
+    /// <param name="fragments">False (the default): an aggregate's draws that carry a fragment transform are left out
+    /// (a prop's render in its model's space, StaticProps.SceneProps); true: only those, positions as stored.</param>
+    internal static List<RenderTriangle> RenderTriangles(IReadOnlyDictionary<string, byte[]> files, string mapName, bool fragments = false)
     {
         var triangles = new List<RenderTriangle>();
+        var transformed = StaticProps.TransformedDraws(files, mapName);
         foreach (var (path, bytes) in files.Where(f => f.Key.StartsWith($"maps/{mapName}/worldnodes/", StringComparison.Ordinal) && f.Key.EndsWith(".vmdl_c", StringComparison.Ordinal)))
         {
             using var resource = new Resource();
             resource.Read(new MemoryStream(bytes));
             if (resource.DataBlock is not Model model)
                 continue;
+            var drawIndex = -1;
             foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var call in so.GetArray("m_drawCalls"))
                     {
+                        drawIndex++;
+                        if (transformed.Contains((path, drawIndex)) != fragments)
+                            continue;
                         var material = call.GetStringProperty("m_material") ?? "";
                         // A map mesh's draw may split its streams (SplitDepthStream: positions in one buffer,
                         // the rest in the next, one vertex numbering): each stream from the buffer that has it.
@@ -2220,7 +2370,7 @@ internal static class WorldGeometry
                         for (var i = start; i + 2 < start + count; i += 3)
                         {
                             int a = I(i) + bas, b = I(i + 1) + bas, c = I(i + 2) + bas;
-                            triangles.Add(new RenderTriangle(P(a), P(b), P(c), T(a), T(b), T(c), material, path));
+                            triangles.Add(new RenderTriangle(P(a), P(b), P(c), T(a), T(b), T(c), material, path, drawIndex));
                         }
                     }
         }
@@ -2231,7 +2381,8 @@ internal static class WorldGeometry
     /// facing the same way (unit normals within 1e-4), or null. The render positions are that weld's
     /// representatives: another mesh's corner nearby wins (probe01: -256 where the soup has -256.00006,
     /// a mesh at origin 511.99994 against one at 512).</summary>
-    private static (string Material, Vector2 Texcoord)? Corner(Dictionary<(int, int, int), List<RenderCorner>> render, Vector3 at, Vector3 normal)
+    private static (string Material, Vector2 Texcoord)? Corner(Dictionary<(int, int, int), List<RenderCorner>> render, Vector3 at, Vector3 normal,
+                                                               string? material = null)
     {
         if (normal.LengthSquared() == 0f)
             return null;
@@ -2244,12 +2395,63 @@ internal static class WorldGeometry
                 for (var dz = -1; dz <= 1; dz++)
                     foreach (var c in render.GetValueOrDefault((cx + dx, cy + dy, cz + dz)) ?? [])
                         if (Vector3.DistanceSquared(c.Position, at) is var d && d <= Weld * Weld && d < bestDistance
+                            && (material is null || c.Material == material)
                             && c.Normal.LengthSquared() > 0f && Vector3.Dot(Vector3.Normalize(c.Normal), n) > 0.9999f)
                             (best, bestDistance) = (c, d);
         return best is { } b ? (b.Material, b.Texcoord) : null;
     }
 
     private const float Weld = 1f / 32f;
+
+    // Draw triangles by the 16-unit cells their bounds cover.
+    private static Dictionary<(int, int, int), List<int>> DrawIndex(IReadOnlyList<RenderTriangle> triangles)
+    {
+        static (int, int, int) C(Vector3 p) => ((int)MathF.Floor(p.X / 16), (int)MathF.Floor(p.Y / 16), (int)MathF.Floor(p.Z / 16));
+        var index = new Dictionary<(int, int, int), List<int>>();
+        for (var i = 0; i < triangles.Count; i++)
+        {
+            var t = triangles[i];
+            var (lo, hi) = (C(Vector3.Min(t.A, Vector3.Min(t.B, t.C))), C(Vector3.Max(t.A, Vector3.Max(t.B, t.C))));
+            if ((long)(hi.Item1 - lo.Item1 + 1) * (hi.Item2 - lo.Item2 + 1) * (hi.Item3 - lo.Item3 + 1) > 4096)
+                continue;
+            for (var x = lo.Item1; x <= hi.Item1; x++)
+                for (var y = lo.Item2; y <= hi.Item2; y++)
+                    for (var z = lo.Item3; z <= hi.Item3; z++)
+                        (index.TryGetValue((x, y, z), out var l) ? l : index[(x, y, z)] = []).Add(i);
+        }
+        return index;
+    }
+
+    // The material of the draw triangle facing the same way (unit normals within 1e-4), in the point's plane within
+    // the weld's 1/32, that holds the point (barycentric, a 1e-4 margin); null where none or several materials do.
+    private static string? DrawMaterialAt(IReadOnlyList<RenderTriangle> triangles, Dictionary<(int, int, int), List<int>> index, Vector3 p, Vector3 normal)
+    {
+        if (normal.LengthSquared() == 0f)
+            return null;
+        var n = Vector3.Normalize(normal);
+        string? found = null;
+        foreach (var i in index.GetValueOrDefault(((int)MathF.Floor(p.X / 16), (int)MathF.Floor(p.Y / 16), (int)MathF.Floor(p.Z / 16))) ?? [])
+        {
+            var t = triangles[i];
+            var m = Vector3.Cross(t.B - t.A, t.C - t.A);
+            if (m.LengthSquared() == 0f || Vector3.Dot(Vector3.Normalize(m), n) <= 0.9999f || MathF.Abs(Vector3.Dot(Vector3.Normalize(m), p - t.A)) > Weld)
+                continue;
+            // Barycentric in the triangle's plane.
+            var (v0, v1, v2) = (t.B - t.A, t.C - t.A, p - t.A);
+            var (d00, d01, d11, d20, d21) = (Vector3.Dot(v0, v0), Vector3.Dot(v0, v1), Vector3.Dot(v1, v1), Vector3.Dot(v2, v0), Vector3.Dot(v2, v1));
+            var denominator = (d00 * d11) - (d01 * d01);
+            if (denominator == 0f)
+                continue;
+            var v = ((d11 * d20) - (d01 * d21)) / denominator;
+            var w = ((d00 * d21) - (d01 * d20)) / denominator;
+            if (v < -1e-4f || w < -1e-4f || v + w > 1 + 1e-4f)
+                continue;
+            if (found is not null && found != t.Material)
+                return null;
+            found = t.Material;
+        }
+        return found;
+    }
 
     private static (int, int, int) Cell(Vector3 v) => ((int)MathF.Floor(v.X / Weld), (int)MathF.Floor(v.Y / Weld), (int)MathF.Floor(v.Z / Weld));
 }

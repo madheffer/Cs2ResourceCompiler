@@ -2,6 +2,7 @@ using System.Numerics;
 using Source2.Compiler.Physics;
 using ValveResourceFormat;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Maps.Decompile;
 
@@ -20,7 +21,11 @@ namespace Source2.Compiler.Maps.Decompile;
 internal static class StaticProps
 {
     /// <summary>A prop found: its model and placement, and the shipped hulls it gives, in its own order.</summary>
-    internal sealed record Placed(string Model, Vector3 Origin, Vector3 Angles, int[] Hulls);
+    internal sealed record Placed(string Model, Vector3 Origin, Vector3 Angles, int[] Hulls)
+    {
+        /// <summary>The prop's scales (modelscale), one unless the placement says otherwise.</summary>
+        public Vector3 Scales { get; init; } = Vector3.One;
+    }
 
     /// <summary>A shipped hull: its vertices and planes.</summary>
     internal sealed record Shipped(Vector3[] Vertices, (Vector3 Normal, float Offset)[] Planes);
@@ -54,6 +59,170 @@ internal static class StaticProps
         resource.Read(new MemoryStream(bytes));
         return [.. (resource.ExternalReferences?.ResourceRefInfoList ?? []).Select(r => r.Name ?? "")
             .Where(n => n.StartsWith("models/", StringComparison.OrdinalIgnoreCase) && n.EndsWith(".vmdl", StringComparison.OrdinalIgnoreCase))];
+    }
+
+    // A 3x4 matrix as a KV3 array, flat (12 numbers: a fragment transform) or as rows (3 of 4: m_vTransform), row-major.
+    private static float[] Matrix(IEnumerable<ValveKeyValue.KVObject>? kv)
+    {
+        var values = new List<float>();
+        void Walk(ValveKeyValue.KVObject x)
+        {
+            var children = x.Values?.ToList();
+            if (children is { Count: > 0 })
+                foreach (var child in children)
+                    Walk(child);
+            else
+                values.Add((float)x.ToDouble(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        foreach (var x in kv ?? [])
+            Walk(x);
+        return [.. values];
+    }
+
+    private static float[] Matrix(ValveKeyValue.KVObject kv) => Matrix([kv]);
+
+    /// <summary>The world nodes' aggregate draws that carry a fragment transform: (node model file, draw index).</summary>
+    internal static HashSet<(string Model, int Draw)> TransformedDraws(IReadOnlyDictionary<string, byte[]> files, string mapName)
+    {
+        var result = new HashSet<(string, int)>();
+        foreach (var (_, model, draw, _) in Fragments(files, mapName))
+            result.Add((model, draw));
+        return result;
+    }
+
+    // Every aggregate fragment with a transform: its node, aggregate model file (with _c), draw index and 3x4 matrix.
+    private static IEnumerable<(string Node, string Model, int Draw, float[] Matrix)> Fragments(IReadOnlyDictionary<string, byte[]> files, string mapName)
+    {
+        foreach (var (path, bytes) in files.Where(f => f.Key.StartsWith($"maps/{mapName}/worldnodes/", StringComparison.Ordinal) && f.Key.EndsWith(".vwnod_c", StringComparison.Ordinal)))
+        {
+            using var resource = new Resource();
+            resource.Read(new MemoryStream(bytes));
+            if (resource.DataBlock is not WorldNode node)
+                continue;
+            foreach (var ao in node.Data.GetArray("m_aggregateSceneObjects") ?? [])
+            {
+                var model = (ao.GetStringProperty("m_renderableModel") ?? "") + "_c";
+                var transforms = ao.GetArray("m_fragmentTransforms") ?? [];
+                var k = 0;
+                foreach (var mo in ao.GetArray("m_aggregateMeshes") ?? [])
+                    if (mo.GetBooleanProperty("m_bHasTransform") && k < transforms.Count)
+                        if (Matrix(transforms[k++]) is { Length: 12 } transform)
+                            yield return (path, model, (int)mo.GetIntegerProperty("m_nDrawCallIndex"), transform);
+            }
+        }
+    }
+
+    /// <summary>
+    /// prop_statics the world nodes list with their transforms: each scene object whose model is not one of the
+    /// map's own node models (its 3x4 m_vTransform), and each group of aggregate fragments under one transform,
+    /// their model found by their draws' vertices (stored in the model's space) among the .vmap_c's models'
+    /// LOD 0 render meshes of the same material. The transform is the forward's prop matrix (PropMatrix: the
+    /// angle matrix, origin as translation, each column times its scale): origin and scales read from it, the
+    /// angles searched in float steps about MatrixAngles until the matrix comes back bit for bit (else the
+    /// estimate, counted). Returns the props found and the models no fragment group matched.
+    /// </summary>
+    internal static (List<Placed> Props, int Inexact, int Unmatched) SceneProps(IReadOnlyDictionary<string, byte[]> files, string mapName,
+        Func<string, IReadOnlyList<List<(Vector3 A, Vector3 B, Vector3 C, string Material)>>> renderMeshes, List<string> notes)
+    {
+        using var profiled = DecompileProfile.Time("SceneProps");
+        var props = new List<Placed>();
+        var (inexact, unmatched) = (0, 0);
+        void Add(string model, float[] m)
+        {
+            var origin = new Vector3(m[3], m[7], m[11]);
+            var scales = new Vector3(new Vector3(m[0], m[4], m[8]).Length(), new Vector3(m[1], m[5], m[9]).Length(), new Vector3(m[2], m[6], m[10]).Length());
+            Vector3 Clean(Vector3 v) => new(MathF.Abs(v.X - MathF.Round(v.X * 1000) / 1000) < 1e-5f ? MathF.Round(v.X * 1000) / 1000 : v.X,
+                                            MathF.Abs(v.Y - MathF.Round(v.Y * 1000) / 1000) < 1e-5f ? MathF.Round(v.Y * 1000) / 1000 : v.Y,
+                                            MathF.Abs(v.Z - MathF.Round(v.Z * 1000) / 1000) < 1e-5f ? MathF.Round(v.Z * 1000) / 1000 : v.Z);
+            scales = Clean(scales);
+            var unscaled = (float[])m.Clone();
+            for (var r = 0; r < 3; r++)
+                (unscaled[r * 4], unscaled[(r * 4) + 1], unscaled[(r * 4) + 2]) = (m[r * 4] / scales.X, m[(r * 4) + 1] / scales.Y, m[(r * 4) + 2] / scales.Z);
+            var estimate = StaticPropHulls.MatrixAngles(unscaled);
+            bool Same(Vector3 angles)
+            {
+                var q = StaticPropHulls.PropMatrix(new StaticPropHulls.Prop(-1, model, origin, angles, scales));
+                for (var i = 0; i < 12; i++)
+                    if (BitConverter.SingleToInt32Bits(q[i]) != BitConverter.SingleToInt32Bits(m[i]))
+                        return false;
+                return true;
+            }
+            Vector3? found = Same(estimate) ? estimate : null;
+            if (found is null)
+            {
+                var (px, py, pz) = (Steps(estimate.X), Steps(estimate.Y), Steps(estimate.Z));
+                foreach (var ax in px)
+                {
+                    foreach (var ay in py)
+                    {
+                        foreach (var az in pz)
+                            if (Same(new Vector3(ax, ay, az)))
+                            {
+                                found = new Vector3(ax, ay, az);
+                                break;
+                            }
+                        if (found is not null) break;
+                    }
+                    if (found is not null) break;
+                }
+            }
+            if (found is null)
+                inexact++;
+            props.Add(new Placed(model, origin, found ?? estimate, []) { Scales = scales });
+        }
+        // Scene objects.
+        foreach (var (path, bytes) in files.Where(f => f.Key.StartsWith($"maps/{mapName}/worldnodes/", StringComparison.Ordinal) && f.Key.EndsWith(".vwnod_c", StringComparison.Ordinal)))
+        {
+            using var resource = new Resource();
+            resource.Read(new MemoryStream(bytes));
+            if (resource.DataBlock is not WorldNode node)
+                continue;
+            foreach (var so in node.Data.GetArray("m_sceneObjects") ?? [])
+            {
+                var model = so.GetStringProperty("m_renderableModel") ?? "";
+                if (model.Length == 0 || model.StartsWith($"maps/{mapName}/", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (Matrix(so.GetArray("m_vTransform")) is { Length: 12 } transform)
+                    Add(model, transform);
+            }
+        }
+        // Aggregate fragments: the draws by (model file, draw), grouped by transform.
+        var fragmentList = Fragments(files, mapName).ToList();
+        if (fragmentList.Count > 0)
+        {
+            var draws = WorldGeometry.RenderTriangles(files, mapName, fragments: true).GroupBy(t => (t.Model, t.Draw)).ToDictionary(g => g.Key, g => g.ToList());
+            // Each candidate model's LOD 0 render vertices by material.
+            var byVertex = new Dictionary<(string Material, Vector3 Position), HashSet<string>>();
+            foreach (var model in Models(files, mapName).Distinct(StringComparer.OrdinalIgnoreCase))
+                foreach (var mesh in renderMeshes(model))
+                    foreach (var (a, b, c, material) in mesh)
+                        foreach (var p in (Vector3[])[a, b, c])
+                            (byVertex.TryGetValue((material, p), out var set) ? set : byVertex[(material, p)] = new(StringComparer.OrdinalIgnoreCase)).Add(model);
+            foreach (var group in fragmentList.GroupBy(f => string.Join(",", f.Matrix.Select(BitConverter.SingleToInt32Bits))))
+            {
+                var votes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var total = 0;
+                foreach (var f in group)
+                    foreach (var t in draws.GetValueOrDefault((f.Model, f.Draw)) ?? [])
+                        foreach (var p in (Vector3[])[t.A, t.B, t.C])
+                        {
+                            total++;
+                            foreach (var model in byVertex.GetValueOrDefault((t.Material, p)) ?? [])
+                                votes[model] = votes.GetValueOrDefault(model) + 1;
+                        }
+                if (votes.Count == 0 || votes.Max(v => v.Value) < total * 0.99)
+                {
+                    unmatched++;
+                    continue;
+                }
+                Add(votes.MaxBy(v => v.Value).Key, group.First().Matrix);
+            }
+        }
+        if (props.Count > 0 || unmatched > 0)
+            notes.Add($"prop_static: {props.Count} from the world nodes' transforms (scene objects and aggregate fragments), " +
+                      $"{props.Count - inexact} with angles that give the transform bit for bit, {inexact} the nearest; " +
+                      $"{unmatched} fragment group(s) whose draws match no model of the .vmap_c");
+        return (props, inexact, unmatched);
     }
 
     /// <summary>The world part's triangle-mesh shapes: each soup's vertices and triangles.</summary>
@@ -206,6 +375,30 @@ internal static class StaticProps
         }
         var placedCorners = new HashSet<(int, int, int)>();
         var skipped = new List<string>();
+        // Draw triangles by their sorted edge lengths (half units), for the any-rotation pass.
+        static (int, int, int) EdgeKey(Vector3 a, Vector3 b, Vector3 c)
+        {
+            float[] l = [(a - b).Length(), (b - c).Length(), (c - a).Length()];
+            Array.Sort(l);
+            return ((int)MathF.Round(l[0] * 2), (int)MathF.Round(l[1] * 2), (int)MathF.Round(l[2] * 2));
+        }
+        var drawByKey = new Dictionary<(int, int, int), List<int>>();
+        for (var i = 0; i < drawn.Count; i++)
+            (drawByKey.TryGetValue(EdgeKey(drawn[i].A, drawn[i].B, drawn[i].C), out var list) ? list : drawByKey[EdgeKey(drawn[i].A, drawn[i].B, drawn[i].C)] = []).Add(i);
+        IEnumerable<int> Matching((int, int, int) k)
+        {
+            for (var d0 = -1; d0 <= 1; d0++)
+                for (var d1 = -1; d1 <= 1; d1++)
+                    for (var d2 = -1; d2 <= 1; d2++)
+                        foreach (var i in drawByKey.GetValueOrDefault((k.Item1 + d0, k.Item2 + d1, k.Item3 + d2)) ?? [])
+                            yield return i;
+        }
+        static (Vector3 E1, Vector3 E2, Vector3 N) Frame(Vector3 a, Vector3 b, Vector3 c)
+        {
+            var e1 = Vector3.Normalize(b - a);
+            var n = Vector3.Normalize(Vector3.Cross(b - a, c - a));
+            return (e1, Vector3.Cross(n, e1), n);
+        }
         foreach (var model in models.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var local = renderMeshes(model).SelectMany(m => m.SelectMany(t => (Vector3[])[t.A, t.B, t.C])).Distinct().ToArray();
@@ -246,6 +439,54 @@ internal static class StaticProps
                     placedHere++;
                 }
             }
+            // Any rotation: the model's render triangles of the rarest shapes among the draws (edges of 2 units and
+            // more), each matched by its edge lengths to draw triangles; a match's frames give the rotation, checked
+            // on 256 spread corners, then fitted by least squares on the corners that land (within 1/8: the weld's
+            // 1/32 on both sides) and checked again through the prop matrix of the fitted angles and origin.
+            var meshTriangles = renderMeshes(model).SelectMany(m => m).Where(t =>
+                MathF.Min((t.A - t.B).Length(), MathF.Min((t.B - t.C).Length(), (t.C - t.A).Length())) >= 2f).ToList();
+            var references = meshTriangles.Select(t => (T: t, Count: Matching(EdgeKey(t.A, t.B, t.C)).Count()))
+                .Where(x => x.Count > 0).OrderBy(x => x.Count).Take(2).ToList();
+            var spreadAny = Enumerable.Range(0, Math.Min(256, local.Length)).Select(i => local[(int)((long)i * local.Length / Math.Min(256, local.Length))]).ToArray();
+            var subset = Enumerable.Range(0, Math.Min(2048, local.Length)).Select(i => local[(int)((long)i * local.Length / Math.Min(2048, local.Length))]).ToArray();
+            foreach (var (r, _) in references)
+                foreach (var di in Matching(EdgeKey(r.A, r.B, r.C)))
+                {
+                    var d = drawn[di];
+                    foreach (var (d0, d1, d2) in ((Vector3, Vector3, Vector3)[])[(d.A, d.B, d.C), (d.B, d.C, d.A), (d.C, d.A, d.B)])
+                    {
+                        if (MathF.Abs((d1 - d0).Length() - (r.B - r.A).Length()) > 0.125f || MathF.Abs((d2 - d1).Length() - (r.C - r.B).Length()) > 0.125f
+                            || MathF.Abs((d0 - d2).Length() - (r.A - r.C).Length()) > 0.125f)
+                            continue;
+                        var (m1, m2, mn) = Frame(r.A, r.B, r.C);
+                        var (w1, w2, wn) = Frame(d0, d1, d2);
+                        Vector3 Move(Vector3 p)
+                        {
+                            var v = p - r.A;
+                            return d0 + (w1 * Vector3.Dot(m1, v)) + (w2 * Vector3.Dot(m2, v)) + (wn * Vector3.Dot(mn, v));
+                        }
+                        if (spreadAny.Count(p => reach32.Contains(Cell32(Move(p)))) < spreadAny.Length * 0.99)
+                            continue;
+                        var at = Move(Vector3.Zero);
+                        if (props.Any(x => x.Model == model && Vector3.Distance(x.Origin, at) < 0.5f))
+                            continue;
+                        var pairs = subset.Select(p => (From: p, To: Nearest(Move(p)))).Where(x => x.To is not null).ToList();
+                        if (pairs.Count < subset.Length * 0.99)
+                            continue;
+                        if (Fit([.. pairs.Select(x => x.From)], [.. pairs.Select(x => x.To!.Value)], 0.125, 5e-3) is not { } fit)
+                            continue;
+                        var angles = StaticPropHulls.MatrixAngles(fit);
+                        var origin = new Vector3(fit[3], fit[7], fit[11]);
+                        var placed = StaticPropHulls.PropMatrix(new StaticPropHulls.Prop(-1, model, origin, angles, Vector3.One));
+                        if (local.Count(p => Nearest(MapMeshes.Transform(placed, p)) is not null) < local.Length * 0.99)
+                            continue;
+                        foreach (var p in local)
+                            placedCorners.Add(Cell32(MapMeshes.Transform(placed, p)));
+                        props.Add(new Placed(model, origin, angles, []));
+                        placedHere++;
+                        break;
+                    }
+                }
             if (placedHere == 0)
                 skipped.Add(Path.GetFileNameWithoutExtension(model));
         }
@@ -264,7 +505,7 @@ internal static class StaticProps
         if (props.Count > 0 || skipped.Count > 0)
             notes.Add($"prop_static: {props.Count} with no world collision placed from the render (origin within the render's 1/32 weld, " +
                       $"not bit for bit), {covered.Count(c => c)} draw triangles theirs; not found: {string.Join(" ", skipped)}; " +
-                      string.Join("; ", props.Select(x => $"{x.Model} at {x.Origin} yaw {x.Angles.Y}")));
+                      string.Join("; ", props.Take(40).Select(x => $"{x.Model} at {x.Origin} angles {x.Angles}")));
         return (props, covered);
     }
 
@@ -594,7 +835,7 @@ internal static class StaticProps
 
     // A least-squares 3x4 matrix taking the model hull's vertices to the shipped ones (row-major), when
     // its 3x3 part is a rotation (columns of length 1 within 1e-3) and every vertex lands within 1/100.
-    private static float[]? Fit(Vector3[] from, Vector3[] to)
+    private static float[]? Fit(Vector3[] from, Vector3[] to, double tolerance = 0.01, double rotationTolerance = 1e-3)
     {
         var n = from.Length;
         if (n < 4)
@@ -628,14 +869,14 @@ internal static class StaticProps
                 for (var k = 0; k < 3; k++)
                     a[r, c] += tf[r, k] * inv[k, c];
         for (var c = 0; c < 3; c++)
-            if (Math.Abs(Math.Sqrt((a[0, c] * a[0, c]) + (a[1, c] * a[1, c]) + (a[2, c] * a[2, c])) - 1) > 1e-3)
+            if (Math.Abs(Math.Sqrt((a[0, c] * a[0, c]) + (a[1, c] * a[1, c]) + (a[2, c] * a[2, c])) - 1) > rotationTolerance)
                 return null;
         var tr = new double[3];
         for (var r = 0; r < 3; r++)
             tr[r] = ct[r] - ((a[r, 0] * cf[0]) + (a[r, 1] * cf[1]) + (a[r, 2] * cf[2]));
         for (var i = 0; i < n; i++)
             for (var r = 0; r < 3; r++)
-                if (Math.Abs((a[r, 0] * from[i].X) + (a[r, 1] * from[i].Y) + (a[r, 2] * from[i].Z) + tr[r] - to[i][r]) > 0.01)
+                if (Math.Abs((a[r, 0] * from[i].X) + (a[r, 1] * from[i].Y) + (a[r, 2] * from[i].Z) + tr[r] - to[i][r]) > tolerance)
                     return null;
         return [(float)a[0, 0], (float)a[0, 1], (float)a[0, 2], (float)tr[0],
                 (float)a[1, 0], (float)a[1, 1], (float)a[1, 2], (float)tr[1],

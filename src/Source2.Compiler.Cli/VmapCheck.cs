@@ -46,6 +46,11 @@ internal static class VmapCheck
                 Console.WriteLine($"  {n,8:n0} x {rule}   (e.g. {examples[rule]})");
             if (counts.Count == 0)
                 Console.WriteLine("  every mesh keeps every rule");
+            // --materials: world triangles per material (each face's corners - 2).
+            if (a.Contains("--materials"))
+                foreach (var g in Maps.MapMeshes.Read(doc).Where(m => m.ParentClass is null or "worldspawn")
+                             .SelectMany(m => m.Faces).GroupBy(f => Path.GetFileNameWithoutExtension(f.Material)).OrderByDescending(g => g.Sum(f => f.Corners.Length - 2)))
+                    Console.WriteLine($"  {g.Sum(f => f.Corners.Length - 2),8} triangles {g.Key}");
             bad += counts.Count;
         }
         return bad == 0 ? 0 : 1;

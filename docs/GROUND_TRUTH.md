@@ -6963,6 +6963,40 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Sakura's world: 1,135 meshes, 15,210 faces, every half-edge rule kept. ze_hold_em_p's world decompile and the
        19 probe decompiles byte for byte unchanged.
 
+281. **World props from the world nodes' transforms; draw faces as polygons; one material per member** (2026-11-15;
+     s2c vmap-world-compare against the sources of probe01, atixref and ze_hold_em_p; the hold em blend session's
+     WORLDPHYS_PIECE_TRIS truth for the material split; CS2 open, offline):
+     - s2c vmap-world-compare (new) maps each decompiled world face to the source face its centroid lies on.
+       Before this entry: probe01 136 of 146 faces equal a source face, its 18 source meshes back as 4; atixref 6,876
+       source faces split into 31,349 of ours and 58,902 of ours on no source face.
+     - atixref's world node lists its props with their transforms: 194 scene objects (model + m_vTransform, rows of
+       four) and 4,463 aggregate fragments with m_fragmentTransforms (flat twelve), whose draws are stored in the
+       model's space. ze_hold_em_p's lists none (its props are baked; the hull search places them). The render reader
+       read those fragment draws as world positions. Now RenderTriangles leaves them out (TransformedDraws), and
+       StaticProps.SceneProps places them: a scene object's model is named; a fragment group (one transform) takes
+       the .vmap_c model whose LOD 0 render vertices of the same material hold 99% of its draw corners. Origin and
+       scales read from the matrix (PropMatrix: angle matrix, origin as translation, columns times scales), the
+       angles searched in float steps about MatrixAngles until the matrix returns bit for bit: atixref 3,598 props,
+       2,122 bit for bit, 1,476 at the nearest angles found, 432 fragment groups matching no model.
+     - Render-only meshes come back as faces: draw triangles sharing an edge merge when coplanar, of one material,
+       with the same texcoords at both shared corners, and PolygonTriangulator cuts the merged loop back into exactly
+       those triangles (WorldGeometry.DrawFaces). atixref: 6,876 -> 1,016 source faces split, 2,386 -> 3,571 of our
+       faces equal a source face; sakura's 6,393 render-only triangles -> 2,876 faces. Soup faces keep the quad cap:
+       uncapped merging on probe01 dropped equal faces 136 -> 125 (merges across source faces).
+     - A package without world_physics.vmdl_c (atixref's fixture) writes render-only meshes with default physics:
+       no collision under a draw says nothing there.
+     - Material pass: a soup triangle takes the material of the coplanar draw triangle holding its centroid
+       (DrawMaterialAt; it agrees with the corner pick on all 4,534 drawn ze_hold_em_p triangles); a triangle no draw
+       holds (14 on ze) goes to the surface/edge-neighbour pass. WorldGeometry.Members keeps a member to one material:
+       triangles a vertex introduces under another material's lead join the latest member of their own material that
+       shares a vertex, else form their own. ze_hold_em_p: concrete_9 18 -> 16, hr_conc_i_tintdark 48 -> 50, the
+       counts the blend session measured on Valve's source (its two hr triangles at y 398, soup 4544 and 4545).
+     - Checked: the 19 probe decompiles byte for byte unchanged; sakura's world copy 1,105 meshes, every half-edge
+       rule kept, 52 s on two idle cores; atixref 44 s.
+     - Open: atixref's skybox geometry (z near 14,200) comes from a map the source references, so vmap-world-compare
+       counts it on no source face (the tool reads one .vmap); 1,476 props at the nearest angles; 432 fragment groups;
+       source mesh identity (probe01 18 -> 4: touching meshes weld in the physics, and draws merge meshes by material).
+
 290. **A painted subdivided world mesh's physics is its flat bake; the render keeps its paint truncated to 8 bits**
      (2026-11-15, research/vmap-decompile, ze_hold_em_p node 409; offline, our forward on the true source, which is
      exact against Valve's package: world_physics PHYS 0, RED2 0).

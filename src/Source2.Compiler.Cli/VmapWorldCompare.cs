@@ -65,6 +65,19 @@ internal static class VmapWorldCompare
                 ourFaceSource.Add((mi, s));
             }
         var matched = ourFaceSource.Where(x => x.SourceFace >= 0).ToList();
+        if (verbose)
+        {
+            var unmatchedFaces = new List<MapMeshes.Face>();
+            var idx = 0;
+            for (var mi = 0; mi < ours.Count; mi++)
+                foreach (var f in ours[mi].Faces)
+                    if (ourFaceSource[idx++].SourceFace < 0)
+                        unmatchedFaces.Add(f);
+            Console.WriteLine("  our faces on no source face, by material: " + string.Join(" ", unmatchedFaces.GroupBy(f => Path.GetFileNameWithoutExtension(f.Material))
+                .OrderByDescending(g => g.Count()).Take(15).Select(g => $"{g.Key}:{g.Count()}")));
+            Console.WriteLine("  e.g. " + string.Join(" | ", unmatchedFaces.Where((_, i) => i % Math.Max(1, unmatchedFaces.Count / 6) == 0).Take(6)
+                .Select(f => $"{Path.GetFileNameWithoutExtension(f.Material)} at {f.Corners.Aggregate(Vector3.Add) / f.Corners.Length}")));
+        }
         var piecesPerSourceFace = matched.GroupBy(x => x.SourceFace).ToDictionary(g => g.Key, g => g.Count());
         Console.WriteLine($"faces: {equal} of ours equal a source face; {unmatched} of ours on no source face; " +
                           $"{piecesPerSourceFace.Count} of {sourceFaces.Count} source faces reached, {piecesPerSourceFace.Count(kv => kv.Value == 1)} by one face of ours, " +

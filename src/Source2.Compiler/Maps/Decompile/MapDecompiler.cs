@@ -432,14 +432,26 @@ public static class MapDecompiler
                 var stats = StaticProps.Models(files, mapName).Select(m => (Model: m, Phys: content.Physics(m))).ToList();
                 var withMeshes = stats.Where(x => x.Phys?.Parts.Any(p => p.Shape.Meshes.Length > 0) == true).ToList();
                 notes.Add($"world debug: models without physics: {string.Join(" ", stats.Where(x => x.Phys is null).Select(x => $"{x.Model}:{content.RenderMeshes(x.Model).Sum(m => m.Count)}"))}");
+                foreach (var (nodePath, nodeBytes) in files.Where(f => f.Key.StartsWith($"maps/{mapName}/worldnodes/", StringComparison.Ordinal) && f.Key.EndsWith(".vwnod_c", StringComparison.Ordinal)))
+                {
+                    using var nodeResource = new ValveResourceFormat.Resource();
+                    nodeResource.Read(new MemoryStream(nodeBytes));
+                    if (nodeResource.DataBlock is not ValveResourceFormat.ResourceTypes.WorldNode node)
+                        continue;
+                    var objects = node.Data.GetArray("m_sceneObjects") ?? [];
+                    var aggregates = node.Data.GetArray("m_aggregateSceneObjects") ?? [];
+                    notes.Add($"world debug: {nodePath}: {objects.Count} scene objects ({string.Join(" ", objects.GroupBy(o => Path.GetFileNameWithoutExtension(o.GetStringProperty("m_renderableModel") ?? "")).OrderByDescending(g => g.Count()).Take(8).Select(g => $"{g.Key}x{g.Count()}"))}), " +
+                              $"{aggregates.Count} aggregates, {aggregates.Sum(x => (x.GetArray("m_fragmentTransforms") ?? []).Count)} fragment transforms");
+                }
                 notes.Add($"world debug: the .vmap_c names {stats.Count} models, {stats.Count(x => x.Phys is null)} without physics, {withMeshes.Count} with mesh shapes " +
                           $"({withMeshes.Sum(x => x.Phys!.Parts.Sum(p => p.Shape.Meshes.Sum(m => m.Shape.GetTriangles().Length)))} triangles once each); " +
                           $"e.g. {string.Join(" ", withMeshes.Take(8).Select(x => $"{x.Model}:{x.Phys!.Parts.Sum(p => p.Shape.Meshes.Sum(m => m.Shape.GetTriangles().Length))}"))}");
                 // The soup's vertices, and each such model's mesh points placed at the origin unturned.
                 var soupPoints = new HashSet<Vector3>();
                 using (var wp = new ValveResourceFormat.Resource())
+                if (files.TryGetValue($"maps/{mapName}/world_physics.vmdl_c", out var worldPhysicsBytes))
                 {
-                    wp.Read(new MemoryStream(files[$"maps/{mapName}/world_physics.vmdl_c"]));
+                    wp.Read(new MemoryStream(worldPhysicsBytes));
                     if (wp.GetBlockByType(ValveResourceFormat.BlockType.PHYS) is ValveResourceFormat.ResourceTypes.PhysAggregateData wphys)
                         foreach (var part in wphys.Parts)
                             foreach (var m in part.Shape.Meshes)
@@ -526,8 +538,13 @@ public static class MapDecompiler
         // then the rest as world meshes with no physics.
         if (Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" && content is not null)
         {
-            var drawnOnly = DrawnWithoutCollision(files, mapName, [.. props, .. meshProps], content);
-            var placedModels = props.Concat(meshProps).Select(x => x.Model).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // Props the world nodes keep with their transforms first: their placement is in the package as is.
+            var (sceneProps, _, _) = StaticProps.SceneProps(files, mapName, content.RenderMeshes, notes);
+            foreach (var prop in sceneProps)
+                main.Builder!.AddEntity(main.NewId!(), [new("classname", "prop_static"), new("model", prop.Model)],
+                                        prop.Origin, prop.Angles, prop.Scales, []);
+            var drawnOnly = DrawnWithoutCollision(files, mapName, [.. props, .. meshProps, .. sceneProps], content);
+            var placedModels = props.Concat(meshProps).Concat(sceneProps).Select(x => x.Model).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var (renderProps, covered) = StaticProps.FindRenderProps(drawnOnly,
                 StaticProps.Models(files, mapName).Where(m => content.Physics(m) is null || !placedModels.Contains(m)), content.RenderMeshes, notes);
             foreach (var prop in renderProps)
@@ -535,14 +552,18 @@ public static class MapDecompiler
                                         prop.Origin, prop.Angles, Vector3.One, []);
             var rest = drawnOnly.Where((_, i) => !covered[i]).ToList();
             var renderOnly = WorldGeometry.RenderOnlyMeshes(rest);
+            // No collision under a draw is evidence of no collision only where the package has the world's physics
+            // (a build without world_physics.vmdl_c, atixref's fixture, has none for anything).
+            var hasWorldPhysics = files.ContainsKey($"maps/{mapName}/world_physics.vmdl_c");
             foreach (var mesh in renderOnly)
                 foreach (var part in HalfEdgeParts(mesh.Faces.Select(f => f.Corners).ToList(), out _))
                     main.Builder!.AddMesh(main.Builder!.World, main.NewId!(), Vector3.Zero, Vector3.Zero,
                                           [.. part.Select(i => (mesh.Faces[i].Corners, mesh.Faces[i].Material))], mesh.Materials,
-                                          cornerTexcoords: [.. part.Select(i => mesh.Faces[i].Texcoords)], physicsType: "none");
+                                          cornerTexcoords: [.. part.Select(i => mesh.Faces[i].Texcoords)], physicsType: hasWorldPhysics ? "none" : "default");
             if (rest.Count > 0)
                 notes.Add($"world: {rest.Count} draw triangles with no collision under them and no prop's render rebuilt as {renderOnly.Count} " +
-                          "mesh(es) with no physics (corners at the render's 1/32 weld, materials and texcoords as drawn)");
+                          $"mesh(es) of {renderOnly.Sum(m => m.Faces.Count)} faces, {(hasWorldPhysics ? "with no physics" : "the package has no world physics")} " +
+                          "(corners at the render's 1/32 weld, materials and texcoords as drawn)");
         }
         if (splitMeshes > 0 || droppedFaces > 0)
             notes.Add($"world: {splitMeshes} mesh(es) split into {extraParts} more where a directed edge would carry two faces " +
