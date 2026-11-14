@@ -136,6 +136,13 @@ public static partial class EntityLumpAuthor
             if (className.EqualsAscii("info_world_layer") && key.EqualsAscii("layername")
                 && text.StartsWith("world_layer_", StringComparison.Ordinal))
                 text = text["world_layer_".Length..];
+            // Its worldname (and worldspawn's) is the map's, which BuildEntity appends; where the table holds it (ze_purification_a1,
+            // ze_sky_bridge_a01_skybox) it is that one, not a key of the source.
+            if ((className.EqualsAscii("info_world_layer") || isWorld) && key.EqualsAscii("worldname"))
+            {
+                dropped.Add("worldname (the compile's)");
+                continue;
+            }
             sourceKeys.Add(new(key, text));
         }
 
@@ -189,6 +196,13 @@ public static partial class EntityLumpAuthor
             var notes = new List<string>();
             if (UnbuildPath(entity, keys, schema, notes) is { } path)
             {
+                // An older lump writes the folded keys inside the table, before origin (ze_boatescape101_p's
+                // path_particle_rope_clientside 588: pathNodes and pathNodeRadiusScales ahead of origin), so the
+                // table read them as the path's own keys too; the forward writes them from the nodes (PathKeys),
+                // so they leave the key table.
+                var folded = new HashSet<string>(PathKeys(path, schema).Select(k => k.Key), Tier0Strings.IgnoreCase);
+                if (path.Keys.Any(k => folded.Contains(k.Key)))
+                    path = path with { Keys = [.. path.Keys.Where(k => !folded.Contains(k.Key))] };
                 entity = path;
                 if (cable)
                 {
