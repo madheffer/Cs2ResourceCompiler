@@ -6860,3 +6860,22 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Open, found on the way: ze_sky_bridge_a01_fix3's 150 instance copies come back under other ids (the
        decompile's one mesh per hull takes node ids past the copies' block, 247); a hull's meshes would have to
        share a node.
+
+277. **A prefab's frame search: its landings budget; the addon's materials** (2026-11-14; ze_minecraft_sakura from the
+     workshop pool, DECOMPILE_PROFILE=1, the SolveFrame.found counter):
+     - ze_minecraft_sakura took 2 min 13 s, 118 s of it FrameSolver: prefab 48128's four placements tried the
+       whole 2M frames (1.54G landings) and none lands. The prefab solve had no landings budget (InstancePlan's has
+       50M). Every prefab frame solved on the probe maps (s2c_prefabprobe9, 11, 12, s2c_varprobe) and on sakura
+       (4882, 4895) was the first frame tried, 7 of 7, and the budget is read between frames, so a first frame's
+       own landings (prefabprobe9's: under 1e8) are never cut: the prefab solve now takes the same 50M. Sakura 18 s.
+       Checked: sakura's .vmap and the .vmap + prefab maps of 19 probe maps (s2c_prefabprobe 1-12, prefabinst,
+       prefabslot, pinst, pinst7, pinstbrush, varprobe, atixref, ze_hold_em_p) byte for byte before and after.
+     - decompile-map --addon <addon _dir.vpk or game folder> adds the addon's .vmat_c names to the material table,
+       as decompile-sweep does: without it at least 110 of sakura's brush hulls (the 6 entities its output's tail listed) had "material hash
+       no known material has"; with it, none.
+     - Measured, not changed: s2c_prefabprobe4 takes 104 s, 88 s of it InstancePlan's frames, each solved one on its
+       first or second frame but with up to 320M landings in that frame (group 708): the preimage walk per frame is
+       the cost, not the frame count.
+     - Open, found on the way: sakura's func_button 53035 "drawn hull 1 does not pair with render piece 1 in order"
+       (deepslate_diamond_ore, 0 of 10 hull points on the piece); func_breakable 42379 and others' hull vertex order
+       and corners (same points, other order); its .nav is not version 36.

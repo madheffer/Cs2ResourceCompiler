@@ -2337,7 +2337,11 @@ public static class MapDecompiler
         var placed = placements.Select((p, k) =>
             nodes.Select(e => p.Entities.First(x => Inner(x) == Inner(e)).Entity)
                  .Select(x => (x.Origin, x.Angles)).ToArray()).ToList();
-        var solution = FrameSolver.Solve(placed, 32768, 2_000_000, out var why);
+        // 50M landings, as InstancePlan's: every prefab frame solved on the probe maps and
+        // ze_minecraft_sakura was the first frame tried (7 of 7, 11-14), and the budget is read between
+        // frames, so a first frame's own landings are never cut. Sakura's prefab 48128 tried 2M frames
+        // (1.5G landings, most of the decompile's time) without one.
+        var solution = FrameSolver.Solve(placed, 32768, 2_000_000, out var why, workBudget: 50_000_000);
         if (solution is null)
         {
             notes.Add($"prefab {first.Chain}: no exact frame for its {placements.Count} placements ({why}); later placements solved from the first");
@@ -2346,6 +2350,7 @@ public static class MapDecompiler
             return;
         }
         notes.Add($"prefab {first.Chain}: frame solved for {placements.Count} placements, its prefab at {solution.FirstOrigin} ({solution.Tried:n0} frames tried)");
+        DecompileProfile.Count($"SolveFrame.found work{DecompileProfile.Decade(solution.Work)} tried{DecompileProfile.Decade(solution.Tried)}");
         first.Placement = (solution.FirstOrigin, Vector3.Zero);
         for (var k = 1; k < placements.Count; k++)
             placements[k].Placement = solution.Later[k];

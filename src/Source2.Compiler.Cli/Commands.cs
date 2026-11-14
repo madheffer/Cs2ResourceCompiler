@@ -728,8 +728,16 @@ internal static class Commands
         var map = Maps.Decompile.MapDecompiler.MapNameOf(files);
         // The game's models, for the prop_statics in the world's hulls.
         var gameContent = new Maps.GameContent(Path.Combine(game, "csgo", "pak01_dir.vpk"));
-        var result = Maps.Decompile.MapDecompiler.Decompile(files, map, schema, Maps.Decompile.BrushGeometry.GameMaterials(game), gameContent);
+        // Brush hulls name their material by hash: the game's materials, and with --addon (the addon's
+        // _dir.vpk or its game folder) the addon's own, as the sweep reads them.
+        var materialNames = Maps.Decompile.BrushGeometry.GameMaterialNames(game);
+        if (Opt(a, "--addon") is { } addon)
+            materialNames.AddRange(AddonMaterialNames(addon));
+        var result = Maps.Decompile.MapDecompiler.Decompile(files, map, schema, Maps.Decompile.BrushGeometry.MaterialTable(materialNames), gameContent);
         File.WriteAllBytes(outPath, result.Vmap);
+        if (Maps.Decompile.DecompileProfile.On)
+            foreach (var line in Maps.Decompile.DecompileProfile.Take())
+                Console.WriteLine("  " + line);
 
         Console.WriteLine($"{map}: {result.Entities.Count:n0} entities, {result.Placeholders:n0} placeholders");
         Console.WriteLine($"  wrote {outPath}  ({result.Vmap.Length:n0} bytes)");
@@ -880,6 +888,17 @@ internal static class Commands
         "rgba" or "none" => ResourceBuilder.TextureCompression.None,
         _ => throw new ArgumentException($"unknown --format '{f}' (bc7|bc5|bc4|bc3|bc1|rgba)"),
     };
+
+    /// <summary>An addon's .vmat_c paths (materials/x.vmat_c), from its _dir.vpk or its game folder.</summary>
+    private static List<string> AddonMaterialNames(string addon)
+    {
+        if (Directory.Exists(addon))
+            return Directory.EnumerateFiles(addon, "*.vmat_c", SearchOption.AllDirectories)
+                            .Select(f => Path.GetRelativePath(addon, f).Replace('\\', '/')).ToList();
+        using var package = new ValvePak.Package();
+        package.Read(addon);
+        return (package.Entries.GetValueOrDefault("vmat_c") ?? []).Select(e => e.GetFullPath()).ToList();
+    }
 
     private static string Positional(string[] a, string what)
         => a.FirstOrDefault(x => !x.StartsWith('-'))
