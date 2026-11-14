@@ -67,6 +67,9 @@ public sealed record WrbMeshEntry
     public bool NoCollapse { get; init; }
     /// <summary>+0x40: the source node id.</summary>
     public int NodeId { get; init; }
+
+    /// <summary>The map node whose world layer the entry is compiled in (its own node; an overlay's, the overlay's), or -1.</summary>
+    public int LayerNode { get; init; } = -1;
     /// <summary>+0xa8: -1 for a map mesh or overlay, 0 for a prop entry (atixref's 1,018 at BuildNode's end).</summary>
     public int FieldA8 { get; init; } = -1;
     /// <summary>

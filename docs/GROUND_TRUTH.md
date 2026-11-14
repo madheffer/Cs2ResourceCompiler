@@ -6699,3 +6699,32 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        static props' hull counts are not changed.
      - Result: ze_doom_p2 -world 538 of 539 files Valve's (the .vwrld stamp), was 524. probe01, cardtest,
        ze_hold_em_p, atixref, ze_obj_christmas_factory and ze_obj_elf_penis_factory unchanged.
+
+295. **World layers in the world node** (2026-11-15, CS2 open: rc 0923 decompiles of FUN_18026cac0, CompileNode
+     180277ab0 around 180277d3a and its layer loop (local_f88), WRBNode_FinishLists 180275080 and
+     WRBNode_BuildPropAggregates 180272ce0, CMapWorldLayer::vf40 1811086c0; Valve's fresh -world compile of
+     ze_ffvii_mako_reactor_v6_p, %TEMP%/fresh_compile/mako_world_1115.vpk). READ + MEASURED. Closes PARITY_AUDIT
+     1.b14 ("only one layer is ported") for the split itself.
+     - FUN_18026cac0 builds the node's layer table: world_layer_base first, then each mesh entry's layer name
+       (entry +0x38) in node entry order, then each prop record's (+0x180) in the prop tree's order, then the
+       records of node +0x178 (the overlays'), each new name (V_stricmp_fast) appended while fewer than 0x40;
+       an entry with no name, or past the cap, is layer 0. CMapWorldLayer::vf40 names a node's layer
+       world_layer_<worldLayerName>.
+     - CompileNode files each list's entries per layer index, then runs the whole pass (stash of what can
+       aggregate, render clusters, the merge, each list's compile and vf 0x40) once per layer, the objects
+       named _lr<layer>. WRBNode_FinishLists (with BuildPropAggregates) also runs per layer and takes the props
+       whose record names that layer. Valve's scene objects come layer by layer (Mako: 6, 327, 110, 38, 50).
+     - Measured on Mako: the name counters run on across layers (nomerge0-3 in lr0, nomerge6 on in lr1,
+       nomerge100 in lr2; blocklight68 in lr3, 69 in lr4; agg suffixes such as abyss_0 in lr2, abyss_1 in lr3)
+       while cluster numbering restarts (c0 in every layer).
+     - Ported: MapMeshes carries each node's layer (nearest CMapWorldLayer on the walk; an instance copy the
+       placing instance's), WorldNodeFiles.WorldLayerOfNodes / the layer table, WorldNodeCompile.CompileLayers
+       (shared counters, per-layer boxes), prop aggregates and standalone props per layer (NodePropAggregates
+       inLayer), m_layerNames and m_sceneObjectLayerIndices.
+     - Result: Mako -world against Valve's fresh compile: 957 of 1,782 files equal (was 604; every object was
+       _lr0), layer 0 now Valve's 6 objects. Left on Mako, separate from the split: Valve keeps more instanced
+       ("nomerge") objects apart (lr2's 14 metaltrain001c, 12 metalwall085a) and makes more agg_merge pieces than
+       ours. probe01, cardtest, ze_hold_em_p, atixref, ze_obj_christmas_factory, ze_doom_p2 and
+       ze_obj_elf_penis_factory_mat unchanged (one layer).
+     - Not read: how the entry's +0x38 is filled (the parent walk calling vf40); taken as the nearest layer,
+       which every Mako layer count but lr1-4's remaining gaps agrees with.

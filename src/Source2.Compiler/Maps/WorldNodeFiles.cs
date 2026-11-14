@@ -84,7 +84,37 @@ public static class WorldNodeFiles
                 var p = new Vector3(b.Vertices[k], b.Vertices[k + 1], b.Vertices[k + 2]);
                 (nodeMin, nodeMax) = (Vector3.Min(nodeMin, p), Vector3.Max(nodeMax, p));
             }
-        var result = WorldNodeCompile.Compile(lists, flat, mutual, nodeBounds: built.Count > 0 ? (nodeMin, nodeMax) : null, layer: WorldNodeBuild.LayerEntries(built, overlays, descriptors, content, shaders));
+        // The node's world layers (FUN_18026cac0): world_layer_base, then each entry's layer in BuildNode's
+        // order, then the props' (prop tree order), up to 64; an entry past them stays in the base layer.
+        var layerOf = WorldLayerOfNodes(document, content);
+        var layerNames = new List<string> { "world_layer_base" };
+        int LayerIndex(int nodeId) => layerOf.TryGetValue(nodeId, out var name) ? LayerByName(name) : 0;
+        int LayerByName(string name)
+        {
+            var at = layerNames.FindIndex(n => Io.Tier0Strings.EqualsIgnoreCase(n, name));
+            if (at >= 0)
+                return at;
+            if (layerNames.Count >= 0x40)
+                return 0;
+            layerNames.Add(name);
+            return layerNames.Count - 1;
+        }
+        foreach (var b in built)
+            LayerIndex(b.Source.Header.NodeId);
+        // Then the props' (the record's +0x180, the prop tree in model order), then the third list
+        // (node +0x178, 0x20 a record): the overlays'.
+        foreach (var (_, prop) in MapMeshes.ReadWithEntities(document).Entities
+                     .Where(e => !e.Hidden && e.Layer is not null && e.Element.Get<DmxBinary.Element>("entity_properties")?.Get<string>("classname") == "prop_static")
+                     .Select(e => (Model: e.Element.Get<DmxBinary.Element>("entity_properties")!.Get<string>("model") ?? "", e))
+                     .OrderBy(x => x.Model, StringComparer.Ordinal))
+            LayerByName("world_layer_" + prop.Layer);
+        foreach (var d in descriptors)
+            LayerIndex(d.NodeId);
+        var layerEntries = WorldNodeBuild.LayerEntries(built, overlays, descriptors, content, shaders);
+        var perLayer = Enumerable.Range(0, layerNames.Count).Select(l => (
+            ByKind: lists.ToDictionary(kv => kv.Key, kv => kv.Value.Where(e => LayerIndex(e.Facts.LayerNode) == l).ToList()),
+            Entries: (IReadOnlyList<WorldNodeCompile.Entry>?)layerEntries.Where(e => LayerIndex(e.Facts.LayerNode) == l).ToList())).ToList();
+        var result = WorldNodeCompile.CompileLayers(perLayer, flat, mutual, nodeBounds: built.Count > 0 ? (nodeMin, nodeMax) : null);
         notes.AddRange(result.Unported.Select(u => "world node list not ported: " + u));
 
         // The models.
@@ -106,12 +136,13 @@ public static class WorldNodeFiles
         }
         static float Boost(WrbMeshEntry f) => f.Field1a3 != 0 && (f.ObjectFlags & 0x100000) != 0 ? f.Field_b8 : 1f;
         var sceneObjects = new List<WorldNodeSceneTrees.SceneObject>();
+        var clusterObjects = new List<WorldNodeSceneTrees.SceneObject>();
         foreach (var o in result.Objects)
         {
             Write(o.Name, WorldNodeModels.Build(ModelPath(o.Name), o.Meshes, false, Material));
             var f = o.Meshes[0].Facts;
             var (cubemap, probe, boost) = o.EntryHandshakes ? (f.Cubemap, f.LightProbe, Boost(f)) : (0, 0, 1f);
-            sceneObjects.Add(new(ModelPath(o.Name), o.Flags, o.OverlayOrder, cubemap, probe, boost, o.FadeStart, o.FadeEnd)
+            clusterObjects.Add(new(ModelPath(o.Name), o.Flags, o.OverlayOrder, cubemap, probe, boost, o.FadeStart, o.FadeEnd, o.Layer)
                              { LightingOrigin = o.LightingOrigin, Transform = o.Transform });
         }
         var aggregates = new List<WorldNodeSceneTrees.Aggregate>();
@@ -132,20 +163,28 @@ public static class WorldNodeFiles
             return a;
         }
         var counters = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var standalone = new List<NodePropAggregates.StandaloneProp>();
-        foreach (var agg in NodePropAggregates.FromWorld(document, content, Attributes, new Vector2(nodeMin.X, nodeMin.Y), notes, standalone, schema))
+        var standaloneByLayer = new List<List<NodePropAggregates.StandaloneProp>>();
+        for (var layerIndex = 0; layerIndex < layerNames.Count; layerIndex++)
         {
+          var standalone = new List<NodePropAggregates.StandaloneProp>();
+          standaloneByLayer.Add(standalone);
+          var current = layerIndex;
+          bool InLayer(string? layer) => (layer is null ? 0 : LayerByName("world_layer_" + layer)) == current;
+          foreach (var agg in NodePropAggregates.FromWorld(document, content, Attributes, new Vector2(nodeMin.X, nodeMin.Y), notes, standalone, schema,
+                                                           layerNames.Count > 1 ? InLayer : null))
+          {
             var prefix = $"agg_prop_{Path.GetFileNameWithoutExtension(agg.Material.Replace('\\', '/'))}_";
             var n = counters.GetValueOrDefault(prefix);
             counters[prefix] = n + 1;
-            var name = $"n0_lr0_{prefix}{n}";
+            var name = $"n0_lr{layerIndex}_{prefix}{n}";
             Write(name, WorldNodeModels.BuildPropAggregate(ModelPath(name), agg, Material));
-            aggregates.Add(new(ModelPath(name), 0, [.. agg.Fragments.Select(f => new WorldNodeSceneTrees.AggregateMesh(f.Draw, f.AggregateFlags,
+            aggregates.Add(new(ModelPath(name), layerIndex, [.. agg.Fragments.Select(f => new WorldNodeSceneTrees.AggregateMesh(f.Draw, f.AggregateFlags,
                 EnvVolumes.ForEntry(new Vector3(float.MaxValue), "", f.Attributes, () => f.MeshBounds, volumes).Probe,
                 new Vector3(f.Tint.X, f.Tint.Y, f.Tint.Z) * 255f) { Transform = f.Matrix, LodMask = f.LodMask, LodSetup = f.LodSetup })])
             {
                 LodSetups = [.. agg.LodSetups.Select(l => new WorldNodeSceneTrees.LodSetup(l.Origin, l.MaxScale, l.SwitchDistances))],
             });
+          }
         }
 
         // The node lists its aggregates sorted by name: WRB_BuildAggregate
@@ -162,22 +201,27 @@ public static class WorldNodeFiles
         // clusters' objects, in model order, each model's list front to back as
         // WRBNode_FinishLists (180275080) walks it after the aggregates' swap-removes
         // (NodePropAggregates.LeftInLists, ledger 276).
-        foreach (var p in standalone)
+        // Per layer, as CompileNode's loop makes them: the layer's cluster objects, then its props.
+        for (var layerIndex = 0; layerIndex < layerNames.Count; layerIndex++)
         {
+          sceneObjects.AddRange(clusterObjects.Where(o => o.Layer == layerIndex));
+          foreach (var p in standaloneByLayer[layerIndex])
+          {
             var header = NodeEntryHeader.Prop(p.Keys, p.NodeId, p.Model, NodePropEntries.RecordOf(p.Keys), MaterialAttributes.Empty, placementFlags: 0, schema: schema);
             var (cubemap, probe) = p.Bounds is { } bounds
                 ? EnvVolumes.ForEntry(new Vector3(float.MaxValue), "", (1ul << 20) | (1ul << 21), () => bounds, volumes) : (0, 0);
             var lod = int.TryParse(NodeEntryHeader.PropKey(p.Keys, "lodlevel", schema), out var l) ? l : -1;
             var (objectFlags, boost) = NodeEntryHeader.StandaloneObject(p.Keys, p.Model, schema);
-            sceneObjects.Add(new(p.Model, objectFlags, 0, cubemap, probe, boost, header.FadeMin, header.FadeMax)
+            sceneObjects.Add(new(p.Model, objectFlags, 0, cubemap, probe, boost, header.FadeMin, header.FadeMax, layerIndex)
             {
                 Transform = p.Matrix, Tint = header.Tint, Skin = string.IsNullOrEmpty(p.Skin) ? "default" : p.Skin, LodOverride = lod,
             });
+          }
         }
 
         // The node's scene and manifest, the world and its manifest.
         var vwnod = $"maps/{map}/worldnodes/n0.vwnod";
-        outputs.Add(new(vwnod + "_c", Source2ContainerAuthor.AuthorKv3Tree(WorldNodeSceneTrees.Data(sceneObjects, aggregates),
+        outputs.Add(new(vwnod + "_c", Source2ContainerAuthor.AuthorKv3Tree(WorldNodeSceneTrees.Data(sceneObjects, aggregates, layerNames),
                                                                          ValveResourceFormat.Serialization.KeyValues.KV3IDLookup.Get("generic"), ".vwnod")));
         outputs.Add(new($"maps/{map}/worldnodes/n0.vrman_c", ResourceManifestAuthor.AuthorSaved([vwnod], $"maps/{map}/worldnodes/n0.vrman", addon, [Backslashed(vwnod)])));
         var vwrld = WorldTrees.Data(1024f, [new WorldTrees.Node(nodeMin, nodeMax, $"maps\\{map.Replace('/', '\\')}\\worldnodes\\n0")],
@@ -230,6 +274,32 @@ public static class WorldNodeFiles
             foreach (var p in packages)
                 p.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Each mesh and entity node's world layer entry name, world_layer_&lt;name&gt; (CMapWorldLayer::vf40, rc 1811086c0),
+    /// by the node id its entry carries (an instance copy's own id); nodes in the base layer are left out.
+    /// </summary>
+    internal static Dictionary<int, string> WorldLayerOfNodes(DmxBinary.Document document, GameContent content)
+    {
+        var (meshes, entities) = MapMeshes.ReadWithEntities(document);
+        var copyIds = NodePropEntries.CopyIds(document, content);
+        var result = new Dictionary<int, string>();
+        void Add(DmxBinary.Element? element, int nodeId, IReadOnlyList<DmxBinary.Element> through, string? layer)
+        {
+            if (layer is null || element is null)
+                return;
+            var id = through.Count == 0 ? nodeId : copyIds.GetValueOrDefault(NodePropEntries.Key(element, through.Select(t => t.GetValue<int>("nodeID") ?? -1)), -1);
+            if (id >= 0)
+                result.TryAdd(id, "world_layer_" + layer);
+        }
+        foreach (var m in meshes)
+            Add(m.Element, m.NodeId, m.Through, m.Layer);
+        foreach (var o in MapMeshes.ReadOverlays(document))
+            Add(o.Element, o.NodeId, o.Through, o.Layer);
+        foreach (var e in entities)
+            Add(e.Element, e.Element.GetValue<int>("nodeID") ?? -1, e.Through, e.Layer);
+        return result;
     }
 
     // The argument as the builder's vf 0x50 reads it (an int or a float, non-zero).

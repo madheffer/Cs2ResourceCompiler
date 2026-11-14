@@ -155,7 +155,7 @@ internal static class NodePropAggregates
     /// </summary>
     public static List<Aggregate> FromWorld(DmxBinary.Document doc, GameContent content, Func<string, MeshEntryFlags.IAttributes> attributes,
                                             Vector2 nodeMin, List<string>? notes = null, List<StandaloneProp>? standalone = null,
-                                            FgdSchema? schema = null)
+                                            FgdSchema? schema = null, Func<string?, bool>? inLayer = null)
     {
         var (_, entities) = MapMeshes.ReadWithEntities(doc);
         var copyIds = NodePropEntries.CopyIds(doc, content);
@@ -168,7 +168,8 @@ internal static class NodePropAggregates
         }
         foreach (var ent in entities)
         {
-            if (ent.Hidden)
+            // WRBNode_FinishLists (180275080) runs per world layer and takes the props whose record names it (+0x180).
+            if (ent.Hidden || (inLayer != null && !inLayer(ent.Layer)))
                 continue;
             var keys = ent.Element.Get<DmxBinary.Element>("entity_properties");
             var id = ent.Through.Count == 0 ? ent.Element.GetValue<int>("nodeID") ?? -1 : copyIds.GetValueOrDefault(NodePropEntries.Key(ent.Element, ent.Through.Select(e => e.GetValue<int>("nodeID") ?? -1)), -1);

@@ -55,7 +55,7 @@ public static class WorldNodeSceneTrees
         (1048576, "OBJECT_TYPE_HAS_EMISSIVE_GI"),
     ];
 
-    public static KVObject Data(IReadOnlyList<SceneObject> objects, IReadOnlyList<Aggregate> aggregates)
+    public static KVObject Data(IReadOnlyList<SceneObject> objects, IReadOnlyList<Aggregate> aggregates, IReadOnlyList<string>? layerNames = null)
     {
         var root = KVObject.Collection();
         var list = KVObject.Array();
@@ -140,7 +140,8 @@ public static class WorldNodeSceneTrees
                                     "m_extraVertexStreams", "m_aggregateInstanceStreams", "m_vertexAlbedoStreams", "m_vertexEmissiveStreams" })
             root.Add(key, KVObject.Array());
         var layers = KVObject.Array();
-        layers.Add(new KVObject("world_layer_base"));
+        foreach (var name in layerNames ?? ["world_layer_base"])
+            layers.Add(new KVObject(name));
         root.Add("m_layerNames", layers);
         var indices = KVObject.Array();
         foreach (var o in objects)

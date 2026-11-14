@@ -223,7 +223,7 @@ internal static class WorldNodeBuild
                 Field28 = h.Tint, Stride = stride, Streams = streams,
                 Field1a3 = h.Byte1a3, Field_b8 = h.EmissiveBoost, Field1a8 = 1f, Cubemap = envMaps[i].Cubemap, LightProbe = envMaps[i].Probe,
                 Mesh184 = 1f, Field9c = h.Field9c, Field1a1 = h.Byte1a1, Field1a0 = h.Byte1a0, Field_b0 = h.FadeMin, FadeMax = h.FadeMax, Origin = h.Origin,
-                Matrix = e.Matrix, NodeId = h.NodeId, FieldA8 = (h.ObjectFlags & 8) != 0 ? 0 : -1, SkyboxSlot = h.SkyboxSlot,
+                Matrix = e.Matrix, NodeId = h.NodeId, LayerNode = h.NodeId, FieldA8 = (h.ObjectFlags & 8) != 0 ? 0 : -1, SkyboxSlot = h.SkyboxSlot,
                 MeshStreams = Describe(e.Streams, Enumerable.Range(0, e.Streams.Count), e.PreciseTexcoords),
                 TexcoordsPast16 = WrbMeshEntry.TexcoordsPastSixteen(b.Vertices, e.Stride, e.Streams),
             }));
@@ -241,7 +241,7 @@ internal static class WorldNodeBuild
             var tinted = d.TintColor.Any(x => x != 255);
             list.Add(new MergerInput(d.Material, stride, v, wi, new WrbMeshEntry
             {
-                Attributes = flags, Material = d.Material, OverlayOrder = d.RenderOrder, ObjectFlags = kind == MeshLists.Kind.Overlay ? 0x2000u : 0u,
+                Attributes = flags, Material = d.Material, OverlayOrder = d.RenderOrder, ObjectFlags = kind == MeshLists.Kind.Overlay ? 0x2000u : 0u, LayerNode = d.NodeId,
                 DebugColor = tinted,
                 DebugColorValue = tinted ? new Vector4(d.TintColor[0] / 255f, d.TintColor[1] / 255f, d.TintColor[2] / 255f, d.TintColor[3] / 255f) : default,
                 // +0x28: the tint gamma-expanded, powf(c / 255, 2.2) in float (atixref's
@@ -269,10 +269,11 @@ internal static class WorldNodeBuild
     public static List<WorldNodeCompile.Entry> LayerEntries(IReadOnlyList<Built> built, IReadOnlyList<NodeOverlays.Projection> overlays,
                                                             IReadOnlyList<NodeOverlays.Descriptor> descriptors, GameContent content, ShaderLibrary shaders)
     {
-        static WorldNodeCompile.Entry Entry(string material, int stride, float[] vertices, int[] indices, ulong attributes, IReadOnlyList<Physics.MeshWeld.Stream> streams, int node)
+        static WorldNodeCompile.Entry Entry(string material, int stride, float[] vertices, int[] indices, ulong attributes, IReadOnlyList<Physics.MeshWeld.Stream> streams, int node,
+                                            int? layerNode = null)
             => new(material, stride, vertices, indices, new WrbMeshEntry
             {
-                Attributes = attributes, Material = material, Stride = stride, NodeId = node,
+                Attributes = attributes, Material = material, Stride = stride, NodeId = node, LayerNode = layerNode ?? node,
                 Streams = [.. streams.Select(s => new WrbMeshEntry.Stream(s.Name, 0, s.Count, 0, s.Type))],
             });
         var layer = built.Select(b => Entry(b.Source.Entry.Material, b.Source.Entry.Stride, b.Vertices, b.Indices, b.Source.Header.Attributes, b.Source.Entry.Streams, b.Source.Header.NodeId)).ToList();
@@ -283,7 +284,7 @@ internal static class WorldNodeBuild
             var flags = MeshEntryFlags.Compute(attributes, new MeshEntryFlags.Record(0, 0, 0, true, null, false)).Flags;
             var mesh = projection.Mesh;
             var (wv, wi) = Physics.MeshWeld.Weld(mesh.Vertices, mesh.Stride, [.. Enumerable.Range(0, mesh.Vertices.Length / mesh.Stride)], mesh.Streams, 1f / 32f, true);
-            layer.Add(Entry(d.Material, mesh.Stride, wv, wi, flags, mesh.Streams, 0));
+            layer.Add(Entry(d.Material, mesh.Stride, wv, wi, flags, mesh.Streams, 0, d.NodeId));
         }
         return layer;
     }

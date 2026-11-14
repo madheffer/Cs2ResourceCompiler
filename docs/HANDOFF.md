@@ -247,6 +247,9 @@ Valve's own package of the same .vmap (outputs in %TEMP%/s2c_realmaps/<map>, rec
   ze_obj_christmas_factory -world -vis: 431/432 (was 168/477).
 - Ledger 294: ModelDoc's unique node names (181f1a7e0) and hull nodes RnHullCreate refuses still counted in RED2.
   ze_doom_p2 -world (fresh Valve reference, its 10-04 package was stale): 538/539 (was 524).
+- Ledger 295: world layers (CMapWorldLayer) in the world node, layer by layer as CompileNode does. Mako -world
+  (fresh Valve reference): 957/1,782 (was 604, everything was _lr0); left there: instanced objects and agg_merge
+  splits (lr2's metaltrain001c), not the layer split.
 - Open, queued as CS2_CLOSED_QUEUE A.15: ze_shaurma_v3_b07_t5 (626/1,004; our no-vis merger joins fewer meshes
   than Valve's, so 54 extra aggregates; needs a Frida trace of Valve's merger).
 - Recipe: copy Valve's package to `<out>/csgo_addons/<addon>/maps/`, run `s2c compile-map -i <vmap> -outroot <out>

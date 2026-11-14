@@ -95,7 +95,7 @@ Folders: `Maps/MapMeshes.cs`, `MapMeshCorners.cs`, `MapGeometry.cs`, `TraceScene
 | 1.b11 | `Maps/MeshTessellation.cs:282`, `FaceArrays.cs:261`, `MeshTessellation.cs:560` | Stitched patches' paint (NaN, silent) in the settle/ray-scene tessellation; a patch frame of extreme length | map (stitched subdivision with paint) |
 | 1.b12 | `Maps/OverlayProjector.cs:200`, `:229`, `:338` | An overlay target without a tangent stream (throws); two solver fallbacks not ported (NaN / 2, silent) | map, **unclear** how often |
 | 1.b13 | `Maps/TraceScene.cs:77`, GEOMETRY.md:124-132 | RTE oriented skip boxes (ledger 27), the whole-mesh skip past 2 sqrt(3) g_flConfigMaxCoord, entry flag 0x80: none in code | map, none known (affects the .rte and so vis too) |
-| 1.b14 | `Maps/WorldNodeCompile.cs:37` | "Only one layer is ported": every object is `_lr0`. What Valve's layer index is (node +0x148?) and whether any map makes lr1+ is **unclear** | **unclear** (possibly world layers) |
+| ~~1.b14~~ (layer split ported 11-15, ledger 295) | `Maps/WorldNodeCompile.cs:37` | "Only one layer is ported": every object is `_lr0`. What Valve's layer index is (node +0x148?) and whether any map makes lr1+ is **unclear** | **unclear** (possibly world layers) |
 | 1.b15 | `Maps/WorldNodeFiles.cs:9-12`, `:170-171` | One world node `n0` only | **unclear** whether Valve ever splits a CS2 world into several nodes |
 | 1.b16 | `Maps/WorldNodeCompile.cs:181`, `:569`, `:320-322` | No boxes and no bounds; aggregates of an unexpected list; the `Unported` default | internal (all 12 list kinds are handled, so `Unported` is unreachable today) |
 | 1.b17 | HANDOFF roadmap 7 | Detail grass / clutter objects: no code | map |
