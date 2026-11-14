@@ -6837,3 +6837,26 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        reshaped. The note "vertex order no face order searched gives" is the wrong name for this one.
      - Tried and taken out: the mesh re-pivoted at the box's centre (the source's pivot) with its corners
        fitted again: the points land, the centroid does not.
+
+276. **Older lumps' path keys and worldname; the decompile's time** (2026-11-14; the 11-13 workshop sweep's
+     round trip, then one-map runs; DECOMPILE_PROFILE=1 and dotnet-trace for the time):
+     - An older lump writes a path's folded keys (pathNodes, pathNodeRadiusScales) inside the key table, ahead
+       of origin (ze_boatescape101_p's path_particle_rope_clientside 588), so the inverse kept them as keys and
+       the forward wrote them again from the nodes: 41 maps' round trips stopped on the duplicate. Once the path
+       is rebuilt, the keys PathKeys writes leave the table. The worldname of info_world_layer and worldspawn is
+       the map's, which BuildEntity appends: where the table holds it (ze_purification_a1, ze_sky_bridge_a01_skybox)
+       it is dropped. ze_boatescape101_p and ze_purification_a1 round-trip again (245 and 1579 alike).
+     - Time: ze_purification_a1 never finished (over 40 minutes): every sample was BrushRender.FitDensity's two at
+       a time stage, whose bisections grow with the square of a piece's packed values. On the probe maps its one
+       success came within its first 1000 bisections, so it stops at 4000 (DECOMPILE_DENSITY_PAIRS). HullOrder
+       ran 3000 shuffles for each hull it could not order (purification: 667 hulls, 368 s); every order found on
+       the probes, purification and ze_sky_bridge_a01_fix3 came within 300, so 300 (DECOMPILE_HULL_BUDGET).
+       Brush entities are solved ahead on half the cores (PlanBrushGeometry), added in walk order after, and
+       CornerFor's walk reads per-axis tables when neither move turns (both are a plain add per axis then).
+       Checked: the decompile's .vmap, prefab maps and notes byte for byte with planning off (DECOMPILE_NO_PLAN=1:
+       ze_hold_em_p, probe_classes, atixref, s2c_prefabprobe2 and 9) and with the full corner walk
+       (DECOMPILE_SLOW_CORNERS=1: purification, atixref, probe_classes), and CornerForTests (600 seeded corners).
+       ze_purification_a1 now 49 s, atixref 35 s (19 of them FrameSolver's real searches), the probes 1-2 s.
+     - Open, found on the way: ze_sky_bridge_a01_fix3's 150 instance copies come back under other ids (the
+       decompile's one mesh per hull takes node ids past the copies' block, 247); a hull's meshes would have to
+       share a node.

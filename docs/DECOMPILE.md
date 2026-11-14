@@ -1354,6 +1354,9 @@ parentname...), differ, missing. "%f" strings compare with what our float prints
   toolsskip cube with physics none, noted; missing 0, 229 of 383 alike. The forward's rule for which
   children keep a brush entity is now RC's (ledger 269): any visible child, a point entity too, but not a
   face-less mesh, and an entity with only face-less meshes is not in the walk (takes no number).
+- 11-14: the sweep's 43 forward stops (older lumps' path keys in the table, the compile's worldname) fixed; the
+  decompile's time brought down from hours to under a minute on the slowest map known (ze_purification_a1 49 s,
+  atixref 35 s) with byte-identical output (ledger 276). DECOMPILE_PROFILE=1 times each stage.
 ## Ground truth for the decompiler
 
 The decompiler is checked against maps whose Hammer source we have, compiled by Valve's

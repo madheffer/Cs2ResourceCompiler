@@ -76,6 +76,7 @@ internal sealed class InstancePlan
     public static InstancePlan? Build(IReadOnlyList<(EntityLumpAuthor.SourceEntity Copy, int Lump, string File)> copies,
                                       IReadOnlyList<(EntityLumpAuthor.SourceEntity Node, int Lump, string File)> walked, List<string> notes)
     {
+        using var profiled = DecompileProfile.Time("InstancePlan.Build");
         var plan = new InstancePlan();
         var bySource = copies.GroupBy(c => c.Copy.SourceId)
                              .ToDictionary(g => g.Key, g => g.OrderBy(c => c.Copy.Entity.NodeId).ToList());
@@ -403,6 +404,7 @@ internal sealed class InstancePlan
     /// </summary>
     private static bool NestedSolve(Group outer, Group inner, List<Collapse> collapses, List<string> notes)
     {
+        using var profiled = DecompileProfile.Time("InstancePlan.NestedSolve");
         var outers = collapses.Select(c => Node("CMapInstance", c.Transform.Origin, c.Transform.Angles, Node("CMapGroup", Vector3.Zero, Vector3.Zero))).ToList();
         var target = Node("CMapGroup", Vector3.Zero, Vector3.Zero);
         var instance = Node("CMapInstance", Vector3.Zero, Vector3.Zero, target);
@@ -546,6 +548,7 @@ internal sealed class InstancePlan
     /// </summary>
     private static bool NestedExact(Group outer, List<Group> inners, List<Collapse> collapses, List<string> notes)
     {
+        using var profiled = DecompileProfile.Time("InstancePlan.NestedExact");
         var outerGroup = Node("CMapGroup", Vector3.Zero, Vector3.Zero);
         foreach (var inner in inners)
         {

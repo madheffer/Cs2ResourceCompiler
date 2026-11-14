@@ -77,6 +77,7 @@ public static class BrushGeometry
     /// <summary>Read a compiled entity model.</summary>
     public static Result Read(byte[] model, IReadOnlyDictionary<uint, string> materials)
     {
+        using var profiled = DecompileProfile.Time("BrushGeometry.Read");
         using var resource = new Resource();
         resource.Read(new MemoryStream(model));
         var hasRender = resource.Blocks.Any(b => b.Type is BlockType.MDAT or BlockType.MVTX or BlockType.VBIB);

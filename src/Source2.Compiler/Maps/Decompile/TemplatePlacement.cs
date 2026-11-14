@@ -25,6 +25,7 @@ internal static class TemplatePlacement
                                                           Vector3 copyOrigin, Vector3 copyAngles,
                                                           string[]? originText = null, string[]? anglesText = null)
     {
+        using var profiled = DecompileProfile.Time("TemplatePlacement.Solve");
         var template = TemplateTransform.AngleMatrix(templateOrigin, templateAngles);
         var inverse = TemplateTransform.Invert(template);
         var guess = TemplateTransform.Concat(template, TemplateTransform.AngleMatrix(copyOrigin, copyAngles));

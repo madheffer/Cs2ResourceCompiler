@@ -384,6 +384,10 @@ internal static class BrushRender
     /// bits: one at a time across the cell, then float by float, then two at a time, each move kept when
     /// it brings the density nearer, until it is the shipped one. Null when no move in reach gets there.
     /// </summary>
+    /// <summary>The density fit's two-at-a-time bisections per piece (DECOMPILE_DENSITY_PAIRS overrides).</summary>
+    private static readonly int DensityPairBudget =
+        int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_DENSITY_PAIRS"), out var pairs) && pairs > 0 ? pairs : 4000;
+
     public static Dictionary<Corner, Vector2>? FitDensity(Piece piece, Dictionary<Corner, Vector2> chosen, Func<Corner, Vector3> entityNormal)
     {
         var distinct = chosen.Keys.ToList();
@@ -521,28 +525,40 @@ internal static class BrushRender
         for (var pass = 0; pass < 3; pass++)
             for (var s = 0; s < keys.Count; s++)
                 if (Scan(s, Cell(s)) || Bisect(s))
+                {
+                    using var one = DecompileProfile.Time("FitDensity.single");
                     return Result();
+                }
         // Two at a time: one value nudged, another bisected (the density's steps on one value can
-        // skip the shipped float).
-        for (var a = 0; a < keys.Count; a++)
+        // skip the shipped float). The pairs grow with the square of the values (96 nudges of each
+        // times a bisection of every other): a piece of a few hundred values never ends (ze_purification_a1
+        // spun here for over 40 minutes), so the stage stops after DensityPairBudget bisections, past
+        // the most a fit has taken on the probe maps (one within its first 1000, atixref).
+        var pairs = 0;
+        for (var a = 0; a < keys.Count && pairs < DensityPairBudget; a++)
         {
             var keepA = values[a];
             foreach (var x in Steps(a, 16).Concat(Cell(a).Take(64)).ToList())
             {
                 values[a] = x;
-                for (var b = 0; b < keys.Count; b++)
+                for (var b = 0; b < keys.Count && pairs < DensityPairBudget; b++)
                 {
                     if (b == a)
                         continue;
                     var keepB = values[b];
+                    pairs++;
                     if (Bisect(b))
+                    {
+                        using var two = DecompileProfile.Time(pairs < 1000 ? "FitDensity.pair<1000" : pairs < 10000 ? "FitDensity.pair<10000" : "FitDensity.pair>=10000");
                         return Result();
+                    }
                     values[b] = keepB;
                 }
             }
             values[a] = keepA;
             now = Density();
         }
+        using (DecompileProfile.Time($"FitDensity.failed keys {(keys.Count < 10 ? "<10" : keys.Count < 50 ? "<50" : keys.Count < 200 ? "<200" : ">=200")}")) { }
         if (Environment.GetEnvironmentVariable("DECOMPILE_RENDER_DEBUG") == "1")
             Console.Error.WriteLine($"density fit: {piece.Name} target {target:R} reached {now:R}; " + string.Join(" ", keys.Select((k, s) => $"{(k.Item1 == 0 ? "u" : "v")}{k.Item2}={values[s]:R}")));
         return null;

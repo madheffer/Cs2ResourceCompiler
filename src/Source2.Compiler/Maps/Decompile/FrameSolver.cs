@@ -46,6 +46,7 @@ public static class FrameSolver
     public static Solution? Solve(IReadOnlyList<(Vector3 Origin, Vector3 Angles)[]> placed, int radius, long budget, out string why,
                                   int quarter = 0, long workBudget = long.MaxValue)
     {
+        using var profiled = DecompileProfile.Time("FrameSolver.Solve");
         var first = placed[0];
         var turns = new Vector3[placed.Count];
         turns[0] = new Vector3(0f, quarter * 90f, 0f);
@@ -395,6 +396,7 @@ public static class FrameSolver
     public static (Vector3 Origin, Vector3 Angles)? Locate(Solution solution, IReadOnlyList<(Vector3 Origin, Vector3 Angles)> wants,
                                                          bool copies = false, Vector3 groupAt = default, Vector3? instanceAt = null)
     {
+        using var profiled = DecompileProfile.Time("FrameSolver.Locate");
         var prefabs = solution.Later.Select(t =>
         {
             var e = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
@@ -448,6 +450,7 @@ public static class FrameSolver
     public static (Vector3 GroupAt, Vector3 InstanceAt, (Vector3 Origin, Vector3 Angles)[] Local)? LocateCopies(
         Solution solution, IReadOnlyList<IReadOnlyList<(Vector3 Origin, Vector3 Angles)>> templates, int radius, long budget, out long tried)
     {
+        using var profiled = DecompileProfile.Time("FrameSolver.LocateCopies");
         tried = 0;
         var quarter = (int)MathF.Round(solution.Later[0].Angles.Y / 90f) & 3;
         var w = templates[0][0].Origin;

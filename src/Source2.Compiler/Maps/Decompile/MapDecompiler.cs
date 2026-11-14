@@ -86,9 +86,12 @@ public static class MapDecompiler
                                     IReadOnlyDictionary<uint, string>? materials, Retry? retry,
                                     GameContent? content)
     {
+        using var profiled = DecompileProfile.Time("Decompile");
         var notes = new List<string>();
         // Each written entity's node by its id path (Unsettle moves a falling prop's start).
         var nodeOf = new Dictionary<string, DmxBinary.Element>(StringComparer.Ordinal);
+        // Brush plans solved ahead (PlanAll), by the source entity they are for.
+        var planned = new System.Collections.Concurrent.ConcurrentDictionary<EntityLumpAuthor.SourceEntity, BrushPlan>(ReferenceEqualityComparer.Instance);
         var lumps = files.Where(f => f.Key.EndsWith(".vents_c", StringComparison.OrdinalIgnoreCase)
                                      && f.Key.StartsWith($"maps/{mapName}/", StringComparison.OrdinalIgnoreCase))
                          .OrderBy(f => f.Key, StringComparer.Ordinal).ToList();
@@ -363,6 +366,24 @@ public static class MapDecompiler
             written[0].FileName = Path.GetFileNameWithoutExtension(recorded[0]);
         else if (recorded.Count > 0)
             notes.Add($"prefab maps: the compile read {string.Join(", ", recorded)}; {written.Count} written under their chains (which placement used which file is not in the package)");
+        // Every brush entity the scopes write, solved ahead on several threads (each is independent of the
+        // map being written); Emit adds them in order, so ids and notes are what a sequential run gives.
+            // A scope's prefab chain as Emit builds it: its parents' and its own placement (AddPrefab).
+            IReadOnlyList<DmxBinary.Element> PrefabNodesOf(Scope sc)
+            {
+                if (sc.Parent is null)
+                    return [];
+                var node = DmxBinary.NewElement("CMapPrefab", "", Guid.Empty);
+                node.Attributes["origin"] = sc.Placement.Origin;
+                node.Attributes["angles"] = sc.Placement.Angles;
+                return [.. PrefabNodesOf(sc.Parent), node];
+            }
+            // DECOMPILE_NO_PLAN=1: nothing ahead, each entity solved where Emit reaches it (the sequential path).
+            var work = Environment.GetEnvironmentVariable("DECOMPILE_NO_PLAN") == "1" ? [] : scopes.Values.Where(sc => sc.SameAs is null)
+                .SelectMany(sc => sc.Entities.Where(x => x.BrushModel is not null && x.Entity.PathNodes is null).Select(x => (Entity: x, Chain: PrefabNodesOf(sc))))
+                .ToList();
+            System.Threading.Tasks.Parallel.ForEach(work, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2) },
+                w => planned[w.Entity] = PlanBrushGeometry(w.Entity, w.Entity.BrushModel!, files, table, schema?.IsCableClass(w.Entity.Entity.ClassName) == true, w.Chain));
         Emit(main);
         // The map's nav settings from the .nav's generation parameters (NavSettings): a CMapNavData, unless
         // the nav is the fixed empty one a map with no CMapNavData and no walkable seed gets. A made-up id,
@@ -718,7 +739,7 @@ public static class MapDecompiler
                     VmapBuilder.Bind(entityNode, v.Key, v.Variable);
                 if (e.BrushModel is { } model)
                     AddBrushGeometry(builder, entityNode, e, model, files, table, notes, NewId, schema?.IsCableClass(x.ClassName) == true,
-                                     scope.PrefabChain);
+                                     scope.PrefabChain, planned.GetValueOrDefault(e));
                 at = Math.Max(at, e.SourceId + 1);
             }
             RuntimeUpTo(int.MaxValue);
@@ -950,6 +971,7 @@ public static class MapDecompiler
                                  IReadOnlyList<EntityLumpAuthor.SourceEntity> entities, Dictionary<string, DmxBinary.Element> nodeOf,
                                  List<string> notes)
     {
+        using var profiled = DecompileProfile.Time("Unsettle");
         Dictionary<string, SettleWorld.Settlement>? Settle()
         {
             var docs = scopes.Where(sc => sc.Parent is not null && sc.Builder is not null)
@@ -1026,8 +1048,30 @@ public static class MapDecompiler
     private static void AddBrushGeometry(VmapBuilder builder, DmxBinary.Element node, EntityLumpAuthor.SourceEntity e, string model,
                                          IReadOnlyDictionary<string, byte[]> files, IReadOnlyDictionary<uint, string> table,
                                          List<string> notes, Func<int> newId, bool cable = false,
-                                         IReadOnlyList<DmxBinary.Element>? prefabs = null)
+                                         IReadOnlyList<DmxBinary.Element>? prefabs = null, BrushPlan? planned = null)
     {
+        // The plan solved ahead (in parallel, PlanAll) or now; its meshes take their ids here, in order.
+        var plan = planned ?? PlanBrushGeometry(e, model, files, table, cable, prefabs);
+        foreach (var mesh in plan.Meshes)
+            mesh(builder, node, newId());
+        notes.AddRange(plan.Notes);
+    }
+
+    /// <summary>A brush entity's meshes (each added under the entity with the next node id, in order) and notes.</summary>
+    internal sealed record BrushPlan(List<Action<VmapBuilder, DmxBinary.Element, int>> Meshes, List<string> Notes);
+
+    /// <summary>
+    /// The geometry of a brush entity, solved without touching the map being written (so it can run on
+    /// another thread): what <see cref="AddBrushGeometry"/> adds.
+    /// </summary>
+    private static BrushPlan PlanBrushGeometry(EntityLumpAuthor.SourceEntity e, string model,
+                                               IReadOnlyDictionary<string, byte[]> files, IReadOnlyDictionary<uint, string> table,
+                                               bool cable, IReadOnlyList<DmxBinary.Element>? prefabs)
+    {
+        using var profiled = DecompileProfile.Time("AddBrushGeometry");
+        var meshes = new List<Action<VmapBuilder, DmxBinary.Element, int>>();
+        var notes = new List<string>();
+        var plan = new BrushPlan(meshes, notes);
         var label = $"{e.Entity.ClassName} {e.IdPath}";
         // Inside a prefab's map the forward places the mesh and the entity by the prefabs (EntityPhysicsModels'
         // transformOf: SettleWorld.PrefabPlacement, then a CTransform of that), so the corners are fitted and
@@ -1053,7 +1097,7 @@ public static class MapDecompiler
         if (!files.TryGetValue(model + "_c", out var bytes))
         {
             notes.Add($"{label}: its model {model} is not in the package (the compile failed it); no geometry");
-            return;
+            return plan;
         }
         var geometry = BrushGeometry.Read(bytes, table);
         // The mesh node stands at the entity's origin, unturned, as Hammer leaves a mesh drawn
@@ -1137,8 +1181,8 @@ public static class MapDecompiler
             ? RenderMeshes(input, bytes, e, entityNode, Fit, toWorld, toEntity, fromEntity, label, notes, leading)
             : [];
         foreach (var m in leading)
-            builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero, m.Faces, m.Materials,
-                            cornerTexcoords: m.Texcoords, cornerNormals: m.Normals, cornerTints: m.Tints, physicsType: m.PhysicsType);
+            meshes.Add((b, n, id) => b.AddMesh(n, id, e.Entity.Origin, Vector3.Zero, m.Faces, m.Materials,
+                            cornerTexcoords: m.Texcoords, cornerNormals: m.Normals, cornerTints: m.Tints, physicsType: m.PhysicsType));
         for (var k = 0; k < input.Length; k++)
         {
             var piece = input[k];
@@ -1146,8 +1190,8 @@ public static class MapDecompiler
             {
                 if (mesh.Hulls[0] == k)
                     foreach (var m in mesh.Before.Append(mesh).Concat(mesh.After))
-                        builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero, m.Faces, m.Materials,
-                                        cornerTexcoords: m.Texcoords, cornerNormals: m.Normals, cornerTints: m.Tints, physicsType: m.PhysicsType);
+                        meshes.Add((b, n, id) => b.AddMesh(n, id, e.Entity.Origin, Vector3.Zero, m.Faces, m.Materials,
+                                        cornerTexcoords: m.Texcoords, cornerNormals: m.Normals, cornerTints: m.Tints, physicsType: m.PhysicsType));
                 continue;
             }
             var (origin, angles) = (e.Entity.Origin, Vector3.Zero);
@@ -1181,7 +1225,7 @@ public static class MapDecompiler
             var order = HullOrder(faces, vertexOrder, piece, e.Entity, entityNode, origin, angles, HullOrderBudget, transformOf);
             if (order is null)
                 unordered++;
-            builder.AddMesh(node, newId(), origin, angles, [.. (order ?? faces).Select(f => (f, 0))], [piece.Material], vertexOrder);
+            meshes.Add((b, n, id) => b.AddMesh(n, id, origin, angles, [.. (order ?? faces).Select(f => (f, 0))], [piece.Material], vertexOrder));
         }
         if (unordered > 0)
             notes.Add($"{label}: {unordered} hull(s) whose vertex order no face order searched gives (same points, other order)");
@@ -1203,7 +1247,7 @@ public static class MapDecompiler
             {
                 var corners = soup.Vertices.Select(Fit).ToArray();
                 var faces = soup.Triangles.Select(t => ((Vector3[])[corners[t.A], corners[t.B], corners[t.C]], 0)).ToList();
-                builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero, faces, [soup.Material], corners);
+                meshes.Add((b, n, id) => b.AddMesh(n, id, e.Entity.Origin, Vector3.Zero, faces, [soup.Material], corners));
             }
             notes.Add($"{label}: {geometry.Soups.Count} triangle-mesh shape(s) rebuilt a face per triangle (the source's polygons not recovered)");
         }
@@ -1218,12 +1262,13 @@ public static class MapDecompiler
         // model, so a 16-unit cube at the entity's origin stands in.
         if (geometry.Pieces.Count == 0 && geometry.Soups.Count == 0 && !geometry.HasRender && !cable)
         {
-            builder.AddMesh(node, newId(), e.Entity.Origin, Vector3.Zero, [.. Cube(8f).Select(f => (f, 0))],
-                            [EmptyModelMaterial], physicsType: "none");
+            meshes.Add((b, n, id) => b.AddMesh(n, id, e.Entity.Origin, Vector3.Zero, [.. Cube(8f).Select(f => (f, 0))],
+                            [EmptyModelMaterial], physicsType: "none"));
             notes.Add($"{label}: its model is empty (no render, no collision); a toolsskip cube with physics none stands in (its shape not recovered)");
         }
         else if (geometry.Pieces.Count == 0 && (geometry.Soups.Count == 0 || cable))
             notes.Add($"{label}: its model has no hulls; no geometry");
+        return plan;
     }
 
     /// <summary>The material of the stand-in mesh for an empty brush model (ledger 268).</summary>
@@ -1266,6 +1311,7 @@ public static class MapDecompiler
                                                             DmxBinary.Element entityNode, Func<Vector3, Vector3> fit, float[] toWorld, float[] toEntity,
                                                             float[] fromEntity, string label, List<string> notes, List<MergedMesh> leading)
     {
+        using var profiled = DecompileProfile.Time("RenderMeshes");
         var result = new Dictionary<int, MergedMesh>();
         var render = BrushRender.Read(model);
         if (BrushRender.MeshesOf([.. render.Select(r => r.Name)]) is not { } meshes)
@@ -1801,13 +1847,17 @@ public static class MapDecompiler
     /// none lands within the budget.
     /// </summary>
     /// <summary>Tries for <see cref="HullOrder"/>'s search: 3000, or DECOMPILE_HULL_BUDGET.</summary>
+    // Measured (11-14, DECOMPILE_PROFILE): every order found on the probe maps and ze_purification_a1 is
+    // found within 100 shuffles, while a hull the build reorders by its points (ledger 275) never is, and
+    // those ran all 3000 (purification: 667 hulls, 368 s of its 478). So 300.
     private static readonly int HullOrderBudget =
-        int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_HULL_BUDGET"), out var budget) && budget > 0 ? budget : 3000;
+        int.TryParse(Environment.GetEnvironmentVariable("DECOMPILE_HULL_BUDGET"), out var budget) && budget > 0 ? budget : 300;
 
     private static Vector3[][]? HullOrder(Vector3[][] faces, Vector3[] vertexOrder, BrushGeometry.Piece piece,
                                           MapEntities.Entity entity, DmxBinary.Element entityNode, Vector3 meshOrigin, Vector3 meshAngles, int budget = 3000,
                                           Func<DmxBinary.Element, CTransform>? transformOf = null)
     {
+        using var profiled = DecompileProfile.Time("HullOrder");
         var scratch = new VmapBuilder("hullorder");
         bool Lands(Vector3[][] candidate)
         {
@@ -1820,7 +1870,10 @@ public static class MapDecompiler
                                                          && BitConverter.SingleToInt32Bits(p.First.Z) == BitConverter.SingleToInt32Bits(p.Second.Z));
         }
         if (Lands(faces))
+        {
+            using var first = DecompileProfile.Time("HullOrder.first");
             return faces;
+        }
         var random = new Random(0x5eed);
         for (var attempt = 0; attempt < budget; attempt++)
         {
@@ -1830,8 +1883,12 @@ public static class MapDecompiler
                 return f.Skip(r).Concat(f.Take(r)).ToArray();
             }).ToArray();
             if (Lands(candidate))
+            {
+                using var found = DecompileProfile.Time(attempt < 10 ? "HullOrder.found<10" : attempt < 100 ? "HullOrder.found<100" : attempt < 1000 ? "HullOrder.found<1000" : "HullOrder.found>=1000");
                 return candidate;
+            }
         }
+        using var missed = DecompileProfile.Time("HullOrder.notfound");
         return null;
     }
 
@@ -1844,6 +1901,7 @@ public static class MapDecompiler
     private static Func<Vector3, Vector3>? Nudged(BrushGeometry.Piece piece, Func<Vector3, Vector3> fit, Func<Vector3, Vector3> place,
                                                   Func<Vector3, Vector3> cornerFor, Func<Func<Vector3, Vector3>, bool> lands)
     {
+        using var profiled = DecompileProfile.Time("Nudged");
         static float Step(float f, int by)
         {
             for (; by > 0; by--) f = MathF.BitIncrement(f);
@@ -1893,6 +1951,7 @@ public static class MapDecompiler
     private static bool SamePoints(BrushGeometry.Piece piece, Func<Vector3, Vector3> fit, Vector3 origin, Vector3 angles,
                                    MapEntities.Entity entity, DmxBinary.Element entityNode, Func<DmxBinary.Element, CTransform>? transformOf = null)
     {
+        using var profiled = DecompileProfile.Time("SamePoints");
         static (int, int, int) Bits(Vector3 v) => (BitConverter.SingleToInt32Bits(v.X), BitConverter.SingleToInt32Bits(v.Y), BitConverter.SingleToInt32Bits(v.Z));
         var scratch = new VmapBuilder("samepoints");
         var mesh = scratch.AddMesh(scratch.World, 1, origin, angles, [.. piece.Faces.Select(f => (f.Select(fit).ToArray(), 0))], [piece.Material],
@@ -1906,6 +1965,7 @@ public static class MapDecompiler
     /// estimate, then the floats round it in growing shells, up to 12 a side; null when none lands.</summary>
     private static Vector3? LocalCorner(Vector3 target, Vector3 estimate, Func<Vector3, Vector3> place)
     {
+        using var profiled = DecompileProfile.Time("LocalCorner");
         static float Step(float f, int by)
         {
             for (; by > 0; by--) f = MathF.BitIncrement(f);
@@ -1934,8 +1994,13 @@ public static class MapDecompiler
     /// (its matrix is the identity and the origin), which the corner minus the origin undoes
     /// exactly. With no exact point in reach, the nearest one found.
     /// </summary>
-    internal static Vector3 CornerFor(Vector3 target, Vector3 meshOrigin, float[] toWorld, float[] toEntity, float[] fromEntity)
+    /// <summary>DECOMPILE_SLOW_CORNERS=1: CornerFor's full walk for every corner (the per-axis one's check).</summary>
+    internal static bool SlowCorners = Environment.GetEnvironmentVariable("DECOMPILE_SLOW_CORNERS") == "1";
+
+    internal static Vector3 CornerFor(Vector3 target, Vector3 meshOrigin, float[] toWorld, float[] toEntity, float[] fromEntity,
+                                      bool fastCorners = true)
     {
+        using var profiled = DecompileProfile.Time("CornerFor");
         Vector3 Place(Vector3 v) => MapMeshes.Transform(toEntity, MapMeshes.Transform(toWorld, v));
         static long Key(float f) { var i = BitConverter.SingleToInt32Bits(f); return i < 0 ? int.MinValue - (long)i : i; }
         static long Ulps(Vector3 a, Vector3 b) => Math.Abs(Key(a.X) - Key(b.X)) + Math.Abs(Key(a.Y) - Key(b.Y)) + Math.Abs(Key(a.Z) - Key(b.Z));
@@ -1986,6 +2051,59 @@ public static class MapDecompiler
                     if (Step(guess, s) is var x && x + origin == want)
                         return x;
             return null;
+        }
+        // Neither move turns (the identity in both matrices, the common case): each axis of both moves is
+        // that axis alone ((m0 x + m2 z) + (m1 y + m3) with the zeros adding only zeros), so every test the
+        // search makes is a per-axis one, worked once for each of the 33 steps of each axis, and the same
+        // walk in the same order reads them (35937 points, three lookups each, against six transforms).
+        static bool Unturned(float[] m) => m[0] == 1f && m[1] == 0f && m[2] == 0f && m[4] == 0f && m[5] == 1f && m[6] == 0f
+                                           && m[8] == 0f && m[9] == 0f && m[10] == 1f;
+        if (fastCorners && !SlowCorners && Unturned(toWorld) && Unturned(toEntity))
+        {
+            const int Reach = 16;
+            float[] W(int a) => [.. Enumerable.Range(-Reach, (2 * Reach) + 1).Select(d => Step(world[a], d))];
+            var ws = new[] { W(0), W(1), W(2) };
+            float[] tw = [toWorld[3], toWorld[7], toWorld[11]], te = [toEntity[3], toEntity[7], toEntity[11]];
+            float[] tg = [target.X, target.Y, target.Z], mo = [meshOrigin.X, meshOrigin.Y, meshOrigin.Z];
+            var hits = new bool[3][];
+            var errs = new long[3][];
+            var locals = new float[3][];
+            var goods = new float?[3][];
+            for (var a = 0; a < 3; a++)
+            {
+                hits[a] = new bool[(2 * Reach) + 1];
+                errs[a] = new long[(2 * Reach) + 1];
+                locals[a] = new float[(2 * Reach) + 1];
+                goods[a] = new float?[(2 * Reach) + 1];
+                for (var i = 0; i <= 2 * Reach; i++)
+                {
+                    var w = ws[a][i];
+                    hits[a][i] = w + te[a] == tg[a];
+                    var v = w - mo[a];
+                    locals[a][i] = v;
+                    errs[a][i] = Math.Abs(Key((v + tw[a]) + te[a]) - Key(tg[a]));
+                    if (Addend(w, mo[a]) is { } x && (x + tw[a]) + te[a] == tg[a])
+                        goods[a][i] = x;
+                }
+            }
+            for (var r = 0; r <= Reach; r++)
+                for (var dx = -r; dx <= r; dx++)
+                    for (var dy = -r; dy <= r; dy++)
+                        for (var dz = -r; dz <= r; dz++)
+                        {
+                            if (Math.Max(Math.Abs(dx), Math.Max(Math.Abs(dy), Math.Abs(dz))) != r)
+                                continue;
+                            int ix = dx + Reach, iy = dy + Reach, iz = dz + Reach;
+                            if (!(hits[0][ix] && hits[1][iy] && hits[2][iz]))
+                            {
+                                if (errs[0][ix] + errs[1][iy] + errs[2][iz] is var e0 && e0 < error)
+                                    (best, error) = (new Vector3(locals[0][ix], locals[1][iy], locals[2][iz]), e0);
+                                continue;
+                            }
+                            if (goods[0][ix] is { } gx && goods[1][iy] is { } gy && goods[2][iz] is { } gz)
+                                return new Vector3(gx, gy, gz);
+                        }
+            return best;
         }
         for (var r = 0; r <= 16; r++)
             for (var dx = -r; dx <= r; dx++)
@@ -2514,6 +2632,7 @@ public static class MapDecompiler
     /// MapInstances.Expand on the decompiled map with its prefab maps attached.</summary>
     private static List<(Scope Scope, int Id)> SimulatedCopyIds(Scope main, IEnumerable<Scope> scopes, string mapName, FgdSchema schema)
     {
+        using var profiled = DecompileProfile.Time("SimulatedCopyIds");
         var docs = scopes.Where(sc => sc.Parent is not null && sc.Builder is not null)
                          .ToDictionary(sc => sc.Path(mapName), sc => (Scope: sc, Doc: MapNodeAngles.Apply(DmxBinary.Read(sc.Builder!.Write()))),
                                        StringComparer.OrdinalIgnoreCase);
