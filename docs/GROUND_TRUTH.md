@@ -6997,6 +6997,19 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        counts it on no source face (the tool reads one .vmap); 1,476 props at the nearest angles; 432 fragment groups;
        source mesh identity (probe01 18 -> 4: touching meshes weld in the physics, and draws merge meshes by material).
 
+282. **Lightmap charts keep (nearly) to one source mesh but never join one; mesh identity is not in the package**
+     (2026-11-15; s2c world-charts on probe01.vpk against probe01.vmap, CS2 open, offline):
+     - Draw triangles joined where they share a corner position with one lightmap texcoord (TEXCOORD3, R16G16_UNORM)
+       form 70 charts over probe01's 15 drawn source world meshes: 69 keep to one source mesh, 1 (2 triangles of
+       reflectivity_30, on touching source meshes 91 and 92) spans two; every source mesh lies over several charts
+       (up to 15). So charts can split a merged piece where meshes touch, but say nothing of which charts make one
+       mesh. atixref's fixture has no TEXCOORD3 (not checked there); the blend session notes node 409's tessellated
+       triangles have near-degenerate lightmap density (ledger 188), so a subdivided mesh needs its own check.
+     - With ledger 281's facts (the physics welds touching meshes and gives the same PHYS for one mesh or several
+       holding the same pieces, the blend session's measurement; draws merge meshes by material per cluster), no
+       file of the package found so far keeps which faces formed one CMapMesh. The decompile keeps its soup members
+       (one material each) as meshes; the per-material split is noted, not guessed into meshes.
+
 290. **A painted subdivided world mesh's physics is its flat bake; the render keeps its paint truncated to 8 bits**
      (2026-11-15, research/vmap-decompile, ze_hold_em_p node 409; offline, our forward on the true source, which is
      exact against Valve's package: world_physics PHYS 0, RED2 0).

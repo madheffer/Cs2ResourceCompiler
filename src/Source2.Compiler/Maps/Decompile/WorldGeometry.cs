@@ -2262,7 +2262,11 @@ internal static class WorldGeometry
     }
 
     /// <summary>A world node draw triangle: its corners, their texcoords, its material and the node model it is in.</summary>
-    internal readonly record struct RenderTriangle(Vector3 A, Vector3 B, Vector3 C, Vector2 TA, Vector2 TB, Vector2 TC, string Material, string Model, int Draw = -1);
+    internal readonly record struct RenderTriangle(Vector3 A, Vector3 B, Vector3 C, Vector2 TA, Vector2 TB, Vector2 TC, string Material, string Model, int Draw = -1)
+    {
+        /// <summary>The corners' lightmap texcoords (TEXCOORD3, R16G16_UNORM as stored), where the draw has them.</summary>
+        public (ushort U, ushort V)[]? Lightmap { get; init; }
+    }
 
     /// <summary>Every render triangle's corners by 1/32 cell, from the world nodes' models.</summary>
     private static Dictionary<(int, int, int), List<RenderCorner>> RenderCorners(IReadOnlyDictionary<string, byte[]> files, string mapName)
@@ -2367,10 +2371,19 @@ internal static class WorldGeometry
                             }
                             File.AppendAllLines(density, lines);
                         }
+                        var lightmap = buffers.Select(b => (b, f: b.Buffer.InputLayoutFields.FirstOrDefault(f => f.SemanticName.Equals("TEXCOORD", StringComparison.OrdinalIgnoreCase) && f.SemanticIndex == 3)))
+                            .FirstOrDefault(x => x.f.Format.ToString() == "R16G16_UNORM");
+                        (ushort, ushort)? Lm(int v) => lightmap.b.Buffer.Data is { } data
+                            ? (BitConverter.ToUInt16(data, lightmap.b.Offset + v * (int)lightmap.b.Buffer.ElementSizeInBytes + (int)lightmap.f.Offset),
+                               BitConverter.ToUInt16(data, lightmap.b.Offset + v * (int)lightmap.b.Buffer.ElementSizeInBytes + (int)lightmap.f.Offset + 2))
+                            : null;
                         for (var i = start; i + 2 < start + count; i += 3)
                         {
                             int a = I(i) + bas, b = I(i + 1) + bas, c = I(i + 2) + bas;
-                            triangles.Add(new RenderTriangle(P(a), P(b), P(c), T(a), T(b), T(c), material, path, drawIndex));
+                            triangles.Add(new RenderTriangle(P(a), P(b), P(c), T(a), T(b), T(c), material, path, drawIndex)
+                            {
+                                Lightmap = Lm(a) is { } la && Lm(b) is { } lb && Lm(c) is { } lc ? [la, lb, lc] : null,
+                            });
                         }
                     }
         }

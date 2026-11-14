@@ -94,10 +94,74 @@ internal static class VmapWorldCompare
         return 0;
     }
 
-    private static List<MapMeshes.Mesh> World(string path)
+    /// <summary>
+    /// `s2c world-charts <package.vpk> <source.vmap>`: whether the render's lightmap charts keep to one source mesh.
+    /// Draw triangles join a chart where they share a corner at one position with one lightmap texcoord (TEXCOORD3);
+    /// each triangle goes to the source world mesh holding its centroid. Reports charts spanning several source
+    /// meshes and source meshes spanning several charts.
+    /// </summary>
+    public static int Charts(string[] a)
+    {
+        var paths = a.Where(x => !x.StartsWith('-')).ToArray();
+        var files = Maps.Decompile.MapDecompiler.ReadPackage(paths[0]);
+        var map = Maps.Decompile.MapDecompiler.MapNameOf(files);
+        var drawn = Maps.Decompile.WorldGeometry.RenderTriangles(files, map).Where(t => t.Lightmap is not null).ToList();
+        var source = World(paths[1]);
+        var faces = source.SelectMany((m, mi) => m.Faces.Select(f => (Mesh: mi, Face: f))).ToList();
+        var grid = new Dictionary<(int, int, int), List<int>>();
+        static (int, int, int) C(Vector3 p) => ((int)MathF.Floor(p.X / 64), (int)MathF.Floor(p.Y / 64), (int)MathF.Floor(p.Z / 64));
+        for (var i = 0; i < faces.Count; i++)
+        {
+            var (lo, hi) = (C(faces[i].Face.Corners.Aggregate(Vector3.Min)), C(faces[i].Face.Corners.Aggregate(Vector3.Max)));
+            for (var x = lo.Item1; x <= hi.Item1; x++)
+                for (var y = lo.Item2; y <= hi.Item2; y++)
+                    for (var z = lo.Item3; z <= hi.Item3; z++)
+                        (grid.TryGetValue((x, y, z), out var l) ? l : grid[(x, y, z)] = []).Add(i);
+        }
+        var meshOf = drawn.Select(t =>
+        {
+            var c = (t.A + t.B + t.C) / 3;
+            var n = Vector3.Cross(t.B - t.A, t.C - t.A);
+            foreach (var i in grid.GetValueOrDefault(C(c)) ?? [])
+                if (OnFace(faces[i].Face.Corners, c, n))
+                    return faces[i].Mesh;
+            return -1;
+        }).ToArray();
+        var parent = Enumerable.Range(0, drawn.Count).ToArray();
+        int Find(int x)
+        {
+            while (parent[x] != x)
+                x = parent[x] = parent[parent[x]];
+            return x;
+        }
+        var first = new Dictionary<(Vector3, ushort, ushort, string), int>();
+        for (var i = 0; i < drawn.Count; i++)
+        {
+            Vector3[] p = [drawn[i].A, drawn[i].B, drawn[i].C];
+            for (var k = 0; k < 3; k++)
+            {
+                var key = (p[k], drawn[i].Lightmap![k].U, drawn[i].Lightmap![k].V, drawn[i].Model);
+                if (first.TryGetValue(key, out var j))
+                    parent[Find(i)] = Find(j);
+                else
+                    first[key] = i;
+            }
+        }
+        var charts = Enumerable.Range(0, drawn.Count).Where(i => meshOf[i] >= 0).GroupBy(Find).ToList();
+        var spanning = charts.Where(g => g.Select(i => meshOf[i]).Distinct().Count() > 1).ToList();
+        var perMesh = charts.SelectMany(g => g.Select(i => meshOf[i]).Distinct().Select(m => (Mesh: m, Chart: g.Key))).GroupBy(x => x.Mesh).ToDictionary(g => g.Key, g => g.Count());
+        Console.WriteLine($"{drawn.Count} draw triangles with lightmap texcoords, {drawn.Count(_ => true) - meshOf.Count(m => m >= 0)} on no source world face; " +
+                          $"{charts.Count} charts over source faces, {spanning.Count} span several source meshes ({spanning.Sum(g => g.Count())} triangles); " +
+                          $"{perMesh.Count} source meshes, {perMesh.Count(kv => kv.Value == 1)} in one chart, {perMesh.Count(kv => kv.Value > 1)} over several (at most {perMesh.Values.DefaultIfEmpty(0).Max()})");
+        foreach (var g in spanning.Take(8))
+            Console.WriteLine($"  chart of {g.Count()} triangles over source meshes {string.Join(",", g.Select(i => source[meshOf[i]].NodeId).Distinct())}, materials {string.Join(",", g.Select(i => Path.GetFileNameWithoutExtension(drawn[i].Material)).Distinct())}");
+        return 0;
+    }
+
+    internal static List<MapMeshes.Mesh> World(string path)
         => [.. MapMeshes.Read(DmxBinary.ReadFile(path)).Where(m => (m.ParentClass is null || m.ParentClass == "worldspawn" || m.ParentType == "CMapWorld") && !m.Hidden && m.Faces.Length > 0)];
 
-    private static Vector3 Newell(Vector3[] c)
+    internal static Vector3 Newell(Vector3[] c)
     {
         var n = Vector3.Zero;
         for (var i = 0; i < c.Length; i++)
@@ -109,7 +173,7 @@ internal static class VmapWorldCompare
     }
 
     // p on the face: in its plane within 1/32, facing the same way, inside its polygon (projected on its main axis).
-    private static bool OnFace(Vector3[] corners, Vector3 p, Vector3 normal)
+    internal static bool OnFace(Vector3[] corners, Vector3 p, Vector3 normal)
     {
         var n = Newell(corners);
         if (n.LengthSquared() == 0 || Vector3.Dot(Vector3.Normalize(n), Vector3.Normalize(normal)) < 0.999f)

@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Source2.Compiler.Cli" />
+    <InternalsVisibleTo Include="s2c" />
     <InternalsVisibleTo Include="Source2.Compiler.Tests" />
     <InternalsVisibleTo Include="Source2.Compiler.Gpu" />
     <InternalsVisibleTo Include="Source2.Compiler.Solvers" />
