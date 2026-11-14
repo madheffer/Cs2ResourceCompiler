@@ -75,6 +75,20 @@ public static class DmxBinary
         /// <summary>Attributes by name, in file order.</summary>
         public Dictionary<string, object?> Attributes { get; } = [];
 
+        /// <summary>Each attribute's DMX type code as stored (an array is its scalar code plus
+        /// <see cref="ArrayTypeBase"/>). The values alone cannot say it: a vector3 and a qangle
+        /// both read as <see cref="Vector3"/>, a color and a binary both as bytes.</summary>
+        public Dictionary<string, byte> Types { get; } = [];
+
+        /// <summary>Set an attribute with its DMX type, at the end of the element's list
+        /// (or in its place when it is already there).</summary>
+        public Element Set(string name, byte type, object? value)
+        {
+            Attributes[name] = value;
+            Types[name] = type;
+            return this;
+        }
+
         /// <summary>An attribute value, or null when absent or of another type.</summary>
         public T? Get<T>(string name) where T : class
             => Attributes.TryGetValue(name, out var v) ? v as T : null;
@@ -112,7 +126,9 @@ public static class DmxBinary
             for (var a = 0; a < attrCount; a++)
             {
                 var name = r.InlineString();
-                element.Attributes[name] = ReadValue(ref r, r.Byte(), [], inlineStrings: true, elements: null);
+                var type = r.Byte();
+                element.Attributes[name] = ReadValue(ref r, type, [], inlineStrings: true, elements: null);
+                element.Types[name] = type;
             }
             prefix.Add(element);
         }
@@ -150,6 +166,7 @@ public static class DmxBinary
                 var type = r.Byte();
                 last = $"{name} of type {type}";
                 element.Attributes[name] = ReadValue(ref r, type, strings, inlineStrings: false, elements);
+                element.Types[name] = type;
             }
         }
 
@@ -166,8 +183,32 @@ public static class DmxBinary
         return Maps.MapNodeAngles.Apply(DmxText.IsText(bytes) ? DmxText.Read(bytes) : Read(bytes));
     }
 
-    /// <summary>An element for another reader of the format to fill.</summary>
+    /// <summary>An element for another reader of the format to fill, or a writer to build.</summary>
     internal static Element NewElement(string type, string name, Guid id) => new(type, name, id);
+
+    /// <summary>DMX attribute type codes (the binary encoding's numbering).</summary>
+    public static class AttrType
+    {
+        public const byte Element = 1, Int = 2, Float = 3, Bool = 4, String = 5, Binary = 6, Time = 7, Color = 8,
+            Vector2 = 9, Vector3 = 10, Vector4 = 11, QAngle = 12, Quaternion = 13, Matrix = 14, UInt64 = 15, UInt8 = 16;
+
+        /// <summary>The array of a scalar type.</summary>
+        public static byte Array(byte scalar) => (byte)(scalar + ArrayTypeBase);
+
+        /// <summary>The code for a keyvalues2 type name ("vector3", "string_array" ...), or 0.</summary>
+        public static byte FromName(string name)
+        {
+            var array = name.EndsWith("_array", StringComparison.Ordinal);
+            byte scalar = (array ? name[..^"_array".Length] : name) switch
+            {
+                "element" => Element, "int" => Int, "float" => Float, "bool" => Bool, "string" => String,
+                "binary" => Binary, "time" => Time, "color" => Color, "vector2" => Vector2, "vector3" => Vector3,
+                "vector4" => Vector4, "qangle" => QAngle, "quaternion" => Quaternion, "matrix" => Matrix,
+                "uint64" => UInt64, "uint8" => UInt8, _ => 0,
+            };
+            return scalar == 0 ? (byte)0 : array ? Array(scalar) : scalar;
+        }
+    }
 
     private static (string Encoding, int EncodingVersion, string Format, int FormatVersion) ReadHeader(ref Reader r)
     {

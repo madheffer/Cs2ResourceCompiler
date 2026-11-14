@@ -104,6 +104,22 @@ RESOURCECOMPILER = [
     ('180f6d410', 'MapDoc_DeleteNode', NAV, 'flags 3 from the bake; unregisters the subtree (180f684c0) and runs the queued deletes'),
     ('180f684c0', 'MapDoc_UnregisterSubtree', NAV, 'children first; a CMapInstance whose target no other instance names (180f8e9e0) has its target deleted too'),
     ('180f7a350', 'CMapNode_SetVisible', NAV, 'the visibility state byte +0x370 (180f8f920 starts it at 1)'),
+    ('180f74dd0', 'CMapNodeDataProvider::ChildCount', LUMP, "vf2: the node's children count (+0x1f8); the export's geometry test (ledger 269)"),
+    ('180f73c00', 'CMapNodeDataProvider::GeometryChild', LUMP, 'vf3: child i when it IsA CMapNode, is visible (+0x370) and nothing refers to it (180f8e9e0), else null; a solid class entity with none is not exported (ledger 269)'),
+    ('180f8e9e0', 'MapNode_IsReferred', LUMP, 'MapNode_ReferrerCount (180f8ba70) > 0'),
+    ('180f163b0', 'MapNode_GatherGameDataNodes', LUMP, 'every CMapGameDataNode under a node (MapNode_CollectByClass 180f86e70, filter 8); the list 180f180a0 numbers (ledger 269)'),
+    ('180f180a0', 'MapWorld_NumberGameDataNodes', LUMP, 'compile_source_id (+0x17ec) per gathered node, keyed by path and nodeID so a repeated prefab reuses its numbers (ledger 269)'),
+    ('180f26160', 'CMapGameDataNode::WriteKeys', LUMP, 'vf217: the node keys, then compile_source_id = +0x17ec'),
+    ('180fca750', 'MapWorld_FixupNames', LUMP, 'the world name list (+0x1828), then vf157 with the prefix; called by the compile driver with "[PR#]" unconditionally (ledger 270)'),
+    ('180f24170', 'CMapGameDataNode::FixupNames', LUMP, 'vf157: name-typed keys (0x830006) through EntityLump_FixupValue get the prefix; entity_name_fixup_persist; outputs, then children (ledger 270)'),
+    ('180fefb60', 'EntityLump_FixupValue', LUMP, "not empty, not '!' '*' '?' '@' first, not an FGD class name (ledger 270)"),
+    ('180f787b0', 'CMapNode::FixupNames', LUMP, 'vf157: every child that IsA CMapNode (ledger 270)'),
+    ('180fcbe00', 'CMapWorld_SetFixupEntityNames', LUMP, 'the only access to +0x2ba8 besides the constructor; the compile never reads it (ledger 270)'),
+    ('180278812', 'Step_BuildingVertexOverrideStreams_Merge', LUMP, 'the MergeMeshes call: VisibilityGuidedMeshClustering, three or more clusters (vis, else the box grid 180283520) and mutual visibility (ledger 271)'),
+    ('180f73db0', 'CMapNodeDataProvider::ModelKind', LUMP, 'vf44 (0x160): the node vf219; the export builds a model when it is 1 or 2 (ledger 272)'),
+    ('1810045b0', 'CMapEntity::ModelKind', LUMP, 'vf219: solid class 1 (2 with render_as_world_but_physics_as_entity); else 1 only with a visible child whose vf 0x138 is not null (CMapMesh, CMapTileMesh) (ledger 272)'),
+    ('180234180', 'CVisibilityMeshMerger::MergeMeshes', LUMP, 'reads debugColorClustering on entry (ledger 271)'),
+    ('18111be50', 'MapCheck_EmptyEntities', LUMP, 'Hammer map check: a CMapEntity of class type 5 or 10 (or should_have_children) with no children; not run by the compile (ledger 269)'),
     ('180fb15e0', 'NavGen_CollectLadders', NAV, "CNavGenInput +0x60 (ledger 107): meshes under the root (180fb2830) with a mapbuilder.ladder material (int attribute 0x1a382654, material vfn 0x50) through 180fb21f0, func_ladder entities' meshes last; FUN_1818ca470 adds each (top, bottom, normal, width)"),
     ('180fb1380', 'NavGen_CollectFuncLadders', NAV, "'func_ladder' entities of the flat node array (+0x1828/+0x1830, flag 1: byte +0x370 set), then of each sub-map (180fc8c80) with flag 4"),
     ('180fb2830', 'NavGen_LadderWalk', NAV, 'skips func_ladder entities; a mesh (vfn 0x138) with a ladder material goes to 180fb21f0, any other node recurses into its children'),
@@ -411,6 +427,19 @@ RESOURCECOMPILER = [
     ("180f90cb0", "CMapNode_WalkTree", G, "vf 0x210 over a subtree, the collapse's id remap"),
     ("1810191b0", "CMapPrefab_SetPlaced", G, "placing: its map's prefabs set unplaced first, then 181019d00 at the prefab's transform; unplacing: the map back to the identity"),
     ("180f96d40", "CMapPrefab_Collapse", G, "a group at the prefab's transform, 181018e50 places the map, its nodes move into the group (vf 0x1c8), then the remap"),
+    # Map variables (ledger 297; Maps/MapVariables.cs).
+    ("180fcdf10", "CMapVariableSetStorage_Construct", ENT, "variableNames +0x98, variableValues +0xb8, variableTypeNames +0xd8, variableTypeParameters +0xf8, variableGroupNames +0x118, m_ChoiceGroups +0x138, variableAndChoiceOrder +0x160"),
+    ("180fcdcc0", "CMapVariableChoiceGroupStorage_Construct", ENT, "m_ChoiceVariables, m_Choices, m_ActiveValue, m_GroupName"),
+    ("180f8bc90", "CMapNode_VariableBindings", ENT, "lea rax, [rcx+0x3d0]: the node's key -> variable table"),
+    ("180f93000", "CMapNode_WriteVariableBindings", ENT, "the +0x3d0 table sorted into variableTargetKeys (+0x3f8) / variableNames (+0x418)"),
+    ("180fa07d0", "CMapPrefab_ConstructOverrides", ENT, "registers variableOverrideNames +0x588, variableOverrideValues +0x5a8; zeroes +0x5c8 (180f96d40 runs 18107d160 when it and its +0x1b0 are set)"),
+    ("180fa0570", "CMapPrefab_HasVariableOverride", ENT, "the name among variableOverrideNames (V_stricmp_fast, first match) with a value, an empty one included"),
+    ("180fa03d0", "CMapPrefab_GetVariableOverride", ENT, "that override's value"),
+    ("18107d160", "CMapVariableSet_ApplyToNodes", ENT, "each variable in order: its value (18107a810), then 1810ec600 on every node of the map (180f86e70 flags 0, 1, 1)"),
+    ("18107a810", "CMapVariableSet_ResolveValue", ENT, "a choice group driving it first, else the prefab's override (180fa0570), else the variable's value; prefab +0x55f sends a non-empty value through 18107c510"),
+    ("18107c510", "CMapVariableSet_TransformValue", ENT, "a value rewritten by the placing prefab's transform (vector math); not ported"),
+    ("1810ec600", "CMapNodeBindings_SetVariable", ENT, "each binding naming the variable (case-blind): the value through the key's attribute (types 0x24-0x26 convert), set by vf 0x7a0 when it differs case-blind"),
+    ("1810ec540", "CMapNodeBindings_FindKey", ENT, "the binding of a key (181006440 asks it of parentname)"),
     ("181114940", "MapInstance_DeltaMatrix", G, "AngleMatrixDouble (1811145c0) of the new placement times MatrixInvert (18125aba0) of the old"),
     ("181076a70", "CMapDeformer_MoveNode", G, "pivot o step o pivot^-1 o node (CTransform_Compose 181253510 each, renormalising), its angles through QuaternionAngles (181260200)"),
     ("1810be450", "CMapPath_HiddenState", G, "the path's +0x3c8, else 2 when a CMapPathNode child's is set; 18117aeb0 skips the recentre on non-zero"),
@@ -2668,7 +2697,10 @@ TIER0 = [
     ("1800d7940", "KV3Text_WriteValue", "s2c:containers", "binary blob (case 6): member over 32 bytes opens line break, #[ at column 1, rows of 32 upper-case pairs, depth + 1 tabs on every row but the first, close line break, depth tabs, ]"),
     ("180050840", "CBlockCompress::FastCompress", "s2c:entities/lump", "export; LZSS: u32 size (bit 31 stored), u16 flags per 16 tokens, literal or u16 ((distance-1)<<4 | length-3), 3..18 bytes, 4096 back; 2048-slot hash of 3 bytes, last position wins; stored once the write reaches size-4 (Compression/BlockCompress.cs)"),
     ("180050ae0", "CBlockCompress::FastDecompress", "s2c:entities/lump", "export; the decoder of 180050840"),
-    ("1802bdd90", "crt_exp2f", "s2c:baked/bomb", "x split to n + f in [-0.5, 0.5], Cody-Waite expf of f ln2 (1802bdb54) scaled by 2^n"),
+    ("1802bdd90", "crt_exp2f", "s2c:baked/bomb", "_fdtest first (0 -> 1, +Inf/NaN as is, -Inf -> 0); |x| under 2^31 split to n + f in [-0.5, 0.5]; Cody-Waite expf of f ln2 (1802bdb54) scaled by 2^n (ledger 267)"),
+    ("1802bdb54", "crt_expf_scaled", "s2c:baked/bomb", "(&y, scale, n): y under -229 -> scale 0, over 229 -> scale Inf; y 0 -> _fdscale(scale, n); rational, then _fdscale(r scale, k + n) (ledger 267)"),
+    ("1802d2900", "crt_fdscale", "s2c:baked/bomb", "float times 2^e on 16-bit halves: Inf past 254, denormal shift with a rounding word, nearest even; Simulation/CrtMath.FdScale (ledger 267)"),
+    ("1802cf224", "crt_fdtest", "s2c:baked/bomb", "float class: 2 NaN, 1 Inf, 0 zero, -1 normal, -2 denormal (ledger 267)"),
     ("1802df0a4", "crt_acosf", "s2c:baked/bomb", "AMD libm float acosf; V_acosf (180007e80) clamps to [-1, 1] first"),
     # Containers: resource names, KV3, RED2, manifests.
     ("1800c7220", "Kv3_SaveBinary", CT, "binary_auto: LZ4 below 0x80001 bytes, else Zstd; raw below 0x100"),
@@ -3623,6 +3655,13 @@ RESOURCECOMPILER_1029 = [
 ]
 
 # resourcecompiler.dll as installed since the 11-03 update, 1.41.9.5 (tools/re/binaries/resourcecompiler_20261103.dll).
+TIER0_1103 = [
+    ("180007fb0", "V_exp2f", IO, "export; the CRT's exp2f 1802bded0 (ledger 267)"),
+    ("1802bded0", "crt_exp2f", IO, "same code as 0923's 1802bdd90 (rip targets resolved); Simulation/CrtMath.Exp2 (ledger 267)"),
+    ("1802bdc94", "crt_expf_scaled", IO, "same code as 0923's 1802bdb54 (ledger 267)"),
+    ("1802d2a40", "crt_fdscale", IO, "same code as 0923's 1802d2900; Simulation/CrtMath.FdScale (ledger 267)"),
+]
+
 RESOURCECOMPILER_1103 = [
     # Read from the disassembly (resourcecompiler 20261103; the Ghidra project's build has the code elsewhere): ledger 201.
     ("1802ed210", "CResourceCompilerMesh_WriteVertexBuffer", WN, "count +4, stride +8, layout +0x18; unless the mesh's vf 0x28, gameinfo ResourceCompiler/MeshCompiler/EncodeVertexBuffer (default 0) with vertices: meshopt_encodeVertexVersion(EncodeVertexBufferVersion, default 0), the bound, encodeVertexBufferLevel at EncodeVertexBufferLevel (default 3), version -1; the encoding is kept (+0xc m_bMeshoptCompressed 1) only when smaller than count x stride, then with its byte argument Zstd'd and kept (+0xf 1) when that is smaller; else the raw buffer; an MVTX block, its index at +0"),
@@ -3635,6 +3674,10 @@ RESOURCECOMPILER_1103 = [
     ("1812bcd80", "meshopt_encodeIndexBufferBound", WN, ""),
     ("1812bcde0", "meshopt_encodeIndexSequence", WN, ""),
     ("1812bcee0", "meshopt_encodeIndexSequenceBound", WN, ""),
+    # Ledger 266: worldspawn's mapUsageType (capstone, strxref on "mapUsageType" 1822c05d0).
+    ("180fc21a0", "CMapWorld_Ctor", ENT, "declares mapUsageType a string at +0x2bb8 (adder 180ce0960, type 5) set to \"standard\" (180ce9ef0)"),
+    ("180fc2760", "CMapWorld_ExportToLump", ENT, "worldspawn's keys; mapUsageType: +0x2bb8 matched with V_stricmp_fast against the 5 names of 1830169f0, the match's name written (key hash 0x102e9e21, 180fa9df0), none gives standard"),
+    ("1830169f0", "g_MapUsageTypes", ENT, "5 x 32 bytes {int value, char *name, char *display}: standard, background, skybox, minigame, sharedenvironment"),
 ]
 
 RESOURCECOMPILER_1023 = [
@@ -3722,6 +3765,15 @@ BC7E = [
     ("180169300", "bc7e_init_params", BAKE, "export (level 0..6, perceptual, params): a jump table onto the ISPC params initialisers; level 6 is slowest"),
 ]
 
+# hammer.dll 20261029 (installed; tools/re/binaries/hammer_20261029.dll): Hammer's autosave and recovery prompt,
+# driven from cubehost by tools/map-survey/hammer_autosave.py (docs/DECOMPILE.md "CS2-closed captures 10-30 evening").
+HAMMER_1029 = [
+    ("180128660", "ConCommand_hammer_force_autosave", CM, "times 181497970(autosave manager +0x98, force = 1)"),
+    ("181497970", "HammerAutosave_Run", CM, "(this, force): each open document ([this]+0x60, count +0x58): vfunc +0x80 (needs an autosave) unless force; always skipped when byte +0x11 is set; vfunc +0x90 (doc, path, autosave path, 1, force) writes; marks the file's record +9; prunes the folder to the size limit"),
+    ("181497d40", "HammerAutosave_RecoveryPrompt", CM, "\"Recover Files?\" QMessageBox Yes|No (IAT 18169bfb0, called at 181497e74) when 181496bd0 lists files or the pending list ([this]+0x28, count +0x20) is not empty; Yes reloads (1814982c0), No marks the records handled (+8 = 1, +9 = 0) and empties the pending list, deleting nothing"),
+    ("181496bd0", "HammerAutosave_FilesToRecover", CM, "records ([this]+0x10, 16 bytes: path, +8 handled, +9 has autosave) with +8 clear and +9 set"),
+]
+
 if __name__ == "__main__":
     write("resourcecompiler_20260923.manual.json", RESOURCECOMPILER)
     write("vphysics2_20260924.manual.json", VPHYSICS2)
@@ -3737,6 +3789,7 @@ if __name__ == "__main__":
     write("navsystem_20261015.manual.json", NAVSYSTEM)
     write("resourcecompiler_20261006.manual.json", RESOURCECOMPILER_1006)
     write("tier0_20261015.manual.json", TIER0_1015)
+    write("tier0_20261103.manual.json", TIER0_1103)
     write("scenesystem_20261015.manual.json", SCENESYSTEM + SCENESYSTEM_CASCADES)
     write("scenesystem_20261023.manual.json", SCENESYSTEM_1023)
     write("materialsystem2_20261015.manual.json", MATERIALSYSTEM_1015)
@@ -3760,6 +3813,7 @@ if __name__ == "__main__":
     write("client_20261029.manual.json", CLIENT_1029)
     write("worldrenderer_20261023.manual.json", WORLDRENDERER_1023)
     write("server_20261021.manual.json", SERVER_1021)
+    write("hammer_20261029.manual.json", HAMMER_1029)
     write("resourcecompiler_20261103_geometry_agent.manual.json", GEOMETRY_AGENT_1103)
     write("resourcecompiler_20260923_geometry_agent.manual.json", GEOMETRY_AGENT_0923)
     write("resourcecompiler_20260923_resources_agent.manual.json", RESOURCES_AGENT_0923)

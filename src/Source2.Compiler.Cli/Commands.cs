@@ -773,6 +773,12 @@ internal static class Commands
             var agrees = r.Name is not null && expected == r.Id ? "ok" : "MISMATCH";
             Console.WriteLine($"  {r.Id:x16} {agrees,-8} {r.Name}");
         }
+        // --data: the DATA block as text.
+        if (a.Contains("--data"))
+            Console.WriteLine(res.DataBlock?.ToString());
+        // --block <type>: that block as text (PHYS, CTRL, ...).
+        if (Opt(a, "--block") is { } blockType)
+            Console.WriteLine(res.Blocks.FirstOrDefault(b => b.Type.ToString() == blockType)?.ToString());
         return 0;
     }
 

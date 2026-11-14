@@ -68,6 +68,14 @@ public static class MapEntities
         /// </summary>
         public string? BoneTransforms { get; init; }
 
+        /// <summary>A visible mesh child (CMapMesh or CMapTileMesh, the node types whose vf 0x138 is not null):
+        /// what gives a class other than a solid one its model (CMapEntity vf219, rc 0923 1810045b0; ledger 272).</summary>
+        public bool HasMeshChild { get; init; }
+
+        /// <summary>The CMapWorld's mapUsageType string (worldspawn only; null when the node has none),
+        /// which the export writes through <see cref="EntityLumpAuthor.MapUsageTypeName"/>.</summary>
+        public string? MapUsageType { get; init; }
+
         /// <summary>A CMapNavLink's own fields (<see cref="NavLinkFields"/>); null for every other node.</summary>
         public NavLinkFields? NavLink { get; init; }
 
@@ -92,12 +100,20 @@ public static class MapEntities
         /// exported for the second, fourth... time (<see cref="SourceIds"/>).</summary>
         public bool KeysForward { get; init; }
 
+        /// <summary>A prefab loaded at runtime, which exports as a point_prefab naming its map
+        /// (EntityLumpAuthor.BuildEntity); null for anything else.</summary>
+        public RuntimePrefab? Runtime { get; init; }
+
         /// <summary>The node's id path as the compile formats it (NodeIdPath_Format):
         /// the prefab ids, then the node's own, joined by ':'.</summary>
         public string IdPath => Prefabs.Length == 0
             ? NodeId.ToString(CultureInfo.InvariantCulture)
             : string.Join(':', Prefabs.Append(NodeId).Select(i => i.ToString(CultureInfo.InvariantCulture)));
     }
+
+    /// <summary>A prefab loaded at runtime's point_prefab: the map it names (targetMapName) and whether
+    /// its contents' names are fixed up when it loads (fixupNames, the prefab's fixupEntityNames).</summary>
+    public sealed record RuntimePrefab(string TargetMapName, bool FixupNames);
 
     /// <summary>
     /// One node of a path, as the source states it.
@@ -215,7 +231,7 @@ public static class MapEntities
         // the tree does while the file lists those elements far apart.
         var entities = new List<Entity>();
         if (Read(world, isWorld: true) is { } worldspawn)
-            entities.Add(Upgrade(worldspawn, document.FormatVersion));
+            entities.Add(Upgrade(worldspawn, document.FormatVersion) with { MapUsageType = world.Get<string>("mapUsageType") });
         Walk(world, entities, new HashSet<DmxBinary.Element>(), null, new Prefab([], [], HiddenNodes(document), false, null, null));
         return entities;
     }
@@ -226,6 +242,21 @@ public static class MapEntities
 
     private static string MapPathOf(DmxBinary.Element prefab)
         => Tier0Strings.LowerAscii((prefab.Get<string>("targetMapPath") ?? "").Replace('\\', '/'));
+
+    /// <summary>
+    /// A runtime prefab's targetMapName: its targetMapPath less the leading maps/ and the .vmap
+    /// (s2c_rtprefab: maps/s2c_propover.vmap is s2c_propover; s2c_rtprefab6:
+    /// maps/prefabs/s2c_prefabslot/p0.vmap is prefabs/s2c_prefabslot/p0, case as written).
+    /// A path outside maps/ is not measured.
+    /// </summary>
+    internal static string RuntimeMapName(string targetMapPath)
+    {
+        var path = targetMapPath.Replace('\\', '/');
+        if (!path.StartsWith("maps/", StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException($"a runtime prefab whose map is outside maps/ ({targetMapPath}) is not measured");
+        path = path[5..];
+        return path.EndsWith(".vmap", StringComparison.OrdinalIgnoreCase) ? path[..^5] : path;
+    }
 
     /// <summary>
     /// Each walked entity's compile_source_id: its walk index, except that a
@@ -248,6 +279,12 @@ public static class MapEntities
         for (var i = 0; i < entities.Count; i++)
         {
             var e = entities[i];
+            // A runtime prefab's point_prefab takes no walk index (s2c_rtprefab4).
+            if (e.Runtime is not null)
+            {
+                ids[i] = -1;
+                continue;
+            }
             if (e.PrefabMap is { } map && first.TryGetValue((map, e.NodeId), out var earlier))
             {
                 ids[i] = earlier.Id;
@@ -307,13 +344,17 @@ public static class MapEntities
     }
 
     /// <summary>
-    /// Whether the map asks for entity-name fixup, which the compile answers by
-    /// prefixing every name and every reference to one.
+    /// Whether the compile prefixes the map's names and references with "[PR#]": always (ledger 270).
+    /// The compile driver (rc 0923 180f1d770) runs the fixup (180fca750 -> vf157 180f24170 over the
+    /// world and every child, EntityLump_FixupValue 180fefb60 skipping class names and names starting
+    /// '!', '*', '@' or '?') whatever the world's fixupEntityNames (CMapWorld +0x2ba8, default true),
+    /// which nothing in the compile reads: s2c_emptymesh2 saves it false and ships [PR#]t0. A prefab's own
+    /// fixupEntityNames is its own matter (MapPrefabs, 180f9e860).
     /// </summary>
     public static bool FixupEntityNames(DmxBinary.Document document)
     {
         ArgumentNullException.ThrowIfNull(document);
-        return document.OfType("CMapWorld").FirstOrDefault()?.GetValue<bool>("fixupEntityNames") ?? false;
+        return true;
     }
 
     /// <summary>
@@ -338,6 +379,11 @@ public static class MapEntities
 
     /// <summary>Whether the node owns an <c>EditGameClassProps</c>, and so takes a
     /// place in the compile's numbering.</summary>
+    /// <summary>Whether the node is a prefab loaded at runtime, which the walk reads as its point_prefab
+    /// (one entity, no walk index) and does not enter.</summary>
+    public static bool IsRuntimePrefab(DmxBinary.Element node)
+        => node.Type is "CMapPrefab" && node.GetValue<bool>("loadAtRuntime") == true && !node.Attributes.ContainsKey(Maps.MapPrefabs.WorldKey);
+
     public static bool CarriesGameKeys(DmxBinary.Element node)
         => node is not null && GameKeyBearer.Contains(node.Type);
 
@@ -361,6 +407,12 @@ public static class MapEntities
             // subasset gather reads (180fc9930) is off for the node and all below it: s2c_deformpath2's hidden
             // cable and its three path nodes, and its one hidden path node, are not in the .vmap_c's table.
             var within = child.GetValue<bool>("force_hidden") == true ? prefab with { Enclosed = true } : prefab;
+            // A CMapEntity whose children are all meshes with no faces is not in the compile's walk at all:
+            // s2c_emptymesh2's func_brush "emptymesh" takes no compile_source_id (the next entity is one past
+            // the one before it), where one with no children, a hidden mesh or a force_hidden mesh takes its
+            // number and only stays out of the lump (ledger 269). Where resourcecompiler drops it is not read.
+            if (child.Type is "CMapEntity" && OnlyFacelessMeshes(child))
+                continue;
             if (GameKeyBearer.Contains(child.Type) && Read(child, isWorld: false) is { } entity)
             {
                 // An editorOnly node (CMapNode +0x365) fails the compile's node
@@ -370,6 +422,12 @@ public static class MapEntities
                 if (editorOnly && child.GetElements("children").Any())
                     throw new NotSupportedException($"node {id}: an editorOnly node with children is not measured");
                 entity = entity with { Layer = layer, Hidden = within.Enclosed || prefab.Hidden.Contains(id) || editorOnly, Prefabs = prefab.Ids, NamePrefix = prefab.NamePrefix, PrefabMap = prefab.Map };
+                if (entity.HasGeometry && child.Type is not "CMapCable")
+                    entity = entity with
+                    {
+                        HasGeometry = child.GetElements("children").Any(c => CountsAsGeometry(c, prefab.Hidden)),
+                        HasMeshChild = child.GetElements("children").Any(c => c.Type is "CMapMesh" or "CMapTileMesh" && CountsAsGeometry(c, prefab.Hidden)),
+                    };
                 // A node of a prefab's map is placed as the prefab moves it.
                 if (prefab.Chain.Length > 0)
                 {
@@ -395,6 +453,25 @@ public static class MapEntities
             if (child.Type is "CMapPrefab" && child.Get<DmxBinary.Element>(Maps.MapPrefabs.WorldKey) is { } prefabWorld)
             {
                 prefabs.Add((child, id, prefabWorld, within.Enclosed));
+                continue;
+            }
+            // A prefab loaded at runtime is not merged (MapPrefabs.Attach leaves it): its point_prefab
+            // stands where the prefab does in the tree, before the nodes after it, and takes no walk
+            // index (s2c_rtprefab4: the info_target after it is compile_source_id 13 as with the
+            // prefab merged, s2c_rtprefab5, and ships after the point_prefab).
+            if (IsRuntimePrefab(child))
+            {
+                var placed = (Origin: child.GetValue<Vector3>("origin") ?? Vector3.Zero, Angles: child.GetValue<Vector3>("angles") ?? Vector3.Zero);
+                if (prefab.Chain.Length > 0)
+                    placed = Maps.SettleWorld.PrefabPlacement(placed.Origin, placed.Angles, prefab.Chain);
+                entities.Add(new Entity("point_prefab", id, [], placed.Origin, placed.Angles, child.GetValue<Vector3>("scales") ?? Vector3.One, false,
+                                        ReadConnections(child))
+                {
+                    Layer = layer,
+                    Hidden = within.Enclosed || prefab.Hidden.Contains(id) || child.GetValue<bool>("editorOnly") == true,
+                    Prefabs = prefab.Ids, NamePrefix = prefab.NamePrefix, PrefabMap = prefab.Map,
+                    Runtime = new RuntimePrefab(RuntimeMapName(child.Get<string>("targetMapPath") ?? ""), child.GetValue<bool>("fixupEntityNames") == true),
+                });
                 continue;
             }
             Walk(child, entities, seen,
@@ -454,6 +531,35 @@ public static class MapEntities
     }
 
     /// <summary>Whether the walk reads the node as an entity (as it does a prefab map's world, never shipped).</summary>
+    /// <summary>
+    /// Whether a child keeps its solid class entity in the lump (ledger 269). The export (rc 0923
+    /// 180240a60) asks the node's data provider for its children (CMapNodeDataProvider vf2 / vf3,
+    /// 180f74dd0 / 180f73c00: "children" +0x200, typed CMapNode) and keeps the entity when one is
+    /// visible (+0x370, CMapNode_SetVisible 180f7a350) and no node refers to it (180f8e9e0); any
+    /// node type counts, a point entity too (s2c_emptymesh: a func_brush with only an info_target
+    /// gets a model). A CMapMesh with no faces does not (s2c_emptymesh: alone or beside an
+    /// info_target, RC builds no model for it; where it drops out is not read). Visibility here
+    /// is force_hidden and, given the map's hidden set, its flags; references are not modelled.
+    /// </summary>
+    /// <summary>Whether a node has children and every one is a CMapMesh with no faces (ledger 269).</summary>
+    internal static bool OnlyFacelessMeshes(DmxBinary.Element node)
+    {
+        var children = node.GetElements("children").ToList();
+        return children.Count > 0 && children.All(c => c.Type is "CMapMesh" && FaceCount(c) == 0);
+    }
+
+    private static int FaceCount(DmxBinary.Element mesh)
+        => mesh.Get<DmxBinary.Element>("meshData")?.Get<object?[]>("faceEdgeIndices")?.Length ?? 0;
+
+    internal static bool CountsAsGeometry(DmxBinary.Element child, HashSet<int>? hidden)
+    {
+        if (child.GetValue<bool>("force_hidden") == true)
+            return false;
+        if (hidden is not null && child.GetValue<int>("nodeID") is { } id && hidden.Contains(id))
+            return false;
+        return child.Type is not "CMapMesh" || FaceCount(child) > 0;
+    }
+
     internal static bool ReadsAsEntity(DmxBinary.Element element) => Read(element, isWorld: false) is not null;
 
     /// <summary>The node as the walk reads it, where it stands in the source (no prefab or instance placement); null when it is no entity.</summary>
@@ -494,11 +600,11 @@ public static class MapEntities
             element.GetValue<Vector3>("scales") ?? Vector3.One,
             isWorld,
             ReadConnections(element),
-            // A brush entity is a node with mesh children. The world has meshes too,
-            // but those are the world's own geometry rather than an entity model. A
-            // cable is its own geometry: Mako's cable_dynamic ships a model of its
-            // own, unnamed_20788.vmdl.
-            !isWorld && (element.Type is "CMapCable" || element.GetElements("children").Any(c => c.Type is "CMapMesh")),
+            // A brush entity is a node with a child that counts (CountsAsGeometry; the walk
+            // narrows it by the map's hidden set). The world has meshes too, but those are the
+            // world's own geometry rather than an entity model. A cable is its own geometry:
+            // Mako's cable_dynamic ships a model of its own, unnamed_20788.vmdl.
+            !isWorld && (element.Type is "CMapCable" || element.GetElements("children").Any(c => CountsAsGeometry(c, null))),
             Hidden: false,
             PathNodes: pathNodes,
             ClosedLoop: element.GetValue<bool>("closedLoop") ?? false,
@@ -509,6 +615,7 @@ public static class MapEntities
             Tint: element.Type is "CMapCable" ? element.Get<byte[]>("tintColor") ?? [255, 255, 255, 255] : null)
         {
             NavLink = element.Type is "CMapNavLink" ? NavLinkFields.Read(element) : null,
+            HasMeshChild = !isWorld && element.GetElements("children").Any(c => c.Type is "CMapMesh" or "CMapTileMesh" && CountsAsGeometry(c, null)),
         };
     }
 

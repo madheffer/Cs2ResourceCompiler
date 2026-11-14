@@ -288,6 +288,14 @@ public static class NavWriter
     }
 
     // 1818d0690: version 13, the block's numbers, the two strings, the hulls, +0x59.
+    /// <summary>The generation parameters block alone (1818d0690), as the file holds it.</summary>
+    internal static byte[] GenerationParametersBytes(NavGenSettings s)
+    {
+        var w = new Writer();
+        GenerationParameters(w, s);
+        return w.ToArray();
+    }
+
     private static void GenerationParameters(Writer w, NavGenSettings s)
     {
         w.U32(13);

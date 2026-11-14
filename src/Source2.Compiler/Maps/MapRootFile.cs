@@ -34,6 +34,11 @@ public static class MapRootFile
                                  bool FlattenProps = false, bool EntitiesOnly = false, bool EntityRenderModels = false, bool Partial = false)
     {
         public bool Runs(string step) => Steps is null ? step is "world" or "phys" or "vis" or "bakedlighting" : Steps.Contains(step);
+
+        /// <summary>The arguments the world node compile read beyond the meshlet pair (WorldNodeFiles.Build's
+        /// readArguments: debugColorClustering when a node's meshes were merged, ledger 271); null reads the
+        /// merge as run wherever there are world node models.</summary>
+        public IReadOnlyCollection<string>? NodeArguments { get; init; }
     }
 
     /// <summary>
@@ -75,7 +80,9 @@ public static class MapRootFile
 
     public static uint Crc(byte[] bytes) => Crc32.HashToUInt32(bytes);
 
-    /// <summary>The content-relative maps every loaded prefab under the document reads (MapPrefabs.Attach), depth first.</summary>
+    /// <summary>The content-relative maps every loaded prefab under the document reads (MapPrefabs.Attach), depth first,
+    /// and each prefab loaded at runtime's, which the compile reads for its inputs too without merging it
+    /// (s2c_rtprefab: maps/s2c_propover.vmap among the inputs, its CRC the file's).</summary>
     public static IEnumerable<string> PrefabMaps(DmxBinary.Document document)
     {
         foreach (var p in document.OfType("CMapPrefab"))
@@ -86,6 +93,8 @@ public static class MapRootFile
                 foreach (var nested in PrefabMaps(inner))
                     yield return nested;
             }
+            else if (p.GetValue<bool>("loadAtRuntime") == true && p.Get<string>("targetMapPath") is { Length: > 0 } runtime)
+                yield return runtime;
     }
 
     public static byte[] Write(Compile compile, IReadOnlyList<string> children, IEnumerable<string> assets,
@@ -115,7 +124,7 @@ public static class MapRootFile
     // flattenPropsWithBakedLighting 180245770 when the compile does not bake (vfunc 0x108), and bakelighting
     // when it does not. Measured on 56 Valve compiles (world only, world+phys+vis+nav, full; ledger 119).
     private static readonly string[] Always = ["force_up_to_date_materials", "skipauxfiles", "skipmapload"];
-    private static readonly string[] WorldNodeModels = ["debugColorClustering", "meshletMaxTriangles", "meshletMaxVertices"];
+    private static readonly string[] WorldNodeModels = ["meshletMaxTriangles", "meshletMaxVertices"];
     private static readonly string[] Physics = ["keep_vertices", "mapbuilder_entity_classname"];
 
     private static readonly string[] Lighting =
@@ -187,10 +196,17 @@ public static class MapRootFile
         }
 
         // The arguments in read order, then MSVC's std::sort by V_stricmp_fast (ReadOrder).
-        // An Only Entities build reads force_up_to_date_materials only through its entity models (ReadsMeshArguments).
-        var names = new List<string>(compile.EntitiesOnly && !compile.EntityRenderModels ? Always.Skip(1) : Always);
-        if (children.Any(c => c.Contains("/worldnodes/", StringComparison.Ordinal) && c.EndsWith(".vmdl", StringComparison.Ordinal)))
+        // force_up_to_date_materials is read by a model compile with a render mesh (ModelCompile_ReadMeshArgs):
+        // the world node models this build compiles, or an entity model (ReadsMeshArguments). A -world build of a
+        // map with no node models and only physics entity models reads none (s2c_dec_probe01, ledger 272).
+        var nodeModels = children.Any(c => c.Contains("/worldnodes/", StringComparison.Ordinal) && c.EndsWith(".vmdl", StringComparison.Ordinal));
+        var names = new List<string>(compile.EntityRenderModels || (nodeModels && !compile.EntitiesOnly && compile.Runs("world")) ? Always : Always.Skip(1));
+        if (nodeModels)
             names.AddRange(WorldNodeModels);
+        // The merge reads debugColorClustering whether or not it leaves node models (s2c_dec_atixref: read, no
+        // node model; ledger 271/272). Without this build's own node compile, node models stand for it.
+        if (compile.NodeArguments?.Contains("debugColorClustering") ?? nodeModels)
+            names.Add("debugColorClustering");
         if (compile.Runs("phys"))
             names.AddRange(Physics);
         // CWorldRendererBuilder_Build (0923 1802472a0) builds the ray trace environment when vis runs or the

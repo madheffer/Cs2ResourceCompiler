@@ -59,6 +59,24 @@
    "name": "meshopt_encodeIndexSequenceBound",
    "module": "s2c:geometry/world-nodes",
    "note": ""
+  },
+  {
+   "addr": "180fc21a0",
+   "name": "CMapWorld_Ctor",
+   "module": "s2c:entities",
+   "note": "declares mapUsageType a string at +0x2bb8 (adder 180ce0960, type 5) set to \"standard\" (180ce9ef0)"
+  },
+  {
+   "addr": "180fc2760",
+   "name": "CMapWorld_ExportToLump",
+   "module": "s2c:entities",
+   "note": "worldspawn's keys; mapUsageType: +0x2bb8 matched with V_stricmp_fast against the 5 names of 1830169f0, the match's name written (key hash 0x102e9e21, 180fa9df0), none gives standard"
+  },
+  {
+   "addr": "1830169f0",
+   "name": "g_MapUsageTypes",
+   "module": "s2c:entities",
+   "note": "5 x 32 bytes {int value, char *name, char *display}: standard, background, skybox, minigame, sharedenvironment"
   }
  ]
 }
