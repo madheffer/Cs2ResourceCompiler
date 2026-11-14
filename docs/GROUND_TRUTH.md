@@ -6728,3 +6728,23 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        ze_obj_elf_penis_factory_mat unchanged (one layer).
      - Not read: how the entry's +0x38 is filled (the parent walk calling vf40); taken as the nearest layer,
        which every Mako layer count but lr1-4's remaining gaps agrees with.
+
+296. **A mesh's cubeMapName is its entry's lighting origin** (2026-11-15, CS2 open: rc 0923 decompiles of
+     WRB_CollectMeshEntries 18023f6d0, CMapMesh_RegisterProperties 1810e3f50 with the accessor 1810e9880,
+     WRB_MeshEntryFlags 180252ae0 at 18025409c, CompileNode's list constructors, CInstancedMeshList's 180272b70;
+     Valve's fresh Mako -world). READ + MEASURED.
+     - WRB_CollectMeshEntries copies the map mesh's vf 0x68 string into the entry's +0x90 (the lighting origin
+       name) when it is not empty, and its caller's name into +0x38 (the world layer, ledger 295). The only
+       string a CMapMesh keeps for it is cubeMapName (+0x3b48, registered under hammer_embedded_properties);
+       taken as vf 0x68's source, measured on Mako below.
+     - With a lighting origin and UseStaticEnvMapForObjectsWithLightingOrigin, an environmentmappeddynamic
+       material's entry is env-mapped (0x200002, so the instanced list), and WRBMeshEntry_CanAggregate refuses
+       it. Ported: NodeMeshEntries.RecordOf's LightingOrigin, WrbMeshEntry.LightingOriginName, the list
+       assignment and the compile's aggregate test.
+     - Read on the way: the no-split list is built unclustered (+0x20 0) and the instanced list clustered
+       (CInstancedMeshList's +0x20 1, +0x21 UseAggregateInstances); the render cluster size and minimum
+       triangles come from world +0x300 / +0x304 when above 0 (novis_min_draw_volume_size,
+       novis_max_triangles_per_cluster), else the grid size and Hammer/DefaultMinTrianglesPerCluster (0x800).
+     - Mako -world: 966 of 1,782 (was 957); lr2 171 objects (Valve 202, was 129). Left: the render cluster
+       boxes per layer (Valve's lr2 cluster ids reach 45, ours 37), which decide how instanced meshes are cut
+       (CS2_CLOSED_QUEUE A.17). Every other corpus map unchanged.

@@ -52,6 +52,8 @@ public sealed record WrbMeshEntry
     public float FadeMax { get; init; }
     /// <summary>+0x80: the node's origin, which a vis-merged object takes as its lighting origin.</summary>
     public Vector3 Origin { get; init; }
+    /// <summary>+0x90: the lighting origin's name (a mesh's cubeMapName, a prop's lightingorigin), or null.</summary>
+    public string? LightingOriginName { get; init; }
     /// <summary>+0x38: a string compared case-sensitively.</summary>
     public string Name { get; init; } = "";
     /// <summary>+0x1c8: a 3x4 matrix, compared within 1e-5.</summary>

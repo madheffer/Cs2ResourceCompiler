@@ -170,6 +170,14 @@ heavy runs with the game open at below-normal priority):
    -- -world -vis -fshallow` and read the log's visbuilder lines: if Valve's vis gives up (a leak, an open map,
    no sealed region), find that branch in visbuilder.dll and port it (VisOutside / VisRegions); if Valve's own
    compile makes real clusters, the 11-14 package was built without -vis and is the wrong reference.
+17. **Mako's render cluster boxes per layer** (ledgers 295, 296). With world layers and cubeMapName ported,
+   Mako -world is 966 of 1,782 files Valve's; the rest follows from the render cluster boxes each layer's
+   instanced and base lists are cut by (lr2: Valve's cluster ids reach 45, ours 37; whole train-car meshes stay
+   one nomerge object in Valve's). Frida on a standalone resourcecompiler compiling s2c_big
+   ze_ffvii_mako_reactor_v6_p `-world -fshallow` (package backed up and cmp-restored): log, per CompileNode layer
+   pass (local_f88), the boxes Step_BuildingRenderClusters (180282ef0) returns and its input count, the
+   merger's unclustered entries per list, and each CInstancedMeshList vf 0x20 call's entries (node id, +0xa8,
+   material, triangle count). Compare with WorldNodeCompile.CompileLayer's boxes and SplitByCluster.
 
 ## B. CS2 and Steam closed (cubehost)
 

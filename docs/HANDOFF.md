@@ -250,6 +250,8 @@ Valve's own package of the same .vmap (outputs in %TEMP%/s2c_realmaps/<map>, rec
 - Ledger 295: world layers (CMapWorldLayer) in the world node, layer by layer as CompileNode does. Mako -world
   (fresh Valve reference): 957/1,782 (was 604, everything was _lr0); left there: instanced objects and agg_merge
   splits (lr2's metaltrain001c), not the layer split.
+- Ledger 296: a mesh's cubeMapName is its entry's lighting origin (static env map, no aggregate). Mako 966/1,782;
+  the rest is the per-layer render cluster boxes (CS2_CLOSED_QUEUE A.17, needs Frida).
 - Open, queued as CS2_CLOSED_QUEUE A.15: ze_shaurma_v3_b07_t5 (626/1,004; our no-vis merger joins fewer meshes
   than Valve's, so 54 extra aggregates; needs a Frida trace of Valve's merger).
 - Recipe: copy Valve's package to `<out>/csgo_addons/<addon>/maps/`, run `s2c compile-map -i <vmap> -outroot <out>

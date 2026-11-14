@@ -304,7 +304,7 @@ internal static class WorldNodeCompile
     }
 
     private static bool CanAggregate(WrbMeshEntry f)
-        => MeshLists.CanAggregate(new MeshLists.Input(f.Attributes, f.ObjectFlags, f.OverlayOrder, f.FadeMax, false, false));
+        => MeshLists.CanAggregate(new MeshLists.Input(f.Attributes, f.ObjectFlags, f.OverlayOrder, f.FadeMax, !string.IsNullOrEmpty(f.LightingOriginName), false));
 
     // Each list's vf 0x20.
     private static void CompileList(List list, List<Entry> entries, int layer, int cluster, Settings settings, Counters counters, List<RenderObject> objects)

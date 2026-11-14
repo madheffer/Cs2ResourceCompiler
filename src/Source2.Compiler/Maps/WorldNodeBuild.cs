@@ -212,7 +212,8 @@ internal static class WorldNodeBuild
         {
             var b = built[i];
             var (e, h) = (b.Source.Entry, b.Source.Header);
-            if (MeshLists.Assign(new MeshLists.Input(h.Attributes, h.ObjectFlags, 0, e.Record.FadeMax, false, false)) is not { } kind || !lists.TryGetValue(kind, out var list))
+            if (MeshLists.Assign(new MeshLists.Input(h.Attributes, h.ObjectFlags, 0, e.Record.FadeMax, !string.IsNullOrEmpty(e.Record.LightingOrigin), false)) is not { } kind
+                || !lists.TryGetValue(kind, out var list))
                 continue;
             var (stride, v, streams) = Filtered(e.Material, b.Vertices, e.Stride, e.Streams, e.PreciseTexcoords, h.Attributes);
             list.Add(new MergerInput(e.Material, stride, v, b.Indices, new WrbMeshEntry
@@ -223,7 +224,7 @@ internal static class WorldNodeBuild
                 Field28 = h.Tint, Stride = stride, Streams = streams,
                 Field1a3 = h.Byte1a3, Field_b8 = h.EmissiveBoost, Field1a8 = 1f, Cubemap = envMaps[i].Cubemap, LightProbe = envMaps[i].Probe,
                 Mesh184 = 1f, Field9c = h.Field9c, Field1a1 = h.Byte1a1, Field1a0 = h.Byte1a0, Field_b0 = h.FadeMin, FadeMax = h.FadeMax, Origin = h.Origin,
-                Matrix = e.Matrix, NodeId = h.NodeId, LayerNode = h.NodeId, FieldA8 = (h.ObjectFlags & 8) != 0 ? 0 : -1, SkyboxSlot = h.SkyboxSlot,
+                Matrix = e.Matrix, NodeId = h.NodeId, LayerNode = h.NodeId, LightingOriginName = e.Record.LightingOrigin, FieldA8 = (h.ObjectFlags & 8) != 0 ? 0 : -1, SkyboxSlot = h.SkyboxSlot,
                 MeshStreams = Describe(e.Streams, Enumerable.Range(0, e.Streams.Count), e.PreciseTexcoords),
                 TexcoordsPast16 = WrbMeshEntry.TexcoordsPastSixteen(b.Vertices, e.Stride, e.Streams),
             }));

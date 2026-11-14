@@ -138,7 +138,10 @@ internal static class NodeMeshEntries
         var mode = mesh.Attributes.GetValueOrDefault("disableShadows") is { } d ? Convert.ToByte(d, System.Globalization.CultureInfo.InvariantCulture) : (byte)0;
         var merge = mesh.Attributes.GetValueOrDefault("disablemerging") is true;
         var fade = !copy && mesh.Attributes.GetValueOrDefault("fademaxdist") is { } f ? Convert.ToSingle(f, System.Globalization.CultureInfo.InvariantCulture) : 0f;
-        return new MeshEntryFlags.Record(mode, merge ? 2UL : 0UL, fade, false, null, false);
+        // +0x90, the lighting origin's name: WRB_CollectMeshEntries (18023f6d0) takes the map mesh's vf 0x68 string,
+        // a mesh's cubeMapName (CMapMesh +0x3b48, CMapMesh_RegisterProperties 1810e3f50), when not empty.
+        var origin = mesh.Attributes.GetValueOrDefault("cubeMapName") is string { Length: > 0 } named ? named : null;
+        return new MeshEntryFlags.Record(mode, merge ? 2UL : 0UL, fade, false, origin, false);
     }
 
     /// <summary>
