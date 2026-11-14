@@ -39,9 +39,4 @@
           Link="docs\visbuilder.signatures.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- cs2-map-decompiler's tests reuse the fixtures (MapFixtures, CS2Fixtures) and a few tests' helpers. -->
-    <InternalsVisibleTo Include="Cs2MapDecompiler.Tests" />
-  </ItemGroup>
-
 </Project>

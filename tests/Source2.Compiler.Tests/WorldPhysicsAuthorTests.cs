@@ -19,10 +19,6 @@ namespace Source2.Compiler.Tests;
 /// </summary>
 public class WorldPhysicsAuthorTests(ITestOutputHelper output)
 {
-    /// <summary>A step run on the map between its prefab and deformer passes and the build, by a probe
-    /// outside this project (cs2-map-decompiler's WorldPhysicsFlattenProbe); null here.</summary>
-    internal static Action<DmxBinary.Document, ITestOutputHelper>? BeforeBuild;
-
     // Mako's first soup: six " [Wood]" names reach 52 characters (long), the
     // next non-empty name adds "; ..." and seals it, and later ones add nothing.
     [Fact]
@@ -126,8 +122,6 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
         var doc = DmxBinary.ReadFile(Path.Combine(cs2, "content", "csgo_addons", p[0], "maps", p[1] + ".vmap"));
         Maps.MapPrefabs.Attach(doc, Maps.MapPrefabs.FromContent(Path.Combine(cs2, "content", "csgo_addons", p[0])));
         Maps.MapDeformers.Apply(doc, MapFixtures.GameSchema());
-        // WPBUILD_FLATTEN: the decompiler's flatten step (cs2-map-decompiler, WorldPhysicsFlattenProbe) runs here.
-        BeforeBuild?.Invoke(doc, output);
         var notes = new List<string>();
         // WPBUILD_GPU=1: new-blending materials take their layers from the GPU sampler.
         using var gpu = Environment.GetEnvironmentVariable("WPBUILD_GPU") == "1"
