@@ -1354,6 +1354,9 @@ parentname...), differ, missing. "%f" strings compare with what our float prints
   toolsskip cube with physics none, noted; missing 0, 229 of 383 alike. The forward's rule for which
   children keep a brush entity is now RC's (ledger 269): any visible child, a point entity too, but not a
   face-less mesh, and an entity with only face-less meshes is not in the walk (takes no number).
+- 11-14 night: Hammer (Workshop Tools, Steam open) opens the entity-only decompiles at once and hung on world-mesh ones;
+  `s2c vmap-check` found three half-edge faults Valve never writes, fixed in VmapBuilder + HalfEdgeParts (ledger 278).
+  The fixed world copies (s2c_dec_sakura: s2c_dec_ze_hold_em_p_world2, ze_minecraft_sakura_world2) still wait for Hammer.
 - 11-14 later: a prefab's frame search takes InstancePlan's 50M landings budget (ze_minecraft_sakura 2 min 13 s ->
   18 s, byte-identical, ledger 277); decompile-map --addon reads the addon's materials. Hammer check of the
   decompiled ze_hold_em_p and ze_minecraft_sakura (addon s2c_dec_sakura: the workshop item's files in its game

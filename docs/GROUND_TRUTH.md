@@ -6879,3 +6879,27 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Open, found on the way: sakura's func_button 53035 "drawn hull 1 does not pair with render piece 1 in order"
        (deepslate_diamond_ore, 0 of 10 hull points on the piece); func_breakable 42379 and others' hull vertex order
        and corners (same points, other order); its .nav is not version 36.
+
+278. **World meshes Hammer can hold: one face per directed edge, one fan per vertex, boundaries a permutation**
+     (2026-11-14; Workshop Tools, Steam open, CS2 closed: cs2.exe -tools -insecure -addon s2c_dec_sakura, open_asset over
+     netcon; then s2c vmap-check on Valve-saved sources and our decompiles):
+     - Hammer opened the entity-only decompiles at once (ze_hold_em_p 1.4 s, ze_minecraft_sakura 2.4 s) and hung on
+       the world-mesh ones (DECOMPILE_WORLD_MESHES=1; hold em's 14 meshes stopped responding for minutes, as on 10-30).
+     - s2c vmap-check (new) tests every CDmePolygonMesh against the half-edge rules. Valve-saved sources keep every
+       rule: ze_hold_em_p (114 meshes), probe01 (23), c2m2 (23) and the source1import c2m2_fairgrounds_csgo_multi
+       (2,095 meshes, 2.18M faces, 2.65M boundary half-edges, largest mesh 6,525 faces), so mesh size and open
+       boundaries are not what Hammer stalls on. One rule Valve does break: a face visiting a vertex twice (atixref 11,
+       c2m2_fairgrounds_csgo_environment_prefab 65), so the check only reports it; none of our decompiles have one. Ours broke three: (1) VmapBuilder's boundary next took the first
+       faceless edge leaving the target, so where two boundaries meet two edges shared one next (next not a
+       permutation: the 10-30 Hammer re-save of the world decompile carries it, 1 mesh); (2) a soup piece where an
+       edge carries two faces on one side (sakura: 4102 pieces), which a half-edge mesh cannot hold, so face and
+       next were overwritten; (3) a vertex where two face fans touch (hold em: 1), which Valve never writes.
+     - Fixed: boundary next found by turning about the target within its fan (twin, then the face's edge before it);
+       a world piece split into parts with each directed edge used once (HalfEdgeParts: a source Hammer mesh can
+       never reuse one, so a piece that does joins two source meshes); a vertex on a further fan gets its own vertex
+       at the same position. hold em's world: 105 meshes, every rule kept; sakura's: 48,443 meshes, 170,500 faces,
+       every rule kept. Brush entity meshes kept every rule already, so their bytes do not change (checked: the
+       19 probe decompiles byte for byte).
+     - Not yet seen in Hammer: the fixed world copies (s2c_dec_ze_hold_em_p_world2, ze_minecraft_sakura_world2 in
+       s2c_dec_sakura) wait for the next CS2-closed window. Sakura's world still has 78,395 triangles with no
+       material (toolsnodraw) and 5,447 by surface only.

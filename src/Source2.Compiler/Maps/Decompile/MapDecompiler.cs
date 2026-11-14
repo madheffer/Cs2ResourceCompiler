@@ -463,12 +463,18 @@ public static class MapDecompiler
             else
                 notes.Add($"prop_static: {props.Count} rebuilt from {placedHulls} of the world's {shippedHulls} hulls, after {meshesBefore} of the {meshCount} world meshes");
         }
+        var (splitMeshes, extraParts, droppedFaces) = (0, 0, 0);
         void WriteMesh(int slot)
         {
             var mesh = worldMeshes[worldShippedAt[slot] - placedHulls];
-            main.Builder!.AddMesh(main.Builder!.World, main.NewId!(), Vector3.Zero, Vector3.Zero,
-                                  [.. mesh.Faces.Select(f => (f.Corners, f.Material))], mesh.Materials,
-                                  cornerTexcoords: [.. mesh.Faces.Select(f => f.Texcoords)]);
+            var parts = HalfEdgeParts(mesh.Faces.Select(f => f.Corners).ToList(), out var dropped);
+            droppedFaces += dropped;
+            if (parts.Count > 1)
+                (splitMeshes, extraParts) = (splitMeshes + 1, extraParts + parts.Count - 1);
+            foreach (var part in parts)
+                main.Builder!.AddMesh(main.Builder!.World, main.NewId!(), Vector3.Zero, Vector3.Zero,
+                                      [.. part.Select(i => (mesh.Faces[i].Corners, mesh.Faces[i].Material))], mesh.Materials,
+                                      cornerTexcoords: [.. part.Select(i => mesh.Faces[i].Texcoords)]);
         }
         for (var slot = 0; slot < meshesBefore; slot++)
             WriteMesh(slot);
@@ -477,6 +483,9 @@ public static class MapDecompiler
                                     prop.Origin, prop.Angles, Vector3.One, []);
         for (var slot = meshesBefore + placedHulls; slot < meshCount + placedHulls; slot++)
             WriteMesh(slot);
+        if (splitMeshes > 0 || droppedFaces > 0)
+            notes.Add($"world: {splitMeshes} mesh(es) split into {extraParts} more where a directed edge would carry two faces " +
+                      $"(a Hammer mesh cannot: two source meshes in one soup piece), {droppedFaces} face(s) with a repeated corner dropped");
         // A shared prefab map is written once, so a brush entity its first placement has no hulls for
         // has none in any placement: noted for each later one whose own model the package lacks too.
         foreach (var placements in families)
@@ -2325,6 +2334,35 @@ public static class MapDecompiler
             }
         if (first.Variables.Count > 0)
             notes.Add($"prefab {first.Chain}: {first.Variables.Count} map variables for keys its {placements.Count} placements ship differently");
+    }
+
+    /// <summary>
+    /// A face list split into parts a half-edge mesh can hold: each face (welded by exact position)
+    /// goes to the first part where none of its directed edges is used yet, so no edge carries two
+    /// faces on one side. Faces with a repeated corner (no area in a half-edge mesh) are dropped.
+    /// Returns face indices per part, in input order.
+    /// </summary>
+    internal static List<List<int>> HalfEdgeParts(IReadOnlyList<Vector3[]> faces, out int dropped)
+    {
+        var vertexOf = new Dictionary<Vector3, int>();
+        var parts = new List<(List<int> Faces, HashSet<(int, int)> Edges)>();
+        dropped = 0;
+        for (var f = 0; f < faces.Count; f++)
+        {
+            var loop = faces[f].Select(c => vertexOf.TryGetValue(c, out var v) ? v : vertexOf[c] = vertexOf.Count).ToArray();
+            if (loop.Length < 3 || loop.Distinct().Count() != loop.Length)
+            {
+                dropped++;
+                continue;
+            }
+            var edges = loop.Select((v, i) => (loop[(i + loop.Length - 1) % loop.Length], v)).ToArray();
+            var part = parts.FirstOrDefault(p => !edges.Any(p.Edges.Contains));
+            if (part.Faces is null)
+                parts.Add(part = ([], []));
+            part.Faces.Add(f);
+            part.Edges.UnionWith(edges);
+        }
+        return [.. parts.Select(p => p.Faces)];
     }
 
     private static void SolveFrame(List<Scope> placements, List<string> notes)

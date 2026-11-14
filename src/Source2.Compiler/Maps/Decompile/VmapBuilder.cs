@@ -305,11 +305,59 @@ public sealed class VmapBuilder
                 next[ids[i]] = ids[(i + 1) % loop.Length];
             faceFirst[f] = ids[0];
         }
-        // An edge with no face (an open mesh) runs round its boundary: its next is the
-        // faceless edge leaving its target.
+        // An edge with no face (an open mesh) runs round its boundary: its next is the faceless
+        // edge leaving its target on the same fan of faces, found by turning about the target
+        // (twin, then the face's edge before it, until an edge with no face). Where a vertex has
+        // one boundary this is the only faceless edge leaving it; where several fans meet at a
+        // vertex (soup-built world meshes) each boundary keeps its own, so next stays a permutation.
+        var prev = new int[to.Count];
         for (var e = 0; e < to.Count; e++)
-            if (face[e] < 0)
-                next[e] = Enumerable.Range(0, to.Count).FirstOrDefault(x => face[x] < 0 && to[x ^ 1] == to[e], e);
+            if (face[e] >= 0)
+                prev[next[e]] = e;
+        for (var e = 0; e < to.Count; e++)
+        {
+            if (face[e] >= 0)
+                continue;
+            var x = e ^ 1;
+            for (var guard = 0; face[x] >= 0 && guard < to.Count; guard++)
+                x = prev[x] ^ 1;
+            next[e] = face[x] < 0 ? x : e;
+        }
+        // A vertex on more than one fan of faces (two fans touching at a point: soup-built world
+        // meshes) gets a vertex of its own per further fan, at the same position: a vertex names one
+        // edge, and turning about it from there must reach every edge leaving it (Valve-saved meshes
+        // keep this everywhere; s2c vmap-check). The fan holding the vertex's lowest leaving edge
+        // keeps the vertex, so a mesh without such vertices is written as before.
+        var turnPrev = new int[to.Count];
+        for (var e = 0; e < to.Count; e++)
+            turnPrev[next[e]] = e;
+        var leavingOf = new List<int>[positions.Count];
+        for (var e = 0; e < to.Count; e++)
+            (leavingOf[to[e ^ 1]] ??= []).Add(e);
+        var onFan = new bool[to.Count];
+        for (var v = 0; v < leavingOf.Length; v++)
+        {
+            var fans = 0;
+            foreach (var start in leavingOf[v] ?? [])
+            {
+                if (onFan[start])
+                    continue;
+                var members = new List<int>();
+                var x = start;
+                do
+                {
+                    onFan[x] = true;
+                    members.Add(x);
+                    x = turnPrev[x] ^ 1;
+                } while (x != start && members.Count <= to.Count);
+                if (fans++ == 0)
+                    continue;
+                var copy = positions.Count;
+                positions.Add(positions[v]);
+                foreach (var m in members)
+                    to[m ^ 1] = copy;
+            }
+        }
         var vertexEdge = new int[positions.Count];
         for (var e = to.Count - 1; e >= 0; e--)
             vertexEdge[to[e ^ 1]] = e;
