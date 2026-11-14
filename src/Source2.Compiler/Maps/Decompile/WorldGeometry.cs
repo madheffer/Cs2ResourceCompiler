@@ -28,7 +28,9 @@ internal static class WorldGeometry
     /// <param name="surfaceOf">A material's surface property hash (its physics); with it a face the render
     /// does not show takes a render material of the surface the soup gives its triangle.</param>
     public static List<Mesh> Read(IReadOnlyDictionary<string, byte[]> files, string mapName, IReadOnlyDictionary<uint, string> toolMaterials,
-                                  List<string> notes, Func<string, uint>? surfaceOf = null)
+                                  List<string> notes, Func<string, uint>? surfaceOf = null, Func<uint, string?>? surfaceName = null,
+                                  IReadOnlySet<((int, int, int), (int, int, int), (int, int, int))>? propTriangles = null,
+                                  Func<string, IReadOnlyList<string>, string?>? toolFor = null)
     {
         var result = new List<Mesh>();
         if (!files.TryGetValue($"maps/{mapName}/world_physics.vmdl_c", out var physicsBytes))
@@ -58,8 +60,28 @@ internal static class WorldGeometry
                 var tool = (uint)(Child(shape, "m_nToolMaterialHash")?.ToInt64(null) ?? 0);
                 var toolName = tool != 0 && toolMaterials.TryGetValue(tool, out var t) ? t : null;
                 var name = Child(shape, "m_UserFriendlyName")?.ToString() ?? "";
-                var triangles = Enumerable.Range(0, triangleBlob.Length / 12)
+                var allTriangles = Enumerable.Range(0, triangleBlob.Length / 12)
                     .Select(k => (A: BitConverter.ToInt32(triangleBlob, k * 12), B: BitConverter.ToInt32(triangleBlob, k * 12 + 4), C: BitConverter.ToInt32(triangleBlob, k * 12 + 8))).ToList();
+                // Triangles a prop_static's mesh physics gives (StaticProps.FindMeshProps) are the prop's, not the
+                // world's: left out, each kept triangle remembering its soup index for its per-triangle surface.
+                var soupIndex = Enumerable.Range(0, allTriangles.Count)
+                    .Where(k => propTriangles is null || !propTriangles.Contains(StaticProps.TriangleKey(vertices[allTriangles[k].A], vertices[allTriangles[k].B], vertices[allTriangles[k].C])))
+                    .ToArray();
+                var triangles = soupIndex.Select(k => allTriangles[k]).ToList();
+                if (triangles.Count == 0)
+                    continue;
+                // A triangle nothing draws, in a shape with no tool material: the tool material whose collision is the
+                // shape's own (group and interact-as, read from the game's tool materials: clip, window...), else
+                // toolsnodraw, whose collision is the default's.
+                string? attributeTool = null;
+                if (toolName is null && toolFor is not null)
+                {
+                    var attribute = Child(phys, "m_collisionAttributes")?.Values.ElementAtOrDefault((int)(Child(shape, "m_nCollisionAttributeIndex")?.ToInt64(null) ?? -1));
+                    var group = Child(attribute, "m_CollisionGroupString")?.ToString() ?? "";
+                    var interactAs = Child(attribute, "m_InteractAsStrings")?.Values.Select(v => v.ToString() ?? "").ToList() ?? [];
+                    if (group.Length > 0 && !group.Equals("default", StringComparison.OrdinalIgnoreCase) || interactAs.Count > 0)
+                        attributeTool = toolFor(group, interactAs);
+                }
                 // Each triangle's material and its corners' texcoords (from the render), soup-wide.
                 var soupMaterial = new string[triangles.Count];
                 var uv = new Dictionary<(int Triangle, int Vertex), Vector2>();
@@ -77,8 +99,8 @@ internal static class WorldGeometry
                     }
                     else
                     {
-                        soupMaterial[k] = toolName ?? "materials/tools/toolsnodraw.vmat";
-                        if (toolName is null) unknown++; else toolFaces++;
+                        soupMaterial[k] = toolName ?? attributeTool ?? "materials/tools/toolsnodraw.vmat";
+                        if (toolName is null && attributeTool is null) unknown++; else toolFaces++;
                     }
                 }
                 // A face the render does not show (hidden against another, or render-only cut away) still
@@ -86,11 +108,11 @@ internal static class WorldGeometry
                 // render material of that surface, a neighbour's across an edge first, else the only one
                 // the map's render has. Its physics is the material's surface and settings, the same for
                 // any material of that surface the map uses.
-                if (surfaceOf is not null && toolName is null)
+                if (surfaceOf is not null && toolName is null && attributeTool is null)
                 {
                     var perTriangle = Child(body, "m_Materials")?.Values.Select(v => (int)v.ToInt64(null)).ToArray();
                     var shapeSurface = (int)(Child(shape, "m_nSurfacePropertyIndex")?.ToInt64(null) ?? 0);
-                    uint? SurfaceAt(int k) => (perTriangle is { } pt && k < pt.Length ? pt[k] : shapeSurface) is var i && i >= 0 && i < surfaceHashes.Length ? surfaceHashes[i] : null;
+                    uint? SurfaceAt(int k) => (perTriangle is { } pt && soupIndex[k] < pt.Length ? pt[soupIndex[k]] : shapeSurface) is var i && i >= 0 && i < surfaceHashes.Length ? surfaceHashes[i] : null;
                     var byEdge = new Dictionary<(int, int), List<int>>();
                     for (var k = 0; k < triangles.Count; k++)
                         foreach (var (x, y) in (ValueTuple<int, int>[])[(triangles[k].A, triangles[k].B), (triangles[k].B, triangles[k].C), (triangles[k].C, triangles[k].A)])
@@ -128,8 +150,25 @@ internal static class WorldGeometry
                         (soupMaterial[k], resolved[k], stalls) = (pick, true, 0);
                         (bySurface, unknown) = (bySurface + 1, unknown - 1);
                     }
+                    if (DecompileProfile.On)
+                        foreach (var k in pending)
+                        {
+                            var want = SurfaceAt(k);
+                            var candidates = want is { } w ? renderMaterials.Count(m => Surface(m) == w) : -1;
+                            var hit = new[] { triangles[k].A, triangles[k].B, triangles[k].C }
+                                .Count(v => Corner(render, vertices[v], Vector3.Cross(vertices[triangles[k].B] - vertices[triangles[k].A], vertices[triangles[k].C] - vertices[triangles[k].A])) is not null);
+                            DecompileProfile.Count($"world.unresolved {(want is null ? "no surface" : candidates == 0 ? "no render material of its surface" : "several of its surface, no neighbour")} corners-on-render {hit}");
+                        }
                     if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
-                        notes.Add($"world debug: surfaces wanted {string.Join(" ", pending.Select(SurfaceAt).Distinct())}; table {string.Join(" ", surfaceHashes)}; per-triangle {perTriangle?.Length ?? -1} shape {shapeSurface}; render {string.Join(" ", renderMaterials.Select(m => $"{Path.GetFileNameWithoutExtension(m)}={Surface(m)}"))}");
+                    {
+                        var attributeIndex = (int)(Child(shape, "m_nCollisionAttributeIndex")?.ToInt64(null) ?? -1);
+                        var attribute = Child(phys, "m_collisionAttributes")?.Values.ElementAtOrDefault(attributeIndex);
+                        notes.Add($"world debug: soup {name}: {triangles.Count} triangles, {pending.Count} unresolved, tool {toolName ?? "-"}, attribute {attributeIndex}: " +
+                                  $"group {Child(attribute, "m_CollisionGroupString")} as [{string.Join(",", Child(attribute, "m_InteractAsStrings")?.Values.Select(v => v.ToString()) ?? [])}] " +
+                                  $"with [{string.Join(",", Child(attribute, "m_InteractWithStrings")?.Values.Select(v => v.ToString()) ?? [])}]");
+                    }
+                    if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
+                        notes.Add($"world debug: surfaces wanted {string.Join(" ", pending.Select(SurfaceAt).Distinct())}; table {string.Join(" ", surfaceHashes.Select(h => $"{h}={surfaceName?.Invoke(h)}"))}; wanted counts {string.Join(" ", pending.GroupBy(SurfaceAt).Select(g => $"{surfaceName?.Invoke(g.Key ?? 0)}:{g.Count()}"))}; per-triangle {perTriangle?.Length ?? -1} shape {shapeSurface}; render {string.Join(" ", renderMaterials.Select(m => $"{Path.GetFileNameWithoutExtension(m)}={Surface(m)}"))}");
                 }
                 // The soup is its members' pieces one after another, each in its own weld order (Members),
                 // each written as a mesh of its own in that order.

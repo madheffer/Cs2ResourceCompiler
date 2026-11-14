@@ -6903,3 +6903,33 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Not yet seen in Hammer: the fixed world copies (s2c_dec_ze_hold_em_p_world2, ze_minecraft_sakura_world2 in
        s2c_dec_sakura) wait for the next CS2-closed window. Sakura's world still has 78,395 triangles with no
        material (toolsnodraw) and 5,447 by surface only.
+
+279. **World soup triangles that are props' mesh physics; clip faces by collision attribute** (2026-11-15;
+     ze_minecraft_sakura, DECOMPILE_PROFILE=1 counters and DECOMPILE_WORLDDEBUG notes, CS2 open, offline):
+     - Sakura's world decompile left 78,395 soup triangles with no material. Counted by cause: 67,876 carried a surface
+       (Wood 29,395, concrete 14,198, foliage 7,701, grass 6,260, Cloth 5,661, glass 4,661) that no drawn material has,
+       and 16,540 had three corners on the render but on two materials. The addon's own materials were not the gap
+       (decompile-map --addon now also gives GameContent the addon's files, folder or workshop _dir.vpk, AddPackage):
+       only 3 of sakura's 624 .vmat_c set PhysicsSurfaceProperties, read through our material reader.
+     - The surfaces are the props': the .vmap_c names 45 models, 13 with mesh physics (281,550 triangles), and the
+       forward moves a prop's mesh points by the prop matrix and joins them to the world soup with the model's surfaces
+       (WorldCollision prop pieces, StaticPropHulls.Meshes), while its render is baked apart: those triangles land on
+       no world render corner. The world node lists no prop at all (ze_hold_em_p's n0.vwnod_c: 0 scene objects, 0
+       transformed fragments: props are baked), so placements come from the soup.
+     - StaticProps.FindMeshProps: offsets voted from 8 model points to every soup point at each right-angle yaw, each
+       peak checked through StaticPropHulls.Meshes and its origin solved axis by axis over float steps by the most
+       points landing bit for bit. Accepted when every point within reach of a soup point (its 1/16 cell holds one) is
+       one, or is welded to one within RnMeshBuilder's 1/32 (its default weld tolerance: seams where two chunk models
+       meet, up to 0.0069 apart on sakura), and at least 99% land bit for bit (the world build drops a few). Sakura:
+       10 models placed, stone/wood/grass/leaves/glass/cloth all at <2560, 1536, 639.4286> unturned, the boat, eggs
+       (eggland at yaw 90) and boundary elsewhere; 279,873 soup triangles leave the world for prop_statics. Not placed:
+       door_25, door_27, panda (entity models, no vote peak).
+     - A shape with no tool material whose collision attribute is not the default takes the tool material whose
+       collision (group, interact-as) it is, read from the game's materials/tools/*.vmat_c through
+       WorldCollision.ReadMaterial (first by name where several share it: same physics): sakura's npcclip+playerclip
+       soup -> toolsclip, its window soup likewise. The default soup's 8,532 invisible triangles stay toolsnodraw,
+       whose collision is the default's.
+     - Sakura's world: 653 meshes, 8,868 faces (was 48,443 meshes), 5.2 MB (was 173 MB), every half-edge rule kept.
+       ze_hold_em_p's world and entity decompiles and the 19 probe decompiles byte for byte unchanged.
+     - Open: whether the 8,532 default-collision invisible triangles were nodraw, invisible or hidden faces in the
+       source (the package keeps no per-triangle tool material); props with mesh physics under other yaws or scales.

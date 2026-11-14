@@ -56,6 +56,207 @@ internal static class StaticProps
             .Where(n => n.StartsWith("models/", StringComparison.OrdinalIgnoreCase) && n.EndsWith(".vmdl", StringComparison.OrdinalIgnoreCase))];
     }
 
+    /// <summary>The world part's triangle-mesh shapes: each soup's vertices and triangles.</summary>
+    internal static List<(Vector3[] Vertices, (int A, int B, int C)[] Triangles)> WorldSoups(IReadOnlyDictionary<string, byte[]> files, string mapName)
+    {
+        var soups = new List<(Vector3[], (int, int, int)[])>();
+        if (!files.TryGetValue($"maps/{mapName}/world_physics.vmdl_c", out var bytes))
+            return soups;
+        using var resource = new Resource();
+        resource.Read(new MemoryStream(bytes));
+        if (resource.GetBlockByType(BlockType.PHYS) is not PhysAggregateData phys)
+            return soups;
+        foreach (var part in phys.Parts)
+            foreach (var m in part.Shape.Meshes)
+                soups.Add(([.. m.Shape.GetVertices().ToArray()], [.. m.Shape.GetTriangles().ToArray().Select(t => (t.X, t.Y, t.Z))]));
+        return soups;
+    }
+
+    /// <summary>A soup triangle by its corners' bits, the same whichever corner it starts from.</summary>
+    internal static ((int, int, int), (int, int, int), (int, int, int)) TriangleKey(Vector3 a, Vector3 b, Vector3 c)
+    {
+        var k = new[] { Bits(a), Bits(b), Bits(c) };
+        Array.Sort(k);
+        return (k[0], k[1], k[2]);
+    }
+
+    /// <summary>
+    /// prop_statics whose physics is triangle meshes, back from the world soups. The forward moves each mesh
+    /// point by the prop matrix (<see cref="StaticPropHulls.Meshes"/>) and joins the triangles into the world's
+    /// soups with the model's surfaces, while the prop's render is baked to the world apart from them: such
+    /// triangles land on no render corner and carry surfaces no world material has (ze_minecraft_sakura: 13
+    /// models, 281,550 triangles). Placements are found by voting: offsets from sample model points to every soup
+    /// point, at each right-angle yaw; each peak is checked through the forward and its origin solved per axis
+    /// over float steps until every point lands bit for bit. Returns the props and the soup triangles they give.
+    /// </summary>
+    internal static (List<Placed> Props, HashSet<((int, int, int), (int, int, int), (int, int, int))> Triangles) FindMeshProps(
+        IReadOnlyList<(Vector3[] Vertices, (int A, int B, int C)[] Triangles)> soups, IReadOnlyList<string> models,
+        Func<string, PhysAggregateData?> physics, List<string> notes)
+    {
+        var props = new List<Placed>();
+        var taken = new HashSet<((int, int, int), (int, int, int), (int, int, int))>();
+        var soupPoints = soups.SelectMany(s => s.Vertices).ToHashSet();
+        var soupList = soupPoints.ToArray();
+        var soupKeys = soups.SelectMany(s => s.Triangles.Select(t => TriangleKey(s.Vertices[t.A], s.Vertices[t.B], s.Vertices[t.C]))).ToHashSet();
+        var near = soupList.Select(Cell).ToHashSet();
+        var byCell = soupList.GroupBy(Cell).ToDictionary(g => g.Key, g => g.ToList());
+        // A prop point as the soup holds it: itself, or the soup point the world's build welded it to (RnMeshBuilder
+        // welds within 1/32, its default tolerance: seams where two chunk models meet), else null.
+        Vector3? Snap(Vector3 p)
+        {
+            if (soupPoints.Contains(p))
+                return p;
+            var (cx, cy, cz) = Cell(p);
+            Vector3? best = null;
+            var bestDistance = 1f / 1024f;
+            for (var dx = -1; dx <= 1; dx++)
+                for (var dy = -1; dy <= 1; dy++)
+                    for (var dz = -1; dz <= 1; dz++)
+                        foreach (var q in byCell.GetValueOrDefault((cx + dx, cy + dy, cz + dz)) ?? [])
+                            if (Vector3.DistanceSquared(p, q) is var d && d <= bestDistance)
+                                (best, bestDistance) = (q, d);
+            return best;
+        }
+        var (approximate, missing) = (0, 0);
+        foreach (var model in models.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (physics(model) is not { } phys || !phys.Parts.Any(p => p.Shape.Meshes.Length > 0))
+                continue;
+            var local = StaticPropHulls.Meshes(new StaticPropHulls.Prop(-1, model, Vector3.Zero, Vector3.Zero, Vector3.One), phys)
+                .SelectMany(n => n.Points).Distinct().ToArray();
+            if (local.Length == 0)
+                continue;
+            const int samples = 8;
+            var sample = Enumerable.Range(0, samples).Select(i => local[(int)((long)i * local.Length / samples)]).ToArray();
+            var placedHere = 0;
+            for (var quarter = 0; quarter < 4 && placedHere == 0; quarter++)
+            {
+                Vector3 Turn(Vector3 p) => quarter switch { 1 => new(-p.Y, p.X, p.Z), 2 => new(-p.X, -p.Y, p.Z), 3 => new(p.Y, -p.X, p.Z), _ => p };
+                var votes = new Dictionary<(long, long, long), (int Count, Vector3 Offset)>();
+                foreach (var p in sample.Select(Turn))
+                {
+                    var seen = new HashSet<(long, long, long)>();
+                    foreach (var s in soupList)
+                    {
+                        var d = s - p;
+                        var key = ((long)MathF.Round(d.X * 8), (long)MathF.Round(d.Y * 8), (long)MathF.Round(d.Z * 8));
+                        if (!seen.Add(key))
+                            continue;
+                        votes[key] = votes.TryGetValue(key, out var v) ? (v.Count + 1, v.Offset) : (1, d);
+                    }
+                }
+                if (DecompileProfile.On && votes.Count > 0)
+                {
+                    var best = votes.Values.MaxBy(v => v.Count);
+                    var landing = local.Select(Turn).Count(p => near.Contains(Cell(p + best.Offset)));
+                    notes.Add($"prop_static debug: {model} quarter {quarter}: best {best.Count}/{samples} votes at {best.Offset:R}, " +
+                              $"{landing} of {local.Length} points within 1/16 of a soup point; peaks >= {samples - 2}: {votes.Values.Count(v => v.Count >= samples - 2)}");
+                }
+                foreach (var (_, (count, offset)) in votes.Where(kv => kv.Value.Count >= samples - 2).OrderByDescending(kv => kv.Value.Count))
+                {
+                    var angles = new Vector3(0f, quarter * 90f, 0f);
+                    if (ExactOrigin(model, phys, angles, offset, soupPoints, near, Snap) is not { } origin)
+                    {
+                        approximate++;
+                        if (DecompileProfile.On && count == samples)
+                        {
+                            var best = (Exact: -1, Miss: 0, Total: 0, Z: 0f);
+                            foreach (var z in Steps(offset.Z, 64))
+                            {
+                                var (exact, miss, total) = (0, 0, 0);
+                                foreach (var p in StaticPropHulls.Meshes(new StaticPropHulls.Prop(-1, model, new Vector3(MathF.Round(offset.X), MathF.Round(offset.Y), z), angles, Vector3.One), phys).SelectMany(n => n.Points))
+                                {
+                                    total++;
+                                    if (soupPoints.Contains(p)) exact++;
+                                    else if (near.Contains(Cell(p))) miss++;
+                                }
+                                if (exact > best.Exact)
+                                    best = (exact, miss, total, z);
+                            }
+                            var sampleMiss = StaticPropHulls.Meshes(new StaticPropHulls.Prop(-1, model, new Vector3(MathF.Round(offset.X), MathF.Round(offset.Y), best.Z), angles, Vector3.One), phys)
+                                .SelectMany(n => n.Points).Where(p => !soupPoints.Contains(p) && near.Contains(Cell(p))).Take(2)
+                                .Select(p => $"{p:R} vs {soupList.MinBy(q => Vector3.DistanceSquared(q, p)):R}");
+                            var distances = StaticPropHulls.Meshes(new StaticPropHulls.Prop(-1, model, new Vector3(MathF.Round(offset.X), MathF.Round(offset.Y), best.Z), angles, Vector3.One), phys)
+                                .SelectMany(n => n.Points).Where(p => !soupPoints.Contains(p) && near.Contains(Cell(p)))
+                                .Select(p => MathF.Sqrt(soupList.Min(q => Vector3.DistanceSquared(q, p)))).OrderBy(d => d).ToList();
+                            notes.Add($"prop_static debug: {model} at <{MathF.Round(offset.X)}, {MathF.Round(offset.Y)}, {best.Z:R}>: {best.Exact} exact, {best.Miss} near misses of {best.Total}; " +
+                                      $"miss distances median {distances.ElementAtOrDefault(distances.Count / 2):R} max {distances.LastOrDefault():R}, over 1/256: {distances.Count(d => d > 1f / 256)}: {string.Join(" ", distances.Where(d => d > 1f / 256).Take(6).Select(d => d.ToString("R")))}; e.g. {string.Join("; ", sampleMiss)}");
+                        }
+                        continue;
+                    }
+                    if (props.Any(x => x.Model == model && Bits(x.Origin) == Bits(origin) && Bits(x.Angles) == Bits(angles)))
+                        continue;
+                    var nodes = StaticPropHulls.Meshes(new StaticPropHulls.Prop(-1, model, origin, angles, Vector3.One), phys);
+                    // The triangles the soup keeps of the prop's (the world's build drops a few: degenerate or welded).
+                    foreach (var n in nodes)
+                        for (var t = 0; t < n.Indices.Length / 3; t++)
+                            if (Snap(n.Points[n.Indices[t * 3]]) is { } a && Snap(n.Points[n.Indices[(t * 3) + 1]]) is { } b && Snap(n.Points[n.Indices[(t * 3) + 2]]) is { } c
+                                && TriangleKey(a, b, c) is var key && soupKeys.Contains(key))
+                                taken.Add(key);
+                    props.Add(new Placed(model, origin, angles, []));
+                    placedHere++;
+                }
+            }
+            if (placedHere == 0)
+                missing++;
+        }
+        if (props.Count > 0 || missing > 0)
+            notes.Add($"prop_static: {props.Count} with mesh physics placed from the world soups ({taken.Count} soup triangles); " +
+                      $"{approximate} vote peaks not landing bit for bit, {missing} mesh model(s) placed nowhere (an entity's model, or no right-angle yaw): " +
+                      string.Join("; ", props.Select(x => $"{x.Model} at {x.Origin:R} yaw {x.Angles.Y}")));
+        return (props, taken);
+    }
+
+    // A point's 1/16 cell: "within reach" of a soup point.
+    private static (long, long, long) Cell(Vector3 p) => ((long)MathF.Round(p.X * 16), (long)MathF.Round(p.Y * 16), (long)MathF.Round(p.Z * 16));
+
+    // The origin under which the model's mesh points, turned by angles, land on soup points: every point within
+    // reach of one (its 1/16 cell holds a soup point) is one bit for bit or welded to one within 1/32 (RnMeshBuilder's
+    // weld: seams between chunk models), and at least 99% land bit for bit (the world's build drops a few). Typed values
+    // first (whole, 1/1000, 1/32), then each axis over float steps about the estimate, the one most points' own
+    // coordinate takes.
+    private static Vector3? ExactOrigin(string model, PhysAggregateData phys, Vector3 angles, Vector3 estimate, HashSet<Vector3> soup,
+                                        HashSet<(long, long, long)> near, Func<Vector3, Vector3?> snap)
+    {
+        Vector3[] Placed(Vector3 origin) => [.. StaticPropHulls.Meshes(new StaticPropHulls.Prop(-1, model, origin, angles, Vector3.One), phys).SelectMany(n => n.Points)];
+        bool Lands(Vector3 origin)
+        {
+            var points = Placed(origin);
+            var exact = 0;
+            foreach (var p in points)
+            {
+                if (soup.Contains(p))
+                    exact++;
+                else if (near.Contains(Cell(p)) && snap(p) is null)
+                    return false;
+            }
+            return exact >= points.Length * 0.99;
+        }
+        foreach (var round in new Func<float, float>[] { MathF.Round, f => MathF.Round(f * 1000f) / 1000f, f => MathF.Round(f * 32f) / 32f })
+        {
+            var o = new Vector3(round(estimate.X), round(estimate.Y), round(estimate.Z));
+            if (Lands(o))
+                return o;
+        }
+        var origin = new Vector3(MathF.Round(estimate.X * 1000f) / 1000f, MathF.Round(estimate.Y * 1000f) / 1000f, MathF.Round(estimate.Z * 1000f) / 1000f);
+        // Each axis in turn, twice: the value whose placement lands the most points bit for bit (of the first 2048).
+        for (var pass = 0; pass < 2; pass++)
+            for (var axis = 0; axis < 3; axis++)
+            {
+                float Of(Vector3 v) => axis == 0 ? v.X : axis == 1 ? v.Y : v.Z;
+                var (best, bestCount) = (Of(origin), -1);
+                foreach (var c in Steps(Of(estimate), 64).Concat(Steps(MathF.Round(Of(estimate) * 1000f) / 1000f, 64)).Concat(Steps(MathF.Round(Of(estimate)), 4)))
+                {
+                    var o = axis == 0 ? origin with { X = c } : axis == 1 ? origin with { Y = c } : origin with { Z = c };
+                    var count = Placed(o).Take(2048).Count(soup.Contains);
+                    if (count > bestCount)
+                        (best, bestCount) = (c, count);
+                }
+                origin = axis == 0 ? origin with { X = best } : axis == 1 ? origin with { Y = best } : origin with { Z = best };
+            }
+        return Lands(origin) ? origin : null;
+    }
+
     // One model hull: its body and place in the model's hull list, and its cooked vertices.
     private sealed record ModelHull(string Model, int Part, int Index, Vector3[] Points, Vector3[] Cooked);
 

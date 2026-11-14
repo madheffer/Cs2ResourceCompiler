@@ -408,8 +408,14 @@ public static class MapDecompiler
         // The pieces reach the soups through PartOrder (a CRT qsort on shape type after every insert: with
         // one type a fixed permutation of the input), so they are written in its inverse, as a brush
         // entity's hulls are.
+        // prop_statics with mesh physics first: their triangles sit in the world soups and leave them.
+        var meshProps = new List<StaticProps.Placed>();
+        HashSet<((int, int, int), (int, int, int), (int, int, int))>? propTriangles = null;
+        if (Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" && content is not null)
+            (meshProps, propTriangles) = StaticProps.FindMeshProps(StaticProps.WorldSoups(files, mapName), StaticProps.Models(files, mapName), content.Physics, notes);
         var worldMeshes = Environment.GetEnvironmentVariable("DECOMPILE_WORLD_MESHES") == "1" ? WorldGeometry.Read(files, mapName, table, notes,
-            content is null ? null : name => Physics.WorldCollision.ReadMaterial(name, content.Material, content.CollisionProperty).SurfaceKey) : [];
+            content is null ? null : name => Physics.WorldCollision.ReadMaterial(name, content.Material, content.CollisionProperty).SurfaceKey,
+            content is null ? null : content.SurfaceName, propTriangles, content is null ? null : ToolsByCollision(table, content)) : [];
         // The prop_statics from the world's hulls (StaticProps), written after the world meshes. The part
         // sorts the shapes by type after every insert, the meshes (3) and the props' hulls (2) together,
         // so both are written in the inverse of that sort over this sequence: the meshes, then each prop's
@@ -421,6 +427,33 @@ public static class MapDecompiler
             var (hulls, _) = StaticProps.WorldHulls(files, mapName);
             shippedHulls = hulls.Count;
             props = StaticProps.Find(hulls, StaticProps.Models(files, mapName), content.Physics, notes);
+            if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
+            {
+                var stats = StaticProps.Models(files, mapName).Select(m => (Model: m, Phys: content.Physics(m))).ToList();
+                var withMeshes = stats.Where(x => x.Phys?.Parts.Any(p => p.Shape.Meshes.Length > 0) == true).ToList();
+                notes.Add($"world debug: the .vmap_c names {stats.Count} models, {stats.Count(x => x.Phys is null)} without physics, {withMeshes.Count} with mesh shapes " +
+                          $"({withMeshes.Sum(x => x.Phys!.Parts.Sum(p => p.Shape.Meshes.Sum(m => m.Shape.GetTriangles().Length)))} triangles once each); " +
+                          $"e.g. {string.Join(" ", withMeshes.Take(8).Select(x => $"{x.Model}:{x.Phys!.Parts.Sum(p => p.Shape.Meshes.Sum(m => m.Shape.GetTriangles().Length))}"))}");
+                // The soup's vertices, and each such model's mesh points placed at the origin unturned.
+                var soupPoints = new HashSet<Vector3>();
+                using (var wp = new ValveResourceFormat.Resource())
+                {
+                    wp.Read(new MemoryStream(files[$"maps/{mapName}/world_physics.vmdl_c"]));
+                    if (wp.GetBlockByType(ValveResourceFormat.BlockType.PHYS) is ValveResourceFormat.ResourceTypes.PhysAggregateData wphys)
+                        foreach (var part in wphys.Parts)
+                            foreach (var m in part.Shape.Meshes)
+                                soupPoints.UnionWith(m.Shape.GetVertices().ToArray());
+                }
+                notes.Add($"world debug: soup vertices {soupPoints.Count}, bounds {soupPoints.Aggregate(new Vector3(float.MaxValue), Vector3.Min)} {soupPoints.Aggregate(new Vector3(float.MinValue), Vector3.Max)}");
+                foreach (var (model, phys) in withMeshes)
+                {
+                    var nodes = Physics.StaticPropHulls.Meshes(new Physics.StaticPropHulls.Prop(-1, model, Vector3.Zero, Vector3.Zero, Vector3.One), phys!);
+                    var points = nodes.SelectMany(n => n.Points).Distinct().ToList();
+                    var lo = points.Aggregate(new Vector3(float.MaxValue), Vector3.Min);
+                    var hi = points.Aggregate(new Vector3(float.MinValue), Vector3.Max);
+                    notes.Add($"world debug: model {model}: {points.Count} mesh points, {points.Count(soupPoints.Contains)} on soup vertices at the origin unturned; bounds {lo} {hi}");
+                }
+            }
             if (Environment.GetEnvironmentVariable("DECOMPILE_WORLDDEBUG") == "1")
                 notes.Add($"world debug: props' shipped hulls {string.Join(" ", props.OrderBy(p => p.Hulls.Min()).Select(p => $"{Path.GetFileNameWithoutExtension(p.Model)[^5..]}[{string.Join(",", p.Hulls)}]"))}");
         }
@@ -483,6 +516,9 @@ public static class MapDecompiler
                                     prop.Origin, prop.Angles, Vector3.One, []);
         for (var slot = meshesBefore + placedHulls; slot < meshCount + placedHulls; slot++)
             WriteMesh(slot);
+        foreach (var prop in meshProps)
+            main.Builder!.AddEntity(main.NewId!(), [new("classname", "prop_static"), new("model", prop.Model)],
+                                    prop.Origin, prop.Angles, Vector3.One, []);
         if (splitMeshes > 0 || droppedFaces > 0)
             notes.Add($"world: {splitMeshes} mesh(es) split into {extraParts} more where a directed edge would carry two faces " +
                       $"(a Hammer mesh cannot: two source meshes in one soup piece), {droppedFaces} face(s) with a repeated corner dropped");
@@ -2334,6 +2370,24 @@ public static class MapDecompiler
             }
         if (first.Variables.Count > 0)
             notes.Add($"prefab {first.Chain}: {first.Variables.Count} map variables for keys its {placements.Count} placements ship differently");
+    }
+
+    /// <summary>
+    /// The tool material (materials/tools/) whose collision is a group and interact-as list, read through the
+    /// game's .vmat_c files as the forward reads a material's collision (WorldCollision.ReadMaterial); the
+    /// first by name where several share it (their physics is the same). Null where none has it.
+    /// </summary>
+    internal static Func<string, IReadOnlyList<string>, string?> ToolsByCollision(IReadOnlyDictionary<uint, string> materials, GameContent content)
+    {
+        static string Key(string group, IEnumerable<string> interactAs)
+            => group.ToLowerInvariant() + "|" + string.Join(",", interactAs.Select(x => x.Trim().ToLowerInvariant()).Where(x => x.Length > 0).Order(StringComparer.Ordinal));
+        var byKey = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var name in materials.Values.Where(m => m.StartsWith("materials/tools/", StringComparison.OrdinalIgnoreCase)).Order(StringComparer.Ordinal))
+        {
+            var physics = Physics.WorldCollision.ReadMaterial(name, content.Material, content.CollisionProperty);
+            byKey.TryAdd(Key(physics.CollisionGroup, physics.InteractAs.Split(',')), name);
+        }
+        return (group, interactAs) => byKey.GetValueOrDefault(Key(group, interactAs));
     }
 
     /// <summary>

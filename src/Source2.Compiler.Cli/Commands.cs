@@ -727,7 +727,25 @@ internal static class Commands
         var files = Maps.Decompile.MapDecompiler.ReadPackage(path);
         var map = Maps.Decompile.MapDecompiler.MapNameOf(files);
         // The game's models, for the prop_statics in the world's hulls.
-        var gameContent = new Maps.GameContent(Path.Combine(game, "csgo", "pak01_dir.vpk"));
+        // With --addon, the addon's own files first (its game folder loose, or its workshop _dir.vpk), as the
+        // game mounts it: the materials world faces take their surfaces from, the models of its props.
+        var addonOpt = Opt(a, "--addon");
+        var gameContent = addonOpt is not null && Directory.Exists(addonOpt)
+            ? new Maps.GameContent(Path.Combine(game, "csgo", "pak01_dir.vpk"), addonOpt)
+            : new Maps.GameContent(Path.Combine(game, "csgo", "pak01_dir.vpk"));
+        if (addonOpt is not null && !Directory.Exists(addonOpt))
+            gameContent.AddPackage(addonOpt);
+        // DECOMPILE_MATDEBUG=<a.vmat>,<b.vmat>: what the content gives for those materials, then stop.
+        if (Environment.GetEnvironmentVariable("DECOMPILE_MATDEBUG") is { Length: > 0 } debugMaterials)
+        {
+            foreach (var m in debugMaterials.Split(','))
+            {
+                var info = gameContent.Material(m);
+                Console.WriteLine($"{m}: {(info is null ? "not found" : $"shader {info.Shader}; strings {string.Join(", ", info.Strings.Select(kv => $"{kv.Key}={kv.Value}"))}; ints {string.Join(", ", info.Ints.Select(kv => $"{kv.Key}={kv.Value}"))}")}");
+                Console.WriteLine($"  surface key {Physics.WorldCollision.ReadMaterial(m, gameContent.Material, gameContent.CollisionProperty).SurfaceKey}");
+            }
+            return 0;
+        }
         // Brush hulls name their material by hash: the game's materials, and with --addon (the addon's
         // _dir.vpk or its game folder) the addon's own, as the sweep reads them.
         var materialNames = Maps.Decompile.BrushGeometry.GameMaterialNames(game);
