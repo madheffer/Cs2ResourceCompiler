@@ -41,14 +41,20 @@ public class MapSubassetsTests(ITestOutputHelper output)
             if (package.FindEntry($"maps/{map}.vmap_c") is not { } entry)
                 continue;
             var trees = WorldPhysicsAuthorTests.Trees(Io.VpkEntries.Read(package, entry));
+            if (MapRootFileTests.StaleSource(trees["RED2"], map, source))
+            {
+                output.WriteLine($"{map}: source changed since Valve's compile, skipped");
+                continue;
+            }
             var valve = new List<(string, string, int)>();
             if (trees["RED2"]["m_SubassetReferences"] is { ValueType: KVValueType.Collection } refs)
                 foreach (var (type, names) in refs)
                     foreach (var (name, count) in names)
                         valve.Add((type, name, count.ToInt32(System.Globalization.CultureInfo.InvariantCulture)));
             var document = DmxBinary.ReadFile(source);
-            MapPrefabs.Attach(document, MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!));
-            var ours = MapSubassets.References(MapEntities.From(document), schema, document);
+            var load = MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!);
+            MapPrefabs.Attach(document, load);
+            var ours = MapSubassets.References(MapEntities.From(document), schema, document, load);
             // The RED2 groups by type, each in the order its names first appear.
             var grouped = ours.GroupBy(r => r.Type).SelectMany(g => g).ToList();
             compared++;
@@ -100,11 +106,16 @@ public class MapAssetsTests(ITestOutputHelper output)
             using var res = ResourceTrees.Read(Io.VpkEntries.Read(package, entry), "map.vmap_c");
             var red2 = ((ValveResourceFormat.Blocks.ResourceEditInfo2)res.EditInfo!).Data!.Root;
             var children = red2.GetArray<string>("m_ChildResourceList")!.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (MapRootFileTests.StaleSource(red2, map, source))
+            {
+                output.WriteLine($"{map}: source changed since Valve's compile, skipped");
+                continue;
+            }
             var valve = res.ExternalReferences!.ResourceRefInfoList.Select(r => r.Name).Where(n => !children.Contains(n)).ToList();
             var document = DmxBinary.ReadFile(source);
             MapPrefabs.Attach(document, MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!));
             var entities = MapEntities.From(document);
-            var ours = MapAssets.References(document, MapSubassets.LumpOrder(entities, document), schema, $"maps/{map}").ToList();
+            var ours = MapAssets.References(document, MapSubassets.LumpOrder(entities, document), schema, $"maps/{map}", MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!)).Where(n => !children.Contains(n)).ToList();
             var same = ours.SequenceEqual(valve);
             output.WriteLine($"{map}: {valve.Count} externals, {(same ? "equal" : "DIFFER")}");
             if (!same)
@@ -186,6 +197,8 @@ public class MapRootFileTests(ITestOutputHelper output)
         var schema = FgdSchema.Load(Path.Combine(game, "csgo", "csgo.fgd"), [Path.Combine(game, "core"), Path.Combine(game, "csgo")]);
         var maps = Path.Combine(game, "csgo_addons", "s2c_rc_probe", "maps");
         var failed = new List<string>();
+        using var assets = new GameContent(pak, Path.Combine(game, "csgo_addons", "s2c_rc_probe"));
+        using var shaders = new ShaderLibrary(Path.Combine(game, "csgo", "shaders_pc_dir.vpk"), Path.Combine(game, "core", "shaders_pc_dir.vpk"));
         foreach (var vpk in Directory.GetFiles(maps, "*.vpk").Order(StringComparer.Ordinal))
         {
             var map = Path.GetFileNameWithoutExtension(vpk);
@@ -199,12 +212,19 @@ public class MapRootFileTests(ITestOutputHelper output)
             using var res = ResourceTrees.Read(valve, "map.vmap_c");
             var red2 = ((ValveResourceFormat.Blocks.ResourceEditInfo2)res.EditInfo!).Data!.Root;
             var children = red2.GetArray<string>("m_ChildResourceList")!.ToList();
+            if (StaleSource(red2, map, source))
+            {
+                output.WriteLine($"{map}: source changed since Valve's compile, skipped");
+                continue;
+            }
             var content = Path.GetDirectoryName(Path.GetDirectoryName(source))!;
             var document = DmxBinary.ReadFile(source);
             MapPrefabs.Attach(document, MapPrefabs.FromContent(content));
             var inputs = new List<(string, uint)> { ($"maps/{map}.vmap", MapRootFile.Crc(File.ReadAllBytes(source))) };
-            foreach (var path in Prefabs(document).Distinct(StringComparer.OrdinalIgnoreCase))
-                inputs.Add((path, MapRootFile.Crc(File.ReadAllBytes(Path.Combine(content, path)))));
+            // The inputs as MapCompile lists them (MapRootFile.PrefabMaps: runtime prefabs too).
+            foreach (var path in MapRootFile.PrefabMaps(document).Distinct(StringComparer.OrdinalIgnoreCase))
+                if (File.Exists(Path.Combine(content, path)))
+                    inputs.Add((path, MapRootFile.Crc(File.ReadAllBytes(Path.Combine(content, path)))));
             var baked = children.Any(c => c.EndsWith("/lightmaps/irradiance.vtex", StringComparison.Ordinal));
             var probes = children.Any(c => c.EndsWith("env_light_probe_volume_atlas.vtex", StringComparison.Ordinal));
             var entities = MapEntities.From(document);
@@ -213,12 +233,38 @@ public class MapRootFileTests(ITestOutputHelper output)
             // that ran are the ones whose outputs the package holds. A full build bakes any map with world
             // geometry; one with none (the _gameplay prefab maps: a world node and no node models) has no lightmaps.
             var geometry = children.Any(c => c.Contains("/worldnodes/", StringComparison.Ordinal) && c.EndsWith(".vmdl", StringComparison.Ordinal));
-            var steps = baked || !geometry ? null : Steps(children);
+            // A map with no world geometry built whole still runs physics (world_physics.vmdl, the _gameplay maps); one
+            // without that either is a -world build (the s2c_dec_* decompiles: bakelighting, no lighting rows).
+            var full = baked || (!geometry && children.Any(c => c.EndsWith("/world_physics.vmdl", StringComparison.Ordinal)));
+            var steps = full ? null : Steps(children);
+            // Whether an entity model of the build has a render mesh (MapRootFile.ReadsMeshArguments), from the package's.
+            // A model the build failed (on a missing material) is a child with no file, and reads them too.
+            var renderModels = children.Where(c => c.Contains("/entities/", StringComparison.Ordinal) && c.EndsWith(".vmdl", StringComparison.Ordinal))
+                .Any(c => package.FindEntry(c + "_c") is not { } m || HasRenderMesh(Io.VpkEntries.Read(package, m)));
+            // Whether the node compile merges (debugColorClustering, ledger 271): our own world node build, as MapCompile
+            // runs it, for a build without vis (with vis the vis builder's clusters decide; node models stand for it).
+            HashSet<string>? nodeArguments = null;
+            if (!children.Any(c => c.EndsWith("/world_visibility.vvis", StringComparison.Ordinal)))
+            {
+                nodeArguments = [];
+                try
+                {
+                    WorldNodeFiles.Build(document, "s2c_rc_probe", map, assets, shaders, schema, game, EnvVolumes.Set.Empty, 0, [],
+                                         vis: false, readArguments: nodeArguments);
+                }
+                catch (NotSupportedException e)
+                {
+                    output.WriteLine($"  {map}: node build not ported ({e.Message}), merge read from node models");
+                    nodeArguments = null;
+                }
+            }
             var compile = new MapRootFile.Compile("s2c_rc_probe", inputs, baked, probes, new Dictionary<string, object>(), steps,
-                                                  steps is not null && MapRootFile.ReadsStaticModelRecords(document), Partial: steps is not null);
+                                                  steps is not null && MapRootFile.ReadsStaticModelRecords(document),
+                                                  EntityRenderModels: renderModels, Partial: steps is not null)
+            { NodeArguments = nodeArguments };
             var ours = MapRootFile.Write(compile, children,
-                                         MapAssets.References(document, MapSubassets.LumpOrder(entities, document), schema, $"maps/{map}"),
-                                         MapSubassets.References(entities, schema, document));
+                                         MapAssets.References(document, MapSubassets.LumpOrder(entities, document), schema, $"maps/{map}", MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!)),
+                                         MapSubassets.References(entities, schema, document, MapPrefabs.FromContent(content)));
             var same = ours.AsSpan().SequenceEqual(valve);
             output.WriteLine($"{map}: {(same ? "equal" : $"DIFFER ({ours.Length} vs {valve.Length} bytes)")}");
             if (!same && ours.Length == valve.Length)
@@ -235,6 +281,10 @@ public class MapRootFileTests(ITestOutputHelper output)
                 File.WriteAllText(Path.Combine(Path.GetTempPath(), $"maproot_{map}_ours.kv3"), a);
                 File.WriteAllText(Path.Combine(Path.GetTempPath(), $"maproot_{map}_valve.kv3"), b);
                 var at = Enumerable.Range(0, Math.Min(a.Length, b.Length)).FirstOrDefault(i => a[i] != b[i], -1);
+                var refsOurs = mine.ExternalReferences?.ResourceRefInfoList.Select(r => r.Name).ToHashSet() ?? [];
+                var refsValve = res.ExternalReferences?.ResourceRefInfoList.Select(r => r.Name).ToHashSet() ?? [];
+                if (!refsOurs.SetEquals(refsValve))
+                    output.WriteLine($"  RERL valve only: {string.Join(", ", refsValve.Except(refsOurs))}; ours only: {string.Join(", ", refsOurs.Except(refsValve))}");
                 output.WriteLine(at < 0 ? $"  RED2 text equal (lengths {a.Length}/{b.Length}); blocks ours {string.Join(" ", ResourceTrees.BlockTable(ours).Select(x => $"{x.FourCC}:{x.Size}"))} valve {string.Join(" ", ResourceTrees.BlockTable(valve).Select(x => $"{x.FourCC}:{x.Size}"))}"
                                      : $"  RED2 text at {at}: ours ...{a[Math.Max(0, at - 80)..Math.Min(a.Length, at + 80)]}\n  valve ...{b[Math.Max(0, at - 80)..Math.Min(b.Length, at + 80)]}");
             }
@@ -312,8 +362,8 @@ public class MapRootFileTests(ITestOutputHelper output)
                 var compile = new MapRootFile.Compile("s2c_rc_probe", inputs, lit, probeVolumes, args.Arguments,
                                                       steps, MapRootFile.ReadsStaticModelRecords(document), args.EntitiesOnly,
                                                       MapRootFile.ReadsMeshArguments(models, failedModels), partial);
-                var ours = MapRootFile.Write(compile, children, MapAssets.References(document, MapSubassets.LumpOrder(entities, document), schema, $"maps/{map}"),
-                                             MapSubassets.References(entities, schema, document));
+                var ours = MapRootFile.Write(compile, children, MapAssets.References(document, MapSubassets.LumpOrder(entities, document), schema, $"maps/{map}", MapPrefabs.FromContent(Path.GetDirectoryName(Path.GetDirectoryName(source))!)),
+                                             MapSubassets.References(entities, schema, document, MapPrefabs.FromContent(content)));
                 compared++;
                 var same = ours.AsSpan().SequenceEqual(valve);
                 output.WriteLine($"{folder}/{map}: {(same ? "equal" : $"DIFFER ({ours.Length} vs {valve.Length} bytes)")}");
@@ -342,6 +392,37 @@ public class MapRootFileTests(ITestOutputHelper output)
         if (children.Any(c => c.EndsWith("/world_visibility.vvis", StringComparison.Ordinal)))
             steps.Add("vis");
         return steps;
+    }
+
+    // A .vmap was saved after Valve compiled it: an input record (the map or a prefab's map) has another CRC,
+    // so the package is not that file's compile and there is nothing to compare.
+    internal static bool StaleSource(KVObject red2, string map, string source)
+    {
+        // Every input the compile read (the map and its prefabs' maps), against the file there now.
+        var content = Path.GetDirectoryName(Path.GetDirectoryName(source))!;
+        foreach (var input in red2.GetArray("m_InputDependencies") ?? [])
+        {
+            var path = (string?)input["m_RelativeFilename"] ?? "";
+            var file = Path.Combine(content, path.Replace('/', Path.DirectorySeparatorChar));
+            if (path.EndsWith(".vmap", StringComparison.OrdinalIgnoreCase) && File.Exists(file)
+                && Convert.ToUInt32(input["m_nFileCRC"], System.Globalization.CultureInfo.InvariantCulture) != MapRootFile.Crc(File.ReadAllBytes(file)))
+                return true;
+        }
+        return false;
+    }
+
+    // A compiled model with a render mesh: a brush entity's embeds it, so its DATA's m_refLODGroupMasks has an
+    // entry (a physics-only model's is empty).
+    private static bool HasRenderMesh(byte[] model)
+    {
+        using var res = ResourceTrees.Read(model, "model.vmdl_c");
+        var data = res.DataBlock switch
+        {
+            ValveResourceFormat.ResourceTypes.Model m => m.Data,
+            ValveResourceFormat.ResourceTypes.BinaryKV3 kv => kv.Data.Root,
+            _ => null,
+        };
+        return data is not null && (data.GetArray("m_refLODGroupMasks")?.Count > 0 || data.GetArray("m_refMeshes")?.Count > 0);
     }
 
     private static IEnumerable<string> Prefabs(DmxBinary.Document document)

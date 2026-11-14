@@ -19,6 +19,10 @@ namespace Source2.Compiler.Tests;
 /// </summary>
 public class WorldPhysicsAuthorTests(ITestOutputHelper output)
 {
+    /// <summary>A step run on the map between its prefab and deformer passes and the build, by a probe
+    /// outside this project (cs2-map-decompiler's WorldPhysicsFlattenProbe); null here.</summary>
+    internal static Action<DmxBinary.Document, ITestOutputHelper>? BeforeBuild;
+
     // Mako's first soup: six " [Wood]" names reach 52 characters (long), the
     // next non-empty name adds "; ..." and seals it, and later ones add nothing.
     [Fact]
@@ -53,9 +57,61 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// <c>DECOMPILE_SOUPS=&lt;addon&gt;|&lt;map&gt;|&lt;other map&gt;</c>: each soup's RnMeshCreate input built from both maps
+    /// (a source and its decompile), triangle for triangle by position: how far the two agree, and the
+    /// first triangles where they part (the decompile's face order against the source's).
+    /// </summary>
+    [Fact]
+    public void SoupInputsOfTwoMaps()
+    {
+        if (Environment.GetEnvironmentVariable("DECOMPILE_SOUPS") is not { Length: > 0 } spec)
+            return;
+        var p = spec.Split('|');
+        var cs2 = Environment.GetEnvironmentVariable("CS2_DIR") ?? @"D:\Steam\steamapps\common\Counter-Strike Global Offensive";
+        var game = Path.Combine(cs2, "game");
+        using var models = new SettleBuildTests.PakModels(Path.Combine(game, "csgo", "pak01_dir.vpk"), Path.Combine(game, "csgo_addons", p[0]));
+        List<(int[] I, Vector3[] V)> Soups(string map)
+        {
+            var doc = DmxBinary.ReadFile(Path.Combine(cs2, "content", "csgo_addons", p[0], "maps", map + ".vmap"));
+            Maps.MapPrefabs.Attach(doc, Maps.MapPrefabs.FromContent(Path.Combine(cs2, "content", "csgo_addons", p[0])));
+            var pieces = Physics.WorldCollision.Pieces(doc, name => Physics.WorldCollision.ReadMaterial(name, models.Material, models.CollisionProperty),
+                null, null, models.Physics, models.SmartProp, models.CollisionProperty);
+            var soups = new List<(int[], Vector3[])>();
+            Physics.WorldPhysics.Build(pieces, models.SurfaceName, soupInput: (i, v, _) => soups.Add((i, v)));
+            return soups;
+        }
+        var (a, b) = (Soups(p[1]), Soups(p[2]));
+        // DECOMPILE_SOUPS_DUMP=<dir>: each soup's input triangles, one per line as their corners' positions.
+        if (Environment.GetEnvironmentVariable("DECOMPILE_SOUPS_DUMP") is { Length: > 0 } dump)
+            foreach (var (name, soups) in (ValueTuple<string, List<(int[] I, Vector3[] V)>>[])[("source", a), ("ours", b)])
+                for (var s = 0; s < soups.Count; s++)
+                    File.WriteAllLines(Path.Combine(dump, $"{name}_{s}.txt"), Enumerable.Range(0, soups[s].I.Length / 3)
+                        .Select(t => string.Join(" ", Enumerable.Range(0, 3).Select(c => soups[s].V[soups[s].I[t * 3 + c]]).Select(v => $"{v.X:R},{v.Y:R},{v.Z:R}"))));
+        for (var s = 0; s < Math.Min(a.Count, b.Count); s++)
+        {
+            string Tri((int[] I, Vector3[] V) soup, int t) => $"{soup.V[soup.I[t * 3]]:R} {soup.V[soup.I[t * 3 + 1]]:R} {soup.V[soup.I[t * 3 + 2]]:R}";
+            // Rotation aside: RnMeshCreate turns each triangle by its edge lengths, so only the corners' cycle counts.
+            string Key((int[] I, Vector3[] V) soup, int t)
+            {
+                string[] c = [$"{soup.V[soup.I[t * 3]]:R}", $"{soup.V[soup.I[t * 3 + 1]]:R}", $"{soup.V[soup.I[t * 3 + 2]]:R}"];
+                var r = Enumerable.Range(0, 3).MinBy(k => c[k], StringComparer.Ordinal);
+                return $"{c[r]} {c[(r + 1) % 3]} {c[(r + 2) % 3]}";
+            }
+            var count = Math.Min(a[s].I.Length, b[s].I.Length) / 3;
+            var same = 0;
+            while (same < count && Key(a[s], same) == Key(b[s], same))
+                same++;
+            output.WriteLine($"soup {s}: {a[s].I.Length / 3} vs {b[s].I.Length / 3} triangles, {a[s].V.Length} vs {b[s].V.Length} vertices; the first {same} triangles agree");
+            for (var t = same; t < Math.Min(count, same + 6); t++)
+                output.WriteLine($"   {t}: source {Tri(a[s], t)}\n      ours   {Tri(b[s], t)}");
+        }
+    }
+
+    /// <summary>
     /// The file built from the map (<see cref="Physics.WorldPhysics"/>) against
     /// Valve's: <c>WPBUILD=&lt;addon&gt;|&lt;map&gt;|&lt;compiled .vpk&gt;</c>,
-    /// <c>WPBUILD_SHOW</c> caps the listed differences per block.
+    /// <c>WPBUILD_SHOW</c> caps the listed differences per block; a 4th field names the package's map when the
+    /// .vmap is another's (a decompile: <c>s2c_rc_probe|s2c_dec_probe01|probe01.vpk|probe01</c>).
     /// </summary>
     [Fact]
     public void BuildsFromTheMap()
@@ -70,11 +126,31 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
         var doc = DmxBinary.ReadFile(Path.Combine(cs2, "content", "csgo_addons", p[0], "maps", p[1] + ".vmap"));
         Maps.MapPrefabs.Attach(doc, Maps.MapPrefabs.FromContent(Path.Combine(cs2, "content", "csgo_addons", p[0])));
         Maps.MapDeformers.Apply(doc, MapFixtures.GameSchema());
+        // WPBUILD_FLATTEN: the decompiler's flatten step (cs2-map-decompiler, WorldPhysicsFlattenProbe) runs here.
+        BeforeBuild?.Invoke(doc, output);
         var notes = new List<string>();
         // WPBUILD_GPU=1: new-blending materials take their layers from the GPU sampler.
         using var gpu = Environment.GetEnvironmentVariable("WPBUILD_GPU") == "1"
             ? new Source2.Compiler.Gpu.GpuMaterialSampler(Path.Combine(game, "csgo", "shaders_vulkan_dir.vpk"), models.Read)
             : null;
+        // WPBUILD_WALK=1: the pieces in walk order (type, node, material, triangles) with each one's place in the part.
+        if (Environment.GetEnvironmentVariable("WPBUILD_WALK") == "1")
+        {
+            var walkPieces = Physics.WorldCollision.Pieces(doc, name => Physics.WorldCollision.ReadMaterial(name, models.Material, models.CollisionProperty),
+                null, gpu == null ? null : gpu.For, models.Physics, models.SmartProp, models.CollisionProperty);
+            var part = Physics.WorldCollision.PartOrder(Enumerable.Range(0, walkPieces.Count), i => walkPieces[i].Type);
+            var placeOf = new int[part.Count];
+            for (var k = 0; k < part.Count; k++)
+                placeOf[part[k]] = k;
+            var hullRuns = new List<string>();
+            for (var w = 0; w < walkPieces.Count; w++)
+                if (walkPieces[w].Type == Physics.WorldCollision.MeshType)
+                    output.WriteLine($"walk {w}: mesh node {walkPieces[w].NodeId} {Path.GetFileNameWithoutExtension(walkPieces[w].MaterialName)} tris {walkPieces[w].Indices.Length / 3} -> part {placeOf[w]}");
+                else if (w == 0 || walkPieces[w - 1].Type != walkPieces[w].Type)
+                    hullRuns.Add($"{w}");
+            output.WriteLine($"walk: {walkPieces.Count} pieces, {walkPieces.Count(p => p.Type == Physics.WorldCollision.HullType)} hulls; hull runs start at walk {string.Join(",", hullRuns)}; types {string.Join("", walkPieces.Select(p => p.Type))}");
+            return;
+        }
         if (Environment.GetEnvironmentVariable("WPBUILD_HULLIDX") is { Length: > 0 } idxText)
         {
             var pieces = Physics.WorldCollision.Pieces(doc, name => Physics.WorldCollision.ReadMaterial(name, models.Material, models.CollisionProperty),
@@ -97,6 +173,34 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
                 output.WriteLine($"nodeattr {part} streams: " + string.Join(", ", md?.Get<DmxBinary.Element>(part)?.GetElements("streams").Select(x => x.Name) ?? []));
             var fm = md?.Get<DmxBinary.Element>("faceData")?.GetElements("streams").FirstOrDefault(x => x.Name.StartsWith("materialindex", StringComparison.Ordinal))?.Get<object?[]>("data") ?? [];
             output.WriteLine("nodeattr face materials: " + string.Join(",", fm.GroupBy(x => x).Select(g => $"{g.Key}x{g.Count()}")));
+            // WPBUILD_FACES=1: each face's material, lightmap bias, subdivision level and loop size, and the
+            // bake's triangles per face.
+            if (Environment.GetEnvironmentVariable("WPBUILD_FACES") == "1" && md is not null)
+            {
+                int[] Ints(DmxBinary.Element e, string name) => (e.Get<object?[]>(name) ?? []).Select(x => x is int i ? i : -1).ToArray();
+                int[] FaceStream(string name) => (md.Get<DmxBinary.Element>("faceData")?.GetElements("streams").FirstOrDefault(x => x.Name.Split(':')[0] == name)?.Get<object?[]>("data") ?? [])
+                    .Select(x => x is int i ? i : 0).ToArray();
+                foreach (var st in md.Get<DmxBinary.Element>("faceVertexData")?.GetElements("streams") ?? [])
+                    output.WriteLine($"nodeattr corner stream {st.Name}: " + string.Join(", ", st.Attributes.Where(a => a.Key != "data").Select(a => $"{a.Key}={a.Value}")) +
+                                     $"; first {string.Join(" ", (st.Get<object?[]>("data") ?? []).Take(4))}");
+                var sub = md.Get<DmxBinary.Element>("subdivisionData");
+                foreach (var (k, v) in sub?.Attributes ?? [])
+                    output.WriteLine($"nodeattr subdivisionData {k} = {(v is object?[] arr ? $"[{arr.Length}] {string.Join(",", arr.Take(80))}" : v)}");
+                var levels = Ints(sub!, "subdivisionLevels");
+                var first = Ints(md, "faceEdgeIndices");
+                var next = Ints(md, "edgeNextIndices");
+                var faceData = Ints(md, "faceDataIndices");
+                var mats = FaceStream("materialindex");
+                var biases = FaceStream("lightmapScaleBias");
+                var cut = Maps.SubdivisionBake.Bake(md, p => p);
+                var perFace = cut.Faces.GroupBy(f => f).ToDictionary(g => g.Key, g => g.Count());
+                for (var f = 0; f < first.Length; f++)
+                {
+                    var (h, size) = (first[f], 0);
+                    do { size++; h = next[h]; } while (h != first[f] && size < 1000);
+                    output.WriteLine($"face {f}: material {mats[faceData[f]]} bias {biases[faceData[f]]} level {(f < levels.Length ? levels[f] : -1)} loop {size} baked {perFace.GetValueOrDefault(f)}");
+                }
+            }
             return;
         }
         // WPBUILD_SOUPIN=<capture_rnmesh.py bin>: our first soup's RnMeshCreate input
@@ -245,7 +349,7 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
                 last = line;
             }
             using var red = new ValveResourceFormat.Resource();
-            red.Read(new MemoryStream(Read(p[2], $"maps/{p[1]}/world_physics.vmdl_c")));
+            red.Read(new MemoryStream(Read(p[2], $"maps/{(p.Length > 3 ? p[3] : p[1])}/world_physics.vmdl_c")));
             output.WriteLine("valve RED2: " + (red.EditInfo?.ToString() ?? "none"));
             return;
         }
@@ -255,7 +359,7 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
             var pieces = Physics.WorldCollision.Pieces(doc, name => Physics.WorldCollision.ReadMaterial(name, models.Material, models.CollisionProperty),
                 null, gpu == null ? null : gpu.For, models.Physics, models.SmartProp, models.CollisionProperty);
             using var res = new ValveResourceFormat.Resource();
-            res.Read(new MemoryStream(Read(p[2], $"maps/{p[1]}/world_physics.vmdl_c")));
+            res.Read(new MemoryStream(Read(p[2], $"maps/{(p.Length > 3 ? p[3] : p[1])}/world_physics.vmdl_c")));
             var phys = ((ValveResourceFormat.ResourceTypes.Model)res.DataBlock!).GetEmbeddedPhys()!;
             var hulls = phys.Parts[0].Shape.Hulls;
             foreach (var piece in pieces.Where(x => x.Hull != null && wanted.Contains(x.NodeId)))
@@ -325,7 +429,7 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
                 output.WriteLine($"found: {source}");
             return;
         }
-        var files = Physics.WorldPhysicsFiles.Build(doc, p[0], p[1], models, gpu == null ? null : gpu.For, notes, MapFixtures.GameSchema());
+        var files = Physics.WorldPhysicsFiles.Build(doc, p[0], p.Length > 3 ? p[3] : p[1], models, gpu == null ? null : gpu.For, notes, MapFixtures.GameSchema());
         var mine = files.Model;
         var valve = Read(p[2], files.ModelPath);
         // WPBUILD_SAVE=<path>: our world_physics.vmdl_c, for inspection.

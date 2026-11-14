@@ -140,7 +140,8 @@ public static class MapWorldOrder
             {
                 var slots = MapInstances.PrefabSlots(prefab.Get<DmxBinary.Element>(MapPrefabs.WorldKey)!, out _);
                 var start = blocks.TryGetValue(prefab, out var b) ? b : throw new InvalidDataException($"prefab {Id(prefab)} has no block");
-                foreach (var (node, nid) in prefabNodes[prefab].Where(EntityLike).Select(n => (n, start + slots[n])))
+                // A hollow node (an instance of an empty group) is not copied and has no slot.
+                foreach (var (node, nid) in prefabNodes[prefab].Where(n => EntityLike(n) && slots.ContainsKey(n)).Select(n => (n, start + slots[n])))
                 {
                     Append(nid, node, [], path, false);
                     byIdPath.TryAdd($"{Id(prefab)}:{Id(node)}", nid);
@@ -211,7 +212,8 @@ public static class MapWorldOrder
 
     private static void Subtree(DmxBinary.Element node, ICollection<DmxBinary.Element> into)
     {
-        foreach (var c in node.GetElements("children"))
+        // A collapse does not copy a hollow node (MapInstances.Hollow).
+        foreach (var c in node.GetElements("children").Where(c => !MapInstances.Hollow(c)))
         {
             into.Add(c);
             Subtree(c, into);

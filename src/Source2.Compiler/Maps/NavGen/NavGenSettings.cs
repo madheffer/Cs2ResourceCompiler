@@ -220,8 +220,10 @@ public sealed class NavGenSettings
                 Height = At<float>("settingsAgentHeight", i),
                 ShortHeightEnabled = At<bool>("settingsAgentShortHeightEnabled", i),
                 ShortHeight = At<float>("settingsAgentShortHeight", i),
-                CrawlEnabled = At<bool>("settingsAgentCrawlEnabled", i),
-                CrawlHeight = At<float>("settingsAgentCrawlHeight", i),
+                // A map with no crawl arrays (Hammer's saves write none) keeps the default hull's crawl values:
+                // s2c_navprobe (own settings, probe01's Hammer-saved navData) ships crawl off at 17.5 (GROUND_TRUTH 191).
+                CrawlEnabled = e.Get<object?[]>("settingsAgentCrawlEnabled") is null ? new NavHull().CrawlEnabled : At<bool>("settingsAgentCrawlEnabled", i),
+                CrawlHeight = e.Get<object?[]>("settingsAgentCrawlHeight") is null ? new NavHull().CrawlHeight : At<float>("settingsAgentCrawlHeight", i),
                 MaxClimb = At<float>("settingsAgentMaxClimb", i),
                 MaxSlope = At<int>("settingsAgentMaxSlope", i),
                 MaxJumpDownDist = At<float>("settingsAgentMaxJumpDownDist", i),

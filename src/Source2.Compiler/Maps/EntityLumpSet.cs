@@ -27,7 +27,7 @@ public static class EntityLumpSet
     /// <summary>The ids of the map's nodes: the world and everything under it.
     /// Other elements carry a nodeID too (the visibility manager's is 0) but are
     /// no node of the map.</summary>
-    private static HashSet<int> MapNodeIds(DmxBinary.Document document)
+    internal static HashSet<int> MapNodeIds(DmxBinary.Document document)
     {
         var ids = new HashSet<int>();
         var stack = new Stack<DmxBinary.Element>(document.OfType("CMapWorld"));

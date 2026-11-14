@@ -880,7 +880,7 @@ internal static class WorldNodeModels
         return (ushort)(v * 65535f);
     }
 
-    private static short Snorm16(float v)
+    internal static short Snorm16(float v)
     {
         v = v < -1f ? -1f : v > 1f ? 1f : v;
         // CMesh_PackField truncates toward zero (atixref entity models: 6863, not 6864).
@@ -888,7 +888,7 @@ internal static class WorldNodeModels
     }
 
     // ConvertFloatToChannel (181363b90): clamped, scaled and truncated.
-    private static byte Unorm8(float v)
+    internal static byte Unorm8(float v)
     {
         v = 0f <= v ? (v <= 1f ? v : 1f) : 0f;
         return (byte)(int)(v * 255f);

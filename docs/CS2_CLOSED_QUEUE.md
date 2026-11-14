@@ -216,8 +216,8 @@ heavy runs with the game open at below-normal priority):
    (ledger 149).
 4. **Animated maps** (CUBEMAPS.md D): after the offline pixel diff of atixref_srt_1 against _srt_2 has localised
    the last 135,760 pixels, the captures it asks for.
-5. **The map decompiler's Hammer re-save** (branch research/vmap-decompile, DECOMPILE.md "Handoff"):
-   hammer_autosave.py in cubehost, then decompile_rc_batch.ps1.
+5. **The map decompiler's Hammer re-save** (now in cs2-map-decompiler, its docs/DECOMPILE.md "Handoff"):
+   hammer_autosave.py in cubehost (stays here, tools/map-survey), then its tools/decompile_rc_batch.ps1.
 
 ## C. After every CS2 update or GPU driver update
 

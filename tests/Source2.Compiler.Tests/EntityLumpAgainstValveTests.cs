@@ -90,6 +90,30 @@ public partial class EntityLumpAgainstValveTests(ITestOutputHelper output)
     // Hammer's lattice and bend deformers (tools/physics/deformer_probe_map.py, deformer_probe2.py).
     [InlineData("deformerprobe")]
     [InlineData("deformerprobe2")]
+    // Which nodes take a slot in an instance's block (empty groups none), and brush entities with
+    // no meshes (dropped): tools/map-survey/slot_probe_map.py, brushless_probe_map.py.
+    [InlineData("s2c_slotprobe")]
+    [InlineData("s2c_slotprobe2")]
+    [InlineData("s2c_slotprobe3")]
+    [InlineData("s2c_slotprobe4")]
+    [InlineData("s2c_slotprobe5")]
+    [InlineData("s2c_slotprobe6")]
+    [InlineData("s2c_slotprobe7")]
+    [InlineData("s2c_slotprobe8")]
+    [InlineData("s2c_slotprobe9")]
+    [InlineData("s2c_prefabslot")]
+    [InlineData("s2c_brushless")]
+    // Map variables (tools/map-survey/variable_probe_map.py): the map's own, bound to a targetname, and a
+    // prefab map's two, placed overridden and at their defaults.
+    [InlineData("s2c_varprobe")]
+    // Prefabs loaded at runtime (tools/map-survey/runtime_prefab_probe_map.py): s2c_prefabprobe with its
+    // prefab's loadAtRuntime on (rtprefab), with prefabRuntimeEntity too (rtprefab3), an entity after it
+    // (rtprefab4; rtprefab5 the same merged), and a map in a subfolder with fixup (rtprefab6).
+    [InlineData("s2c_rtprefab")]
+    [InlineData("s2c_rtprefab3")]
+    [InlineData("s2c_rtprefab4")]
+    [InlineData("s2c_rtprefab5")]
+    [InlineData("s2c_rtprefab6")]
     [InlineData("s2c_navlink4")]
     [InlineData("s2c_navlink3")]
     public void PrefabProbe_DiffersOnlyInTheDocumentedGaps(string map)
