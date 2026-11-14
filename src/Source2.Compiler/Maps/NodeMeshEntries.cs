@@ -12,7 +12,8 @@ namespace Source2.Compiler.Maps;
 /// node's matrix and rotates normals and tangents by it
 /// (HammerMesh_TransformToWorld, 1810c4e50); the builder's mesh then holds
 /// them renormalised: squares summed z, y, x, times the reciprocal of the
-/// root (measured exact on probe01; the function doing it is not read).
+/// root, by DmeMeshToCMesh's copy 180d46590 (read, ledgers 37 and 251;
+/// <see cref="Normalise"/>).
 /// PerVertexLighting is the last bake's: the map load replaces the stream
 /// with the mesh instance's vertexLightingData (180f0ea90,
 /// <see cref="VertexLighting"/>), which is how probe01's, cardtest's and
@@ -149,8 +150,9 @@ internal static class NodeMeshEntries
     /// <item>texcoord 1 (the standard attribute row 5, 183014fa0): added after the first texcoord, zero filled,
     /// when MaterialEditor_LowPrecisionUvInputs (1810d5f40) finds an input whose semantic the mesh semantic table
     /// makes texcoord 1 and that starts with lowprecisionuv or uv (LowPrecisionUv1, Uv1; case-blind); removed
-    /// otherwise (1810d9930). The place after the first is measured (all 538 atixref entries matched to a mesh,
-    /// subdivided ones included).</item>
+    /// otherwise (1810d9930). It takes the first free two-float slot of the face-vertex grid (181087410 ->
+    /// 180d589f0, slots filled in file order; 180d5f0d0 packs the grid type by type), so it follows the last
+    /// two-float stream: right after the first texcoord on every corpus mesh (ledger 276).</item>
     /// <item>Then HammerMesh_UpdateExtraAttributeStreams (1810dca50, called with 1): each of
     /// <see cref="ExtraStreams"/> that no input names is removed (RemoveExtraAttributeStream, 1810d9e70), then
     /// each that an input names and the mesh does not store is appended with its default
@@ -172,8 +174,11 @@ internal static class NodeMeshEntries
             return piece;
         var layout = piece.Streams.Select(x => (x.Name, x.Count, Source: (int?)x.First, Default: (float[]?)null)).ToList();
         var first = layout.FindIndex(x => x.Name == "texcoord");
+        // 181087410 -> 180d589f0 puts the new stream in the first free slot of its type (type 1, two floats,
+        // 18243e688) of the face-vertex grid (5 types x 6 slots); the .vmap's streams took theirs in file order,
+        // so it lands after the last two-float stream. DmeFieldOrder later groups by type and keeps this order.
         if (addTexcoord)
-            layout.Insert(first + 1, ("texcoord", 2, null, null));
+            layout.Insert(layout.FindLastIndex(x => x.Count == 2 && x.Name != "position") + 1, ("texcoord", 2, null, null));
         if (dropTexcoord)
             layout.RemoveAt(layout.FindIndex(first + 1, x => x.Name == "texcoord"));
         layout.RemoveAll(x => drop.Any(d => Io.Tier0Strings.EqualsIgnoreCase(d, x.Name)));

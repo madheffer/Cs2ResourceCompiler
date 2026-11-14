@@ -6483,3 +6483,42 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        (c) not compiled yet: constant `[r g b]` texture inputs (named `<material>_<variable>`), image `.txt`
        settings, cube textures (sky.vfx `g_tSkyTexture`), dynamicparams, csgo_lightmapped_4wayblend's two extra
        default children in RED2 (blendproddirtgrass).
+
+276. **World geometry reads: point transform, aggregate list order, texcoord 1's slot, standalone prop order**
+     (2026-11-14, CS2 open, after the 1.41.9.7 update; rc 0923 disasm of
+     HammerMesh_TransformToWorld 1810c4e50, Matrix3x4_TransformPointXmm 1812651a0, 18125d1f0 and its blend
+     constant 183012c70; decompiles of WRB_BuildAggregate 180268e80, Step_BuildingVertexOverrideStreams 180277ab0,
+     the std::sort 18029a370 and its insertion sort 1802a3410, 1810dcca0, 181087410, 180d589f0, 180d5f0d0,
+     1813b5440, 180272ce0, 180255b90, 180275080). READ. Closes PARITY_AUDIT 1.a1, 1.a4, 1.a7 and 1.a8.
+     - 1.a1: mesh positions go through 1812651a0, which packs (x, y, z) and calls 18125d1f0: w blended to 1.0
+       (constant 183012c70 is 1.0 x 4), one mulps per row, then pairwise adds giving (t + y m1) + (x m0 + z m2)
+       per row. MapMeshes.Transform's ((m0 x + m2 z) + (m1 y + t)) is the same two pairs, so the bits are equal
+       (float add commutes). Comment and GEOMETRY.md now cite it instead of "measured on atixref".
+     - 1.a7: WRB_BuildAggregate names each aggregate object "%s_lr%i_%s" (node name, layer, kind_material_n) in
+       its CBufferString at +8, sets +0 to 0, and appends it to node +0x110 (data +0x118). Step_Building-
+       VertexOverrideStreams std::sorts that list before the node is written (m_aggregateSceneObjects is
+       WorldNodeData +0x30, schema writer 180393ac0). The comparator: an empty name first; equal length and
+       memcmp equal -> the int at +0; else strcmp on unsigned bytes. WorldNodeFiles now sorts by the bare name
+       (WorldNodeFiles.AggregateNameOrder, UTF-8 bytes), not the model path: ".vmdl" after the name sorted a
+       name before its own '-' extension the wrong way (n0_lr0_agg_prop_m_1 vs n0_lr0_agg_prop_m_1-x_0).
+       Unchanged on every corpus map (no such pair): ze_hold_em_p -world 45/45, atixref 550/553 as before.
+     - 1.a8: WRBNode_FinishLists (180275080) runs BuildPropAggregates first, then walks every model list of node
+       +0x198 front to back to make the standalone scene objects. AddStaticProps (180255b90) takes baked props
+       out last to first with an order-keeping memmove (18208a290), but BuildPropAggregates, once the joined
+       index total passes 0x35f, takes each joined prop out of its model's list in collection order (models in
+       order, each list front to back) by pointer, moving the list's LAST prop into its place (count - 1). So a
+       model with joined and standalone props lists its standalone ones in swap-remove order, not walk order.
+       Ported as NodePropAggregates.LeftInLists; corpus output unchanged (no corpus model mixes the two).
+     - 1.a4: CMapMesh_NameSlotsAfterOverride (1810dcca0) adds texcoord 1 through 181087410(grid +0xb20, ...,
+       row 5), which calls 180d589f0: a stream is found by (standard row, V_stricmp_fast name) in the 5 x 6 slot
+       grid (0x30 a slot), else takes the FIRST FREE slot of its type (type 1 = two floats; 1813b5440's counts
+       18243e688 are 1, 2, 3, 4, 1); 180d5f0d0 then packs the offsets type by type, slot by slot. The .vmap's
+       streams took their slots in file order, so texcoord 1 follows the last two-float stream; DmeFieldOrder
+       groups by type and keeps that order. NodeMeshEntries.WithPaintStreams inserts after the last two-float
+       stream (was: after the first texcoord; the same on every corpus mesh, texcoord being the only one).
+     - 1.a3 (the builder mesh renormalise) was already read in ledgers 37 and 251 (DmeMeshToCMesh's copy
+       180d46590); NodeMeshEntries' summary said otherwise and now cites them.
+     - 1.a5 still open. Ledger 164's "no float truncation in 18118f000 to 1811a0000" missed GetOverlayDescs'
+       separate chunk 181194fdc (it steps the 0x4a0 cache records): its seven cvttss2si pack the overlay's
+       +0x3c70..+0x3c8c floats (times xmm6) into 4-bit fields of the descriptor's +0x60 word with the +0x3c78
+       and +0x3c90 bytes. Not the texcoord shift.

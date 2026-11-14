@@ -20,8 +20,8 @@ Placement:
 - **A node's world matrix** is the instance path times its own
   `AngleMatrix(angles, origin)`, in the binary's float order
   (ConcatTransforms sums z, y, x, then the translation).
-- **Points** go through tier0's SIMD transform, each row summed
-  `(x + z) + (y + t)`.
+- **Points** go through rc's SIMD transform (1812651a0 -> 18125d1f0, w = 1.0),
+  each row summed `(t + y m1) + (x m0 + z m2)` (ledger 276, read from the disasm).
 - **An instance copy** is placed where the collapse leaves it
   (`SettleWorld.Baked`). The node's origin and angles move through each
   instance's matrix against its target's inverse, both built in double, then

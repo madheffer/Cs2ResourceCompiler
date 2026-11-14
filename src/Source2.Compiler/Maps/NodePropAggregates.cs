@@ -42,6 +42,34 @@ internal static class NodePropAggregates
     /// </summary>
     public const int MinimumIndices = 0x35f;
 
+    /// <summary>
+    /// The props a node's model lists still hold when WRBNode_FinishLists (180275080) walks them front to back
+    /// for the standalone scene objects: with aggregates built, 180272ce0 takes each joined prop out of its
+    /// model's list in the order it collected them (models in order, each list front to back), finding it by
+    /// pointer and moving the list's last prop into its place (count - 1), so what is left is not walk order
+    /// once a model has both (ledger 276). <paramref name="perModel"/> is each model's list in walk order,
+    /// models in order, each prop flagged when it joined an aggregate.
+    /// </summary>
+    internal static List<T> LeftInLists<T>(IReadOnlyList<(string Model, List<(T Prop, bool Joined)> Props)> perModel, bool aggregated)
+    {
+        var left = new List<T>();
+        foreach (var (_, props) in perModel)
+        {
+            var list = Enumerable.Range(0, props.Count).ToList();
+            if (aggregated)
+                for (var j = 0; j < props.Count; j++)
+                {
+                    if (!props[j].Joined)
+                        continue;
+                    var at = list.IndexOf(j);
+                    list[at] = list[^1];
+                    list.RemoveAt(list.Count - 1);
+                }
+            left.AddRange(list.Where(i => !(aggregated && props[i].Joined)).Select(i => props[i].Prop));
+        }
+        return left;
+    }
+
     /// <summary>A draw: one prop mesh (model, draw call, material) built as an aggregate draw in model space.</summary>
     public sealed record Draw(string Model, int Call, string Material, NodeDraw.Result Geometry)
     {
@@ -160,15 +188,14 @@ internal static class NodePropAggregates
         var joined = new List<Entry>();
         var propCount = 0;
         // Per model, in model order: the props left standalone, and the ones joined.
-        var leftOver = new List<(StandaloneProp Prop, bool Joined)>();
+        var leftOver = new List<(string Model, List<(StandaloneProp Prop, bool Joined)> Props)>();
         foreach (var (modelName, props) in byModel)
         {
             if (content.LoadedModel(modelName + "_c") is not { } model)
             {
                 notes?.Add($"prop model {modelName} not found");
                 if (standalone != null)
-                    foreach (var p in props)
-                        leftOver.Add((new StandaloneProp(modelName, p.Keys, p.Matrix, p.NodeId, p.Skin, null), false));
+                    leftOver.Add((modelName, [.. props.Select(p => (new StandaloneProp(modelName, p.Keys, p.Matrix, p.NodeId, p.Skin, null), false))]));
                 continue;
             }
             StandaloneProp Standalone(Placed p)
@@ -218,8 +245,7 @@ internal static class NodePropAggregates
             if (all)
                 joined.AddRange(entries);
             if (standalone != null)
-                foreach (var p in props)
-                    leftOver.Add((Standalone(p), Candidate(p.Keys) && all));
+                leftOver.Add((modelName, [.. props.Select(p => (Standalone(p), Candidate(p.Keys) && all))]));
         }
         // The streams PrepareForMerge leaves a mesh; it passes over an entry with attribute bit 0 or 11 (& 0x801).
         var keptStreams = new Dictionary<int, List<int>>();
@@ -263,7 +289,8 @@ internal static class NodePropAggregates
         }
         var result = new List<Aggregate>();
         var aggregated = joined.Count > 0 && joined.Sum(e => e.Indices) > MinimumIndices;
-        standalone?.AddRange(leftOver.Where(x => !x.Joined || !aggregated).Select(x => x.Prop));
+        if (standalone != null)
+            standalone.AddRange(LeftInLists(leftOver, aggregated));
         if (!aggregated)
             return result;
         foreach (var bucket in joined.GroupBy(e => e.Material, Tier0Strings.IgnoreCase))

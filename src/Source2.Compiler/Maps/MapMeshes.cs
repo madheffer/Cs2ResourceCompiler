@@ -314,10 +314,12 @@ public static class MapMeshes
     // translation), row major.
     private static readonly float[] Identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
 
-    // A point through a matrix: each row dotted with (x, y, z, 1) as a SIMD
-    // horizontal add pairs it, (x + z) + (y + t). Measured on atixref: a roll
-    // of -89.999985 degrees and instanced copies of a mesh at a yaw of 180.5
-    // tell the orders apart, and only this one rebuilds all of both.
+    // A point through a matrix: rc's Matrix3x4_TransformPointXmm 1812651a0
+    // packs (x, y, z), 18125d1f0 blends in w = 1.0 (183012c70) and, per row,
+    // adds the products pairwise: (t + y m1) + (x m0 + z m2) (rc 0923 disasm;
+    // HammerMesh_TransformToWorld 1810c4e50 and HalfEdge_FacePositionsTransformed
+    // 18139b130 place mesh positions through it). Each add here is the same
+    // pair, so the bits are Valve's (ledger 276).
     internal static Vector3 Transform(float[] m, Vector3 v)
         => new(((m[0] * v.X) + (m[2] * v.Z)) + ((m[1] * v.Y) + m[3]),
                ((m[4] * v.X) + (m[6] * v.Z)) + ((m[5] * v.Y) + m[7]),

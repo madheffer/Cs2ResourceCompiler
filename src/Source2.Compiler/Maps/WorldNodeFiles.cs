@@ -148,13 +148,20 @@ public static class WorldNodeFiles
             });
         }
 
-        // The node lists its aggregates in model name order (ordinal): all 264 of
-        // atixref's and ze_hold_em_p's 7. Where Valve sorts them is not found.
-        aggregates.Sort((a, b) => string.CompareOrdinal(a.Model, b.Model));
+        // The node lists its aggregates sorted by name: WRB_BuildAggregate
+        // (180268e80) appends each object to node +0x110 with its "%s_lr%i_%s"
+        // name in the CBufferString at +8, and Step_BuildingVertexOverrideStreams
+        // (180277ab0) std::sorts that list (18029a370; comparator inlined in
+        // 1802a3410) before the node is written: an empty name first, then the
+        // bytes unsigned until they differ (strcmp), equal names by the int at
+        // +0 (0 from the object's construction). The name, not the model path:
+        // ".vmdl" would sort after a '-' where Valve's NUL sorts first (ledger 276).
+        aggregates.Sort((a, b) => AggregateNameOrder(AggregateName(a.Model), AggregateName(b.Model)));
 
         // The props left in the node's lists: one scene object each, after the
-        // clusters' objects, in model order (the order within a model is
-        // GROUND_TRUTH 47's open question; walk order here).
+        // clusters' objects, in model order, each model's list front to back as
+        // WRBNode_FinishLists (180275080) walks it after the aggregates' swap-removes
+        // (NodePropAggregates.LeftInLists, ledger 276).
         foreach (var p in standalone)
         {
             var header = NodeEntryHeader.Prop(p.Keys, p.NodeId, p.Model, NodePropEntries.RecordOf(p.Keys), MaterialAttributes.Empty, placementFlags: 0);
@@ -217,6 +224,21 @@ public static class WorldNodeFiles
 
     // RC builds the node and world manifest paths with Windows separators.
     private static string Backslashed(string path) => path.Replace('/', '\\');
+
+    /// <summary>An aggregate's own name ("n0_lr0_agg_prop_..._0") from its model path.</summary>
+    internal static string AggregateName(string modelPath)
+    {
+        var name = modelPath[(modelPath.LastIndexOf('/') + 1)..];
+        return name.EndsWith(".vmdl", StringComparison.Ordinal) ? name[..^5] : name;
+    }
+
+    /// <summary>1802a3410's comparison of two aggregate names, as a sign: strcmp on the UTF-8 bytes.</summary>
+    internal static int AggregateNameOrder(string a, string b)
+    {
+        if (a.Length == 0 || b.Length == 0)
+            return (a.Length != 0 ? 1 : 0) - (b.Length != 0 ? 1 : 0);
+        return System.Text.Encoding.UTF8.GetBytes(a).AsSpan().SequenceCompareTo(System.Text.Encoding.UTF8.GetBytes(b));
+    }
 
     private static ulong VisKey(IReadOnlyList<TraceScene.Triangle> triangles, VisConfig config)
     {

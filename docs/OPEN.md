@@ -47,8 +47,13 @@ Open:
     agree on 113 (flower_sets_a), 225, 232, 233.
     Settled 11-05 night (ledger 256): the order is mimalloc's free-list reuse of 448-bin blocks, so it is not
     reproducible from data; left as Valve variance.
-- 1.a1-1.a9 measured, not read: the SIMD transform and the renormalise before WRB_CollectMeshEntries, field and
-  aggregate list order, AllowBackfaceCulling's parent set (materialsystem2 +0x60, written at 1800364c3).
+- 1.a1-1.a9 measured, not read: AllowBackfaceCulling's parent set (materialsystem2 +0x60, written at 1800364c3),
+  1.a5 the overlay texcoord shift (GetOverlayDescs' chunk 181194fdc ruled out, ledger 276).
+  Read 11-14 (ledger 276): ~~1.a1 the SIMD point transform~~, ~~1.a7 the aggregate list order~~ (a std::sort by
+  name before the node is written; ours now compares the bare name's bytes), ~~1.a4 texcoord 1's place~~ (the
+  first free two-float slot of the face-vertex grid), ~~1.a8 standalone prop order~~ (FinishLists walks each
+  model list after BuildPropAggregates' swap-with-last removals; NodePropAggregates.LeftInLists). ~~1.a3 the renormalise~~ and ~~1.a9
+  field order~~ were already read (ledgers 251, 252).
 - 1.b refusals ZE maps can reach: foliage (NeedsLocalSpaceVertices), clutter, smart prop skips; detail grass
   files are not carried into the package (only Hammer writes them; RC packs them, not read).
 - Cross-cutting stale docs listed at the end of PARITY_AUDIT (GEOMETRY.md, MapGeometry.cs, VisClusters.cs ...).
