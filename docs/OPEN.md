@@ -47,8 +47,9 @@ Open:
     agree on 113 (flower_sets_a), 225, 232, 233.
     Settled 11-05 night (ledger 256): the order is mimalloc's free-list reuse of 448-bin blocks, so it is not
     reproducible from data; left as Valve variance.
-- 1.a1-1.a9 measured, not read: AllowBackfaceCulling's parent set (materialsystem2 +0x60, written at 1800364c3),
-  1.a5 the overlay texcoord shift (GetOverlayDescs' chunk 181194fdc ruled out, ledger 276).
+- 1.a1-1.a9 measured, not read: ~~AllowBackfaceCulling's parent set~~ (closed 11-14, ledger 277: no parent, the
+  render modes' programs merged into the material's own block; the compile now uses OfModes for it),
+  1.a5 the overlay texcoord shift (ledger 278: not the mesh island shift, captured; the projector 18124f000 is next).
   Read 11-14 (ledger 276): ~~1.a1 the SIMD point transform~~, ~~1.a7 the aggregate list order~~ (a std::sort by
   name before the node is written; ours now compares the bare name's bytes), ~~1.a4 texcoord 1's place~~ (the
   first free two-float slot of the face-vertex grid), ~~1.a8 standalone prop order~~ (FinishLists walks each

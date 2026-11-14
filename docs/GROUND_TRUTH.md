@@ -6522,3 +6522,48 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        separate chunk 181194fdc (it steps the 0x4a0 cache records): its seven cvttss2si pack the overlay's
        +0x3c70..+0x3c8c floats (times xmm6) into 4-bit fields of the descriptor's +0x60 word with the +0x3c78
        and +0x3c90 bytes. Not the texcoord shift.
+
+277. **AllowBackfaceCulling in the compile's material store** (2026-11-14, CS2 closed; Frida on a standalone
+     resourcecompiler 1.41.9.7 compiling probe01 -world -fshallow, tools/re/capture_missingmaterial.py --match .
+     --pending 200 --flags-rva 253940, package restored cmp-ok; %TEMP%/matparent_capture/probe01.jsonl). MEASURED,
+     with the rule READ in ledger 157. Closes PARITY_AUDIT 1.a6 and ledger 40.
+     - Every material that answers AllowBackfaceCulling (toolsskybox, dev_measuregeneric01, reflectivity_30,
+       toolslightmapres: found, 1) holds the key in its OWN block chain (the second block of +0x180's chain),
+       with no parent block (+0x1e0 null) and no owner object (+0x60 null). The hash 0x3ed9fd4a occurs nowhere in
+       materialsystem2, so the value is data merged at load: ledger 157's per-mode merge (18000e690 / 18001e4a0),
+       the Depth mode's fallback program (csgo_depth_only) declaring it. The +0x1e0 write at 1800364c3 is a
+       global's vf 0xf0 lookup, null here.
+     - MaterialAttributes.Of (the compile path, shaders_pc) now takes an undeclared AllowBackfaceCulling from the
+       shader's render modes (OfModes) instead of the NoCullDefault stand-in ("true unless csgo_water_fancy").
+       probe01, cardtest, ze_hold_em_p -world 100% and atixref 549/553 (Valve variance) against Valve's 1114
+       packages, unchanged.
+     - Also from this capture: WRB_MeshEntryFlags (0923 180252ae0) is 180253940 in 1.41.9.7; rva_map refuses it
+       because one __LINE__ immediate moved (0x248 -> 0x228), the only difference over all 6,547 bytes.
+
+278. **The overlay texcoord shift is not the mesh island shift** (2026-11-14, CS2 closed; Frida on a standalone
+     resourcecompiler 1.41.9.7 compiling atixref -world -fshallow, tools/re/capture_texshift.py, package restored;
+     %TEMP%/texshift_capture/atixref2.jsonl; OverlayShiftProbe, TEXSHIFT=s2c_rc_probe|atixref|<jsonl>). MEASURED.
+     OPEN 1.a5 stays open with these ruled out.
+     - HammerMesh_ShiftTexcoordIslands (0923 1810d93c0; installed +0x10da4e0) ran 585 times, every call on a
+       CHammerPolyMesh (vtable RVA 0x237f5a0) from ConvertMeshForBuilder (return 0x10e15a8, via 0x23cbe4), none while
+       CMapStaticOverlay_GetOverlayDescs (297 calls) runs; its TexcoordIsland_Recentre (1813cc880: (min + max) * 0.5,
+       then +-0.5 and cvttss2si, i.e. round half away, skipped inside [0, 1]) ran 7,678 times. None of atixref's 297
+       overlays has its .vmap texcoords as one island call's input. So overlays do not take the island shift, and
+       NodeOverlays.Recentre's truncation is a different code path.
+     - Ruled out statically: GetOverlayDescs' chunk 181194fdc (its cvttss2si pack the +0x60 descriptor nibbles),
+       181363b90 (vertex format float -> normalised int), 1810cdae0 (texcoords by texture size, editor), 18136c380
+       (texture axes and shift from a face's texcoords, x - (int)x; called from 1810c91bb, editor alignment), and
+       the projector region 181244000-181256000 (no truncation at all).
+     - Read: GetOverlayDescs copies each face from 0x4a0-byte records (per material 0xf8 apart) of the overlay's
+       projection cache: positions +0x28/+0x30, texcoords +0x100/+0x108, +0x198/+0x1a0 and +0x2b0/+0x2b8, through
+       181363320. The cache (+0x3cb8 count, +0x3cc0 data) is filled by per-target jobs (181194ac0, job vtable
+       1823c1598, run 18119bac0) that call the projector 18124f000 (mode 3) or 18124f860 with the record first.
+     - Tried (tools/re/capture_overlaycache.py, %TEMP%/overlaycache_capture/atixref.jsonl): both projectors hooked
+       in 1.41.9.7 (18124f000 at 0x1250120, same code over 2,140 bytes; 18124f860 at 0x1250980), 594 calls (40
+       mode 3, 554 other). Their first argument is NOT the per-material face cache: on exit it reads
+       +0 = (1728, 1280)-like ints, +0x40/+0x58/+0x64/+0x7c small growing ids, one live vector at +0x60 (count 1,
+       data +0x68), +0x78 empty, floats from +0x90. So the 0xf8 / 0x4a0 records GetOverlayDescs walks are built
+       elsewhere from these per-target objects. Next: find what fills the r12 base GetOverlayDescs iterates
+       (its chunk before 1811953a0, where r12 and r14 are set) and hook that, or hook 181363320 (installed
+       0x13645f0) with Thread.backtrace on the texcoord source pointer's first write (hardware watchpoint set
+       when the 0x4a0 record is allocated).

@@ -54,17 +54,17 @@ public sealed class MaterialAttributes : MeshEntryFlags.IAttributes
             result.values[MeshEntryFlags.Key(name)] = value;
         foreach (var (name, value) in material.Ints)
             result.values[MeshEntryFlags.Key(name)] = value;
-        // Open (GROUND_TRUTH 40): CMaterial2's lookup (materialsystem2 vf 0x48)
-        // falls back through a parent attribute set not identified; measured on
-        // atixref, probe01 and cardtest, a shader that does not declare
-        // AllowBackfaceCulling answers true, but csgo_water_fancy false.
+        // AllowBackfaceCulling that the material's own programs do not declare comes from another render mode's
+        // programs merged into the same store at load (ledger 157: the Depth mode's csgo_depth_only, FEAT[2] ? 0 : 1).
+        // Captured in resourcecompiler 2026-11-14 (capture_missingmaterial.py, probe01): the key sits in the
+        // material's own block chain (its second block), with no parent block (+0x1e0) and no owner (+0x60), so
+        // the compile's material store is filled the same way (ledger 277). A shader none of whose modes declare it
+        // (csgo_water_fancy) answers not found.
         var cull = MeshEntryFlags.Key("AllowBackfaceCulling");
-        if (!result.values.ContainsKey(cull) && !NoCullDefault.Contains(Path.GetFileNameWithoutExtension(material.Shader ?? "")))
-            result.values[cull] = true;
+        if (!result.values.ContainsKey(cull) && shaders != null && OfModes(material, shaders).values.TryGetValue(cull, out var fromModes))
+            result.values[cull] = fromModes;
         return result;
     }
-
-    private static readonly HashSet<string> NoCullDefault = new(Tier0Strings.IgnoreCase) { "csgo_water_fancy" };
 
     /// <summary>
     /// The attribute store a loaded CMaterial2 holds in the game (GROUND_TRUTH 157): materialsystem2 loads one job per
