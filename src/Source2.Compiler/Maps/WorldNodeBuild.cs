@@ -63,9 +63,11 @@ internal static class WorldNodeBuild
 
     /// <summary>The baked static props' entries (<see cref="NodePropEntries"/>) with their headers.</summary>
     /// <param name="buildBakes">Whether the build bakes lighting: each prop's entries then carry its lightmapped flag (<see cref="NodePropEntries.Lightmapped"/>).</param>
-    public static List<Node> PropEntries(DmxBinary.Document doc, GameContent content, ShaderLibrary shaders, List<string>? notes = null, bool buildBakes = false)
+    /// <param name="schema">The FGD a missing prop key's default comes from (<see cref="NodeEntryHeader.Prop"/>).</param>
+    public static List<Node> PropEntries(DmxBinary.Document doc, GameContent content, ShaderLibrary shaders, List<string>? notes = null, bool buildBakes = false,
+                                         FgdSchema? schema = null)
     {
-        var entries = NodePropEntries.FromWorld(doc, content, notes);
+        var entries = NodePropEntries.FromWorld(doc, content, notes, shaders);
         MaterialAttributes Attributes(string material) => content.Material(material) is { } info ? MaterialAttributes.Of(info, shaders, content.TextureSize) : MaterialAttributes.Empty;
         var lightmapped = new Dictionary<DmxBinary.Element, bool>(ReferenceEqualityComparer.Instance);
         if (buildBakes)
@@ -76,7 +78,7 @@ internal static class WorldNodeBuild
                                                                m => Attributes(m).Bool(MeshEntryFlags.Key("SupportsLightmapping")) == true);
             }
         return [.. entries.Select(o => new Node(o, NodeEntryHeader.Prop(o.Source!, o.NodeId, o.Source!.Get<string>("model") ?? "", o.Record, Attributes(o.Material),
-                                                                         baked: lightmapped.GetValueOrDefault(o.Source!))))];
+                                                                         placementFlags: o.Placement, baked: lightmapped.GetValueOrDefault(o.Source!), schema: schema)))];
     }
 
     /// <summary>
@@ -218,7 +220,7 @@ internal static class WorldNodeBuild
                 Attributes = h.Attributes, Material = e.Material, ObjectFlags = h.ObjectFlags, Field28 = h.Tint, Stride = stride, Streams = streams,
                 Field1a3 = h.Byte1a3, Field_b8 = h.EmissiveBoost, Field1a8 = 1f, Cubemap = envMaps[i].Cubemap, LightProbe = envMaps[i].Probe,
                 Mesh184 = 1f, Field9c = h.Field9c, Field1a1 = h.Byte1a1, Field1a0 = h.Byte1a0, Field_b0 = h.FadeMin, FadeMax = h.FadeMax, Origin = h.Origin,
-                Matrix = identity, NodeId = h.NodeId, FieldA8 = (h.ObjectFlags & 8) != 0 ? 0 : -1, SkyboxSlot = h.SkyboxSlot,
+                Matrix = e.Matrix, NodeId = h.NodeId, FieldA8 = (h.ObjectFlags & 8) != 0 ? 0 : -1, SkyboxSlot = h.SkyboxSlot,
                 MeshStreams = Describe(e.Streams, Enumerable.Range(0, e.Streams.Count), e.PreciseTexcoords),
                 TexcoordsPast16 = WrbMeshEntry.TexcoordsPastSixteen(b.Vertices, e.Stride, e.Streams),
             }));

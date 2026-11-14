@@ -440,7 +440,7 @@ public static class MapCompile
             using var shaders = new ShaderLibrary(Path.Combine(game, "csgo", "shaders_pc_dir.vpk"), Path.Combine(game, "core", "shaders_pc_dir.vpk"));
             bool RendersAsWorld(string cls) => schema.IsSolidClass(cls) && schema.HasFlag(cls, "render_as_world_but_physics_as_entity");
             var volumes = WorldNodeBuild.ImportanceVolumes(WorldNodeBuild.WorldEntries(document, assets, shaders, RendersAsWorld, buildBakes: true),
-                                                           WorldNodeBuild.PropEntries(document, assets, shaders, buildBakes: true));
+                                                           WorldNodeBuild.PropEntries(document, assets, shaders, buildBakes: true, schema: schema));
             var prefix = $"maps/{map}/lightmaps/".ToLowerInvariant();
             foreach (var old in entries.Keys.Where(k => k.StartsWithAscii(prefix)).ToList())
                 entries.Remove(old);
@@ -476,7 +476,10 @@ public static class MapCompile
                                                   MapSubassets.References(walkEntities, schema, document));
             log.WriteLine($"  map root: {rootPath}, {children.Count} children");
         }
-        foreach (var note in notes.Take(10))
+        // Every note: each one is a refusal or a skip the package carries (OPEN 1.b).
+        if (notes.Count > 0)
+            log.WriteLine($"  {notes.Count} notes");
+        foreach (var note in notes)
             log.WriteLine($"  note: {note}");
 
         var written = package + ".s2c-tmp";

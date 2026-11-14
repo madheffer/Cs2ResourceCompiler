@@ -33,7 +33,8 @@ namespace Source2.Compiler.Maps;
 /// </summary>
 internal static class NodePropEntries
 {
-    public static List<NodeMeshEntries.Entry> FromWorld(DmxBinary.Document doc, GameContent content, List<string>? notes = null)
+    /// <param name="shaders">The shaders the materials' attributes come from (NeedsLocalSpaceVertices); the content's own when null.</param>
+    public static List<NodeMeshEntries.Entry> FromWorld(DmxBinary.Document doc, GameContent content, List<string>? notes = null, ShaderLibrary? shaders = null)
     {
         var (_, entities) = MapMeshes.ReadWithEntities(doc);
         var copyIds = CopyIds(doc, content);
@@ -63,7 +64,7 @@ internal static class NodePropEntries
         var entries = new List<NodeMeshEntries.Entry>();
         foreach (var group in baked.GroupBy(b => b.List, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal))
             foreach (var (node, id, model, _, _) in group.OrderByDescending(b => b.Walk))
-                entries.AddRange(Entries(node, id, model, content, notes));
+                entries.AddRange(Entries(node, id, model, content, notes, shaders));
         return entries;
     }
 
@@ -114,7 +115,9 @@ internal static class NodePropEntries
         return Flag(keys.Get<string>("baketoworld")) || magnitudes.Max() - magnitudes.Min() > 0.0001f;
     }
 
-    private static IEnumerable<NodeMeshEntries.Entry> Entries(MapMeshes.EntityNode node, int id, string modelName, GameContent content, List<string>? notes)
+    private static readonly uint NeedsLocalSpaceVertices = MeshEntryFlags.Key("NeedsLocalSpaceVertices");
+
+    private static IEnumerable<NodeMeshEntries.Entry> Entries(MapMeshes.EntityNode node, int id, string modelName, GameContent content, List<string>? notes, ShaderLibrary? shaders)
     {
         var keys = node.Element.Get<DmxBinary.Element>("entity_properties")!;
         if (content.LoadedModel(modelName + "_c") is not { } model)
@@ -136,6 +139,26 @@ internal static class NodePropEntries
         var deform = prop.Deformer?.For(matrix);
         if (prop.Deformer is { Mirror: true })
             throw new NotSupportedException($"prop {id}: a mirrored deformer (winding and tangent w flipped) is not ported");
+        // The prop's transform flags (+0x168), one for all its draws: AddStaticProps
+        // (180255b90, after 1802b6db0's material list: the draw materials of the
+        // model's meshes in the prop's LOD mask, through its material group) sets 8
+        // when any material answers NeedsLocalSpaceVertices (0x3b7ef4e7, vf 0x48),
+        // else 3. Shaders declare it per static combo: csgo_simple_liquid always,
+        // csgo_foliage's vs with S_FOLIAGE_ANIMATION=1 (ShaderAttributeProbe, 1.41.9.6).
+        var flags = PropTransform.Place | PropTransform.Texcoords;
+        foreach (var (mesh, _, _, lod) in model.GetEmbeddedMeshesAndLoD())
+        {
+            if ((lod & lodMask) == 0)
+                continue;
+            foreach (var sceneObject in mesh.Data.GetArray("m_sceneObjects"))
+                foreach (var call in sceneObject.GetArray("m_drawCalls"))
+                {
+                    var own = call.GetStringProperty("m_material") ?? "";
+                    if (content.Material(remap.GetValueOrDefault(own, own)) is { } info
+                        && MaterialAttributes.Of(info, shaders ?? content.Shaders, content.TextureSize).Bool(NeedsLocalSpaceVertices) == true)
+                        flags = PropTransform.LocalSpace;
+                }
+        }
         foreach (var (mesh, _, _, lod) in model.GetEmbeddedMeshesAndLoD())
         {
             if ((lod & lodMask) == 0)
@@ -156,11 +179,6 @@ internal static class NodePropEntries
                     var own = call.GetStringProperty("m_material") ?? "";
                     var material = remap.GetValueOrDefault(own, own);
                     var info = content.Material(material);
-                    var flags = PropTransform.Place | PropTransform.Texcoords;
-                    if (Path.GetFileNameWithoutExtension(info?.Shader ?? "").EqualsAscii("csgo_simple_liquid"))
-                        flags = PropTransform.LocalSpace;
-                    else if (Path.GetFileNameWithoutExtension(info?.Shader ?? "").EqualsAscii("csgo_foliage"))
-                        notes?.Add($"prop {id}: csgo_foliage's NeedsLocalSpaceVertices combo rule is not ported");
                     var loaded = Load(vb, lo, vertexCount, Attributes(own, content.Read));
                     var (vertices, stride) = (loaded.Vertices, loaded.Stride);
                     if (deform != null)
@@ -177,22 +195,25 @@ internal static class NodePropEntries
                         }
                     PropTransform.Apply(vertices, stride, 0, 3, 6, 10, 16, matrix, PropTransform.AxesOf(info?.Shader, info?.Params), flags);
                     var indices = Enumerable.Range(start, count).Select(i => Index(i) + bas - lo).ToArray();
-                    yield return new NodeMeshEntries.Entry(id, material, stride, loaded.Streams, vertices, indices) { Record = RecordOf(keys), Source = keys };
+                    yield return new NodeMeshEntries.Entry(id, material, stride, loaded.Streams, vertices, indices) { Record = RecordOf(keys), Source = keys, Placement = flags, Matrix = (flags & PropTransform.Place) == 0 ? matrix : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0] };
                 }
         }
     }
 
-    // The skin key (a group's name, or its index): each material of the first
-    // group becomes the same slot of the chosen one (WRBNode_PropMaterials
-    // through the prop's +0x188).
+    // The skin key, a group's name: each material of the first group becomes the
+    // same slot of the chosen one (WRBNode_PropMaterials through the prop's +0x188).
+    // EntityLump_StaticModelRecord (180245770) stores the skin string's lowercase
+    // MurmurHash2 (1800c7c10, seed 0x31415926) and 18174e7d0 finds that hash among
+    // the model's group hashes, so a skin is a name only: "1" names no group and
+    // the model keeps its own materials (s2c_foliagels against Valve's compile).
     internal static Dictionary<string, string> MaterialGroup(ValveResourceFormat.ResourceTypes.Model model, string? skin)
     {
         var map = new Dictionary<string, string>(Tier0Strings.IgnoreCase);
         var groups = model.Data.GetArray("m_materialGroups");
         if (string.IsNullOrEmpty(skin) || groups == null || groups.Count == 0)
             return map;
-        var chosen = groups.FirstOrDefault(g => Tier0Strings.EqualsIgnoreCase(g.GetStringProperty("m_name"), skin))
-            ?? (int.TryParse(skin, out var i) && i >= 0 && i < groups.Count ? groups[i] : null);
+        var key = MeshEntryFlags.Key(skin);
+        var chosen = groups.FirstOrDefault(g => MeshEntryFlags.Key(g.GetStringProperty("m_name") ?? "") == key);
         if (chosen == null)
             return map;
         var from = groups[0].GetArray<string>("m_materials");
@@ -346,7 +367,12 @@ internal static class NodePropEntries
     {
         var positions = VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
         var nf = vb.InputLayoutFields.First(f => f.SemanticName == "NORMAL");
-        var tf = vb.InputLayoutFields.First(f => f.SemanticName == "TEXCOORD");
+        // Texcoord 0 is the two-component TEXCOORD of lowest semantic index, as MeshGeometry.Classify names
+        // it (the loader table 183bb3dd0's texcoord 0), not the layout's first TEXCOORD: generic_tree_large_1
+        // lays out a three-component TEXCOORD4 (PivotPaint) before its TEXCOORD0 (s2c_foliagels, ledger 291).
+        var tf = vb.InputLayoutFields.Where(f => f.SemanticName == "TEXCOORD" && Lighting.MeshGeometry.Components(f) == 2)
+            .OrderBy(f => f.SemanticIndex).Cast<VBIB.RenderInputLayoutField?>().FirstOrDefault()
+            ?? vb.InputLayoutFields.First(f => f.SemanticName == "TEXCOORD");
         var t1 = vb.InputLayoutFields.FirstOrDefault(f => f.SemanticName == "TEXCOORD" && f.SemanticIndex == 1);
         var hasColor = cf.SemanticName != null;
         var v = new float[count * Stride];

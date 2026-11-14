@@ -6567,3 +6567,58 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        (its chunk before 1811953a0, where r12 and r14 are set) and hook that, or hook 181363320 (installed
        0x13645f0) with Thread.backtrace on the texcoord source pointer's first write (hardware watchpoint set
        when the 0x4a0 record is allocated).
+
+291. **Local-space props (AddStaticProps' flag 8) and the prop's skin** (2026-11-06; rc 0923 decompiles of
+     WRBNode_AddStaticProps 180255b90, WRBNode_PropMaterials 1802b6db0 with 18174e510 / 18174e7d0 / 1802b6a10,
+     EntityLump_StaticModelRecord 180245770, the hash 1800c7c10; ShaderAttributeProbe on 1.41.9.6's shaders; specimen
+     s2c_foliagels, tools/coverage/foliage_localspace_specimen.py, against RC 20261103's -world compile). READ + MEASURED.
+     - The prop's flags (+0x168) are one value for all its draws: 8 when any material of 1802b6db0's list (the draw
+       materials of the model's meshes in the prop's LOD and mesh group masks, through its material group) answers
+       NeedsLocalSpaceVertices (0x3b7ef4e7, vf 0x48), else 3. Only csgo_simple_liquid (every combo) and csgo_foliage's
+       vs with S_FOLIAGE_ANIMATION=1 declare it; 25 stock materials answer true (FoliageLocalSpaceProbe).
+     - After WRB_MeshEntryFlags, a mesh whose flags lack bit 0 gains attribute bit 1, so the entry goes to the
+       instanced list and compiles as its own "nomerge" object (flags & 2 gives object flag 0x20000, as before).
+     - The skin is a name: the record stores the skin string's lowercase MurmurHash2 (seed 0x31415926) at +0x188, and
+       18174e7d0 finds it among the model's group hashes. A skin "1" names no group, so the model keeps its own
+       materials (we used to take it as an index).
+     - A prop key the .vmap leaves out reads as the class's FGD default: a prop_static with no rendertocubemaps key
+       compiles with object flag 0x400 (prop_static's default is 1). Hammer saves every key, so only generated maps
+       (specimens, the decompiler's output) leave keys out.
+     - The entry's +0x1c8 matrix: WRBNode_BakePropMeshes (1802b3060) records the prop's own matrix (+0x10, R S
+       with the origin) for a mesh whose flags lack bit 0, else the identity at 182771b20; AddStaticProps copies it
+       to the entry; CompileInstanced (18026ed20) hands its first entry's to CreateRenderObject (18026bab0, ninth
+       argument), which the scene object writes as m_vTransform.
+     - Ported: NodePropEntries (flags, skin, matrix), NodeEntryHeader.Prop (bit 1, FGD defaults), the instanced
+       object's transform. On s2c_foliagels the .vmap_c, n0.vwnod and the three sumac_poison_tree nomerge models are
+       Valve's (18 of 27 files; the .vwrld stamp aside). Not read: whether the env map pick (180270430, "the +0x1c8
+       matrix applied") moves the bounds or only their centre for a local-space entry; EnvMaps and AssignByCentre
+       still use the model-space vertices.
+     - generic_tree_large_1's eight nomerge models (2026-11-06 later): their streams are now Valve's word for word, from
+       four rules:
+       - A prop draw's texcoord 0 is the two-component TEXCOORD of lowest semantic index (MeshGeometry.Classify's
+         rule, WRB_LoadPropMeshes' table 183bb3dd0), not the layout's first TEXCOORD: the tree lays out a
+         three-component TEXCOORD4 (PivotPaint) first, and we had loaded PivotPaint's x, y as the texcoord (which
+         also zeroed m_flUvDensity and made the set float).
+       - CMesh_BuildPackedInputLayout (181364720) takes a stream's format from its 31-row table at 183014ae8 (name by
+         V_stricmp_fast and index; PivotPaint R16G16B16A16_FLOAT, FoliageAnimation, VertexPaintTintColor,
+         OverlayProjectionDirection and VertexPaintBlendParams R8G8B8A8_UNORM, Data_Branch* R16G16_FLOAT ...), a name
+         the table lacks by component count (183014ec0: R32, R32G32, R32G32B32, R32G32B32A32_FLOAT). Ported as
+         WorldNodeModels.TableFormat for the streams the layout does not treat by name; the format-0 rows
+         (blendweights, blendindices) are handled past LAB_181364a09, not read, and keep R8G8B8A8_UNORM.
+       - The packer (181365ce0) zeroes a field and writes min(stream, format) components; only a stream named
+         "color" pads to (0, 0, 0, 1). We padded every RGBA8 w with 1 and every half4 w with 1.
+       - The T-junction fix's twins (1812d91c0) are keyed by the unordered vertex pair, first and latest triangle:
+         an edge is open only when no other triangle uses the pair in either direction (we needed the reverse
+         pair). atixref's capture still 662 of 662 exact (TJunctionFixReplay); on s2c_foliagels' capture the corners
+         only we snapped dropped from 447 to 87.
+       Open, measured: 72 of the 321 nomerge10 positions. On Valve's own FixTJunctions input (TJunctionFixReplay,
+       tools/vis/capture_nodeentries.py s2c_rc_probe s2c_foliagels) our fix leaves the four tree entries unlike
+       Valve's: 311 corners Valve snaps and we do not, 87 the other way, every one a snap or not. Ruled out: a
+       position weld before the fix (both move only part of 360 shared-position groups), shared CMeshes (the
+       entries' pointers differ), stale corners in the turn test (the disassembly at 18025bdd1-18025be46 stores the
+       triangle's corners first; Ghidra dropped the stores), a second pass (180259d30 runs each job once). Vertex 16
+       of entry 16, which Valve snaps, lies on no open edge of any entry, so no record can match it by the rule as
+       read: next is a Frida trace of 18025cf80's flags per triangle for that entry.
+     - Not ported, read: a lit build's aggregate-instance path in 1802b3060 (a lightmapped prop that can aggregate:
+       flags 3 | 8 kept, or bit 0x10 with "should be clutter" for a local-space one under
+       AggregateInstanceStreamVertexThreshold).

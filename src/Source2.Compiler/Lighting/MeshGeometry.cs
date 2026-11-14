@@ -146,7 +146,7 @@ internal static class MeshGeometry
     }
 
     // FUN_180036b70's component count.
-    private static int Components(VBIB.RenderInputLayoutField f) => f.Format.ToString() switch
+    internal static int Components(VBIB.RenderInputLayoutField f) => f.Format.ToString() switch
     {
         "R32_FLOAT" or "R32_UINT" or "R32_SINT" => 1,
         "R32G32_FLOAT" or "R16G16_FLOAT" or "R16G16_SNORM" or "R16G16_UNORM" or "R16G16_SINT" or "R16G16_UINT" or "R32G32_SINT" or "R32G32_UINT" => 2,

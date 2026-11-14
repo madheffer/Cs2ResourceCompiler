@@ -57,6 +57,14 @@ Open:
   field order~~ were already read (ledgers 251, 252).
 - 1.b refusals ZE maps can reach: foliage (NeedsLocalSpaceVertices), clutter, smart prop skips; detail grass
   files are not carried into the package (only Hammer writes them; RC packs them, not read).
+  Measured 11-06 with `-world` on ze_hold_em_p, atixref, ze_doom_p2, ze_doom_p2_c_gameplay and Mako: only Mako
+  reaches one of these (39 csgo_foliage props); no clutter or smart prop note on any of them. Their other notes are
+  content that is not compiled (brush entity materials, Mako's own models: 8.b1).
+  1.b1 partly ported 11-06 (ledger 291): the prop-wide flag 8 from NeedsLocalSpaceVertices, the nomerge routing, the
+  skin by name hash, FGD defaults for missing prop keys, the nomerge objects' transform (entry +0x1c8), and the
+  tree's streams (texcoord 0 by semantic index, CMesh_BuildPackedInputLayout's format table, the packer's zero pad,
+  the T-junction twins by unordered edge). Left: 72 of the tree's T-junction snaps (a Frida trace of 18025cf80 is
+  next), the env map pick for a local-space entry, and a lit build's aggregate-instance path for local-space props.
 - Cross-cutting stale docs listed at the end of PARITY_AUDIT (GEOMETRY.md, MapGeometry.cs, VisClusters.cs ...).
 
 ## 2. Physics and collision

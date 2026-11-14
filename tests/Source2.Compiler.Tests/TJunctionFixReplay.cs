@@ -48,6 +48,77 @@ public class TJunctionFixReplay(ITestOutputHelper output)
                                  + (firstFloat >= 0 ? $" ({o.Vertices[firstFloat]:R} vs {e.Vertices[firstFloat]:R})" : ""));
             }
         }
+        if (Environment.GetEnvironmentVariable("TJMESHPTR") == "1")
+            output.WriteLine("mesh pointers: " + string.Join(" ", before.Select((x, i) => $"{i}:{BitConverter.ToUInt64(x.Raw, 0):x}")));
+        // TJDEBUG=<entry>: that entry's vertices where Valve and ours differ, with the snap of the input.
+        if (int.TryParse(Environment.GetEnvironmentVariable("TJDEBUG"), out var debug))
+        {
+            var (o, e, b) = (meshes[debug], after[debug], before[debug]);
+            static float Snap(float x) => MathF.Floor((x / 0.03125f) + 0.5f) * 0.03125f;
+            int valveOnly = 0, oursOnly = 0, other = 0;
+            for (var v = 0; v < e.Vertices.Length / e.Stride; v++)
+            {
+                var at = v * e.Stride;
+                var (vo, ve, vb) = (new[] { o.Vertices[at], o.Vertices[at + 1], o.Vertices[at + 2] }, e.Vertices[at..(at + 3)], b.Vertices[at..(at + 3)]);
+                if (vo.SequenceEqual(ve))
+                    continue;
+                var valveSnapped = ve.SequenceEqual(vb.Select(Snap));
+                var oursSnapped = vo.SequenceEqual(vb.Select(Snap));
+                if (valveSnapped && vo.SequenceEqual(vb))
+                    valveOnly++;
+                else if (oursSnapped && ve.SequenceEqual(vb))
+                    oursOnly++;
+                else
+                    other++;
+                var tris = Enumerable.Range(0, b.Indices.Length / 3).Where(t => b.Indices[t * 3] == v || b.Indices[(t * 3) + 1] == v || b.Indices[(t * 3) + 2] == v).ToList();
+                if (valveOnly + oursOnly + other <= 12)
+                    output.WriteLine($"  v{v} before ({string.Join(", ", vb)}) valve ({string.Join(", ", ve)}) ours ({string.Join(", ", vo)}) tris {string.Join(" ", tris.Take(6))}");
+            }
+            output.WriteLine($"entry {debug}: Valve snapped, ours not {valveOnly}; ours snapped, Valve not {oursOnly}; other {other}");
+            // Position-shared vertices: for each vertex only one side snapped, whether another vertex at the same
+            // input position was snapped by the other side.
+            var byPos = Enumerable.Range(0, b.Vertices.Length / b.Stride).GroupBy(v => (b.Vertices[v * b.Stride], b.Vertices[(v * b.Stride) + 1], b.Vertices[(v * b.Stride) + 2])).ToList();
+            bool Moved(IReadOnlyList<float> m, int v) => m[v * b.Stride] != b.Vertices[v * b.Stride] || m[(v * b.Stride) + 1] != b.Vertices[(v * b.Stride) + 1] || m[(v * b.Stride) + 2] != b.Vertices[(v * b.Stride) + 2];
+            int mixedValve = 0, mixedOurs = 0, groups = 0;
+            foreach (var g in byPos.Where(g => g.Count() > 1))
+            {
+                groups++;
+                if (g.Any(v => Moved(e.Vertices, v)) && !g.All(v => Moved(e.Vertices, v)))
+                    mixedValve++;
+                if (g.Any(v => Moved(o.Vertices, v)) && !g.All(v => Moved(o.Vertices, v)))
+                    mixedOurs++;
+            }
+            output.WriteLine($"entry {debug}: {groups} positions shared by several vertices; moved only partly: Valve {mixedValve}, ours {mixedOurs}");
+            // TJVERTEX=<v>: that vertex's triangles (open edges by Twins) and every entry's open-edge vertex whose
+            // snap equals its snap, with the entry's group.
+            if (int.TryParse(Environment.GetEnvironmentVariable("TJVERTEX"), out var tv))
+            {
+                var fresh = before.Select(x => new TJunctionFix.Mesh { Vertices = [.. x.Vertices], Stride = x.Stride, Indices = [.. x.Indices], Group = BitConverter.ToInt32(x.Raw, 0x40) }).ToList();
+                var target = new System.Numerics.Vector3(b.Vertices[tv * b.Stride], b.Vertices[(tv * b.Stride) + 1], b.Vertices[(tv * b.Stride) + 2]);
+                var st = new System.Numerics.Vector3(Snap(target.X), Snap(target.Y), Snap(target.Z));
+                var twinSelf = TJunctionFix.Twins(fresh[debug]);
+                output.WriteLine($"  groups: {string.Join(" ", fresh.Select((x, i) => $"{i}:{x.Group}/{before[i].Raw[0x1a0]}"))}");
+                for (var t = 0; t < b.Indices.Length; t += 3)
+                    if (b.Indices[t] == tv || b.Indices[t + 1] == tv || b.Indices[t + 2] == tv)
+                        output.WriteLine($"  tri {t / 3} ({b.Indices[t]} {b.Indices[t + 1]} {b.Indices[t + 2]}) twins {twinSelf[t]} {twinSelf[t + 1]} {twinSelf[t + 2]}");
+                for (var m = 0; m < fresh.Count; m++)
+                {
+                    var tw = TJunctionFix.Twins(fresh[m]);
+                    var x = before[m];
+                    for (var c = 0; c < x.Indices.Length; c++)
+                    {
+                        if (tw[c] != -1)
+                            continue;
+                        foreach (var vv in new[] { x.Indices[c], x.Indices[c - (c % 3) + ((c % 3) + 1) % 3] })
+                        {
+                            var p = new System.Numerics.Vector3(x.Vertices[vv * x.Stride], x.Vertices[(vv * x.Stride) + 1], x.Vertices[(vv * x.Stride) + 2]);
+                            if (System.Numerics.Vector3.Distance(p, target) < 0.1f)
+                                output.WriteLine($"  record: entry {m} group {fresh[m].Group} vertex {vv} corner {c} ({p.X}, {p.Y}, {p.Z})");
+                        }
+                    }
+                }
+            }
+        }
         output.WriteLine($"{meshes.Count} entries ({changed} changed by Valve), {exact} exact");
         Assert.Equal(meshes.Count, exact);
     }
