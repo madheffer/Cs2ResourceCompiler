@@ -19,6 +19,10 @@ namespace Source2.Compiler.Tests;
 /// </summary>
 public class WorldPhysicsAuthorTests(ITestOutputHelper output)
 {
+    /// <summary>A step run on the map between its prefab and deformer passes and the build, by a probe
+    /// outside this project (cs2-map-decompiler's WorldPhysicsFlattenProbe); null here.</summary>
+    internal static Action<DmxBinary.Document, ITestOutputHelper>? BeforeBuild;
+
     // Mako's first soup: six " [Wood]" names reach 52 characters (long), the
     // next non-empty name adds "; ..." and seals it, and later ones add nothing.
     [Fact]
@@ -122,33 +126,8 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
         var doc = DmxBinary.ReadFile(Path.Combine(cs2, "content", "csgo_addons", p[0], "maps", p[1] + ".vmap"));
         Maps.MapPrefabs.Attach(doc, Maps.MapPrefabs.FromContent(Path.Combine(cs2, "content", "csgo_addons", p[0])));
         Maps.MapDeformers.Apply(doc, MapFixtures.GameSchema());
-        // WPBUILD_FLATTEN=<node>[|bytes]: that subdivided mesh replaced by a flat one of its baked triangles (each a face,
-        // in the bake's order, with its face's material and lightmap bias and the bake's corner paint; "bytes" rounds the
-        // paint to 8 bits as the render stores it): what a decompile that writes the tessellation needs to keep.
-        if (Environment.GetEnvironmentVariable("WPBUILD_FLATTEN") is { Length: > 0 } flatten)
-        {
-            var parts = flatten.Split('|');
-            var node = doc.Elements.First(e => e.GetValue<int>("nodeID")?.ToString() == parts[0]);
-            var md = node.Get<DmxBinary.Element>("meshData")!;
-            int[] FaceStream(string name) => (md.Get<DmxBinary.Element>("faceData")?.GetElements("streams").FirstOrDefault(x => x.Name.Split(':')[0] == name)?.Get<object?[]>("data") ?? [])
-                .Select(x => x is int i ? i : 0).ToArray();
-            var faceData = (md.Get<object?[]>("faceDataIndices") ?? []).Select(x => x is int i ? i : 0).ToArray();
-            var (mats, biases) = (FaceStream("materialindex"), FaceStream("lightmapScaleBias"));
-            var cut = Maps.SubdivisionBake.Bake(md, q => q);
-            var bytes = parts.Length > 1 && parts[1] == "bytes";
-            // As the render keeps it (truncated to 8 bits) and the decompile reads it back (the byte's middle).
-            static float B(float x) => Maps.Decompile.BlendFaces.Unpack(Maps.WorldNodeModels.Unorm8(x));
-            Vector4 Q(Vector4 v) => bytes ? new Vector4(B(v.X), B(v.Y), B(v.Z), B(v.W)) : v;
-            var tris = Enumerable.Range(0, cut.Faces.Count).ToList();
-            var builder = new Maps.Decompile.VmapBuilder("flatten");
-            var flat = builder.AddMesh(builder.World, 1, Vector3.Zero, Vector3.Zero,
-                [.. tris.Select(t => ((Vector3[])[cut.Positions[cut.Indices[t * 3]], cut.Positions[cut.Indices[t * 3 + 1]], cut.Positions[cut.Indices[t * 3 + 2]]], mats[faceData[cut.Faces[t]]]))],
-                [.. (md.Get<object?[]>("materials") ?? []).Select(x => x as string ?? "")],
-                cornerBlend: cut.Paint is null ? null : [.. tris.Select(t => (Vector4[]?)[Q(cut.Paint[t * 3]), Q(cut.Paint[t * 3 + 1]), Q(cut.Paint[t * 3 + 2])])],
-                faceBiases: [.. tris.Select(t => biases[faceData[cut.Faces[t]]])]);
-            node.Set("meshData", node.Types["meshData"], flat.Get<DmxBinary.Element>("meshData"));
-            output.WriteLine($"flatten: node {parts[0]}: {tris.Count} baked triangles as faces, paint {(cut.Paint is null ? "none" : bytes ? "8-bit" : "float")}");
-        }
+        // WPBUILD_FLATTEN: the decompiler's flatten step (cs2-map-decompiler, WorldPhysicsFlattenProbe) runs here.
+        BeforeBuild?.Invoke(doc, output);
         var notes = new List<string>();
         // WPBUILD_GPU=1: new-blending materials take their layers from the GPU sampler.
         using var gpu = Environment.GetEnvironmentVariable("WPBUILD_GPU") == "1"

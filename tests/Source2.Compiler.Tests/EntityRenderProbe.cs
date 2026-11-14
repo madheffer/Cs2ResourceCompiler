@@ -466,41 +466,6 @@ public class EntityRenderProbe(ITestOutputHelper output)
             output.WriteLine($"SHAPE x{v}: {k}");
     }
 
-    /// <summary>
-    /// <c>ENTFILTER=&lt;addon&gt;|&lt;map&gt;|&lt;entity id&gt;</c>: the decompiler's render filter
-    /// (MapDecompiler.RenderOrderHolds) on the true source's meshes of one brush entity against its
-    /// shipped render pieces, mesh by mesh, piece by piece: it must hold where the forward is exact.
-    /// </summary>
-    [Fact]
-    public void RenderFilterOnTheSource()
-    {
-        if (Environment.GetEnvironmentVariable("ENTFILTER") is not { Length: > 0 } spec || spec.Split('|') is not [var addon, var map, var idText])
-            return;
-        var cs2 = Environment.GetEnvironmentVariable("CS2_DIR") ?? @"D:\Steam\steamapps\common\Counter-Strike Global Offensive";
-        var doc = DmxBinary.ReadFile(MapFixtures.VmapSource(addon, map)!);
-        var entity = doc.Elements.First(e => e.Type == "CMapEntity" && e.GetValue<int>("nodeID") == int.Parse(idText));
-        using var package = new Package();
-        package.Read(Path.Combine(cs2, "game", "csgo_addons", addon, "maps", map + ".vpk"));
-        var entry = package.Entries!["vmdl_c"].First(x => x.DirectoryName.EndsWith("entities", StringComparison.OrdinalIgnoreCase) && x.FileName.EndsWith("_" + idText, StringComparison.Ordinal));
-        package.ReadEntry(entry, out var bytes);
-        var pieces = Source2.Compiler.Maps.Decompile.BrushRender.Read(bytes);
-        var toEntity = CTransform.FromNode(entity).Inverse().Matrix();
-        var at = 0;
-        foreach (var mesh in Meshes(entity))
-        {
-            var toWorld = CTransform.FromNode(mesh).Matrix();
-            var materials = (mesh.Get<DmxBinary.Element>("meshData")?.Get<object?[]>("materials") ?? []).Select(x => x as string ?? "").ToList();
-            for (var m = 0; m < materials.Count && at < pieces.Count; m++)
-            {
-                if (!string.Equals(materials[m], pieces[at].Material, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                var holds = Source2.Compiler.Maps.Decompile.MapDecompiler.RenderOrderHolds(mesh, m, pieces[at], toWorld, toEntity, out var placed);
-                output.WriteLine($"mesh {mesh.GetValue<int>("nodeID")} material {m} ({pieces[at].Name}): positions {placed}, frames {holds}");
-                at++;
-            }
-        }
-    }
-
     private static IEnumerable<DmxBinary.Element> Meshes(DmxBinary.Element node)
     {
         foreach (var c in node.GetElements("children"))

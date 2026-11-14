@@ -29,7 +29,11 @@
     <InternalsVisibleTo Include="s2c" />
     <InternalsVisibleTo Include="Source2.Compiler.Tests" />
     <InternalsVisibleTo Include="Source2.Compiler.Gpu" />
-    <InternalsVisibleTo Include="Source2.Compiler.Solvers" />
+    <!-- cs2-map-decompiler (its own repository) builds on the compiler's internals. -->
+    <InternalsVisibleTo Include="Cs2MapDecompiler" />
+    <InternalsVisibleTo Include="Cs2MapDecompiler.Solvers" />
+    <InternalsVisibleTo Include="cs2-map-decompiler" />
+    <InternalsVisibleTo Include="Cs2MapDecompiler.Tests" />
   </ItemGroup>
 
   <ItemGroup>

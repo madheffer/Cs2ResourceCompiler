@@ -713,118 +713,6 @@ internal static class Commands
         }
     }
 
-    /// <summary>A compiled map package back to a .vmap (Maps.Decompile.MapDecompiler).</summary>
-    public static int DecompileMap(string[] a)
-    {
-        // The world soup's order, when the world search runs (DECOMPILE_WORLD_SEARCH=1): CP-SAT.
-        Source2.Compiler.Solvers.WorldOrderCpSat.Install();
-        var path = Positional(a, "map .vpk");
-        var outPath = Require(Opt(a, "-o"), "-o <out.vmap>");
-        var cs2 = Require(Opt(a, "--cs2") ?? Environment.GetEnvironmentVariable("CS2_DIR"), "--cs2 <CS2 install dir> (or CS2_DIR)");
-        var game = Path.Combine(cs2, "game");
-        var schema = FgdSchema.Load(Path.Combine(game, "csgo", "csgo.fgd"), [Path.Combine(game, "core"), Path.Combine(game, "csgo")]);
-
-        var files = Maps.Decompile.MapDecompiler.ReadPackage(path);
-        var map = Maps.Decompile.MapDecompiler.MapNameOf(files);
-        // The game's models, for the prop_statics in the world's hulls.
-        // With --addon, the addon's own files first (its game folder loose, or its workshop _dir.vpk), as the
-        // game mounts it: the materials world faces take their surfaces from, the models of its props.
-        var addonOpt = Opt(a, "--addon");
-        var gameContent = addonOpt is not null && Directory.Exists(addonOpt)
-            ? new Maps.GameContent(Path.Combine(game, "csgo", "pak01_dir.vpk"), addonOpt)
-            : new Maps.GameContent(Path.Combine(game, "csgo", "pak01_dir.vpk"));
-        if (addonOpt is not null && !Directory.Exists(addonOpt))
-            gameContent.AddPackage(addonOpt);
-        // DECOMPILE_MATDEBUG=<a.vmat>,<b.vmat>: what the content gives for those materials, then stop.
-        if (Environment.GetEnvironmentVariable("DECOMPILE_MATDEBUG") is { Length: > 0 } debugMaterials)
-        {
-            foreach (var m in debugMaterials.Split(','))
-            {
-                var info = gameContent.Material(m);
-                Console.WriteLine($"{m}: {(info is null ? "not found" : $"shader {info.Shader}; strings {string.Join(", ", info.Strings.Select(kv => $"{kv.Key}={kv.Value}"))}; ints {string.Join(", ", info.Ints.Select(kv => $"{kv.Key}={kv.Value}"))}")}");
-                Console.WriteLine($"  surface key {Physics.WorldCollision.ReadMaterial(m, gameContent.Material, gameContent.CollisionProperty).SurfaceKey}");
-            }
-            return 0;
-        }
-        // Brush hulls name their material by hash: the game's materials, and with --addon (the addon's
-        // _dir.vpk or its game folder) the addon's own, as the sweep reads them.
-        var materialNames = Maps.Decompile.BrushGeometry.GameMaterialNames(game);
-        if (Opt(a, "--addon") is { } addon)
-            materialNames.AddRange(AddonMaterialNames(addon));
-        var result = Maps.Decompile.MapDecompiler.Decompile(files, map, schema, Maps.Decompile.BrushGeometry.MaterialTable(materialNames), gameContent);
-        File.WriteAllBytes(outPath, result.Vmap);
-        if (Maps.Decompile.DecompileProfile.On)
-            foreach (var line in Maps.Decompile.DecompileProfile.Take())
-                Console.WriteLine("  " + line);
-
-        Console.WriteLine($"{map}: {result.Entities.Count:n0} entities, {result.Placeholders:n0} placeholders");
-        Console.WriteLine($"  wrote {outPath}  ({result.Vmap.Length:n0} bytes)");
-        // The prefab maps the decompile rebuilt, at the content paths its CMapPrefab nodes name
-        // (maps/prefabs/<map>/...), under the addon's content folder: --content, or the folder
-        // holding the output's maps folder.
-        if (result.Prefabs.Count > 0)
-        {
-            var outDir = Path.GetDirectoryName(Path.GetFullPath(outPath))!;
-            var content = Opt(a, "--content")
-                          ?? (string.Equals(Path.GetFileName(outDir), "maps", StringComparison.OrdinalIgnoreCase) ? Path.GetDirectoryName(outDir)! : outDir);
-            foreach (var (prefabPath, bytes) in result.Prefabs)
-            {
-                var target = Path.Combine(content, prefabPath.Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                File.WriteAllBytes(target, bytes);
-                Console.WriteLine($"  wrote {target}  ({bytes.Length:n0} bytes)");
-            }
-        }
-        // What the map loads from outside its own package: the levels to decompile on their own and
-        // the scripts decompile-scripts gives back from the addon's package.
-        foreach (var (className, key, target) in Maps.Decompile.MapDecompiler.Links(result.Entities).Distinct())
-            Console.WriteLine($"  links: {className} {key} = {target}");
-        // The notes grouped by what they say, with an example each.
-        foreach (var group in result.Notes.GroupBy(n => System.Text.RegularExpressions.Regex.Replace(n, @"^\S+ \S+: |\([^)]*\)", "").Trim())
-                                          .OrderByDescending(g => g.Count()))
-            Console.WriteLine($"  {group.Count(),5} x {group.Key}   (e.g. {group.First()})");
-        return 0;
-    }
-
-    /// <summary>An addon's cs_script sources from its compiled .vjs_c (Maps.Decompile.ScriptSources).
-    /// Scripts sit in the addon's package, not in a map's own .vpk.</summary>
-    public static int DecompileScripts(string[] a)
-    {
-        var content = Require(Opt(a, "--content"), "--content <addon content dir>");
-        var inputs = a.Where((x, i) => !x.StartsWith('-') && (i == 0 || a[i - 1] != "--content")).ToList();
-        if (inputs.Count == 0)
-            throw new ArgumentException("missing an addon _dir.vpk or .vjs_c file");
-        var compiled = new List<(string Name, byte[] Bytes)>();
-        foreach (var input in inputs)
-        {
-            if (!input.EndsWith(".vpk", StringComparison.OrdinalIgnoreCase))
-            {
-                compiled.Add((input, File.ReadAllBytes(input)));
-                continue;
-            }
-            using var package = new ValvePak.Package();
-            package.Read(input);
-            foreach (var entry in package.Entries.TryGetValue("vjs_c", out var scripts) ? scripts : [])
-                compiled.Add((entry.GetFullPath(), Io.VpkEntries.Read(package, entry)));
-        }
-        var failed = 0;
-        foreach (var (name, bytes) in compiled)
-        {
-            if (Maps.Decompile.ScriptSources.Recover(bytes) is not { } script)
-            {
-                Console.WriteLine($"  {name}: keeps no source text that matches its RED2 CRC; skipped");
-                failed++;
-                continue;
-            }
-            var target = Path.Combine(content, script.Path.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.WriteAllBytes(target, script.Source);
-            Console.WriteLine($"  wrote {target}  ({script.Source.Length:n0} bytes)");
-        }
-        Console.WriteLine($"{compiled.Count - failed} of {compiled.Count} scripts recovered");
-        return failed == 0 ? 0 : 1;
-    }
-
     public static int Entities(string[] a)
     {
         var input = Positional(a, "compiled entity lump");
@@ -906,17 +794,6 @@ internal static class Commands
         "rgba" or "none" => ResourceBuilder.TextureCompression.None,
         _ => throw new ArgumentException($"unknown --format '{f}' (bc7|bc5|bc4|bc3|bc1|rgba)"),
     };
-
-    /// <summary>An addon's .vmat_c paths (materials/x.vmat_c), from its _dir.vpk or its game folder.</summary>
-    private static List<string> AddonMaterialNames(string addon)
-    {
-        if (Directory.Exists(addon))
-            return Directory.EnumerateFiles(addon, "*.vmat_c", SearchOption.AllDirectories)
-                            .Select(f => Path.GetRelativePath(addon, f).Replace('\\', '/')).ToList();
-        using var package = new ValvePak.Package();
-        package.Read(addon);
-        return (package.Entries.GetValueOrDefault("vmat_c") ?? []).Select(e => e.GetFullPath()).ToList();
-    }
 
     private static string Positional(string[] a, string what)
         => a.FirstOrDefault(x => !x.StartsWith('-'))

@@ -37,12 +37,6 @@ try
         "map-validate" => Commands.MapValidate(args[1..]),
         "entitylump" => Commands.Entitylump(args[1..]),
         "reauthor" => Commands.Reauthor(args[1..]),
-        "decompile-map" => Commands.DecompileMap(args[1..]),
-        "decompile-scripts" => Commands.DecompileScripts(args[1..]),
-        "decompile-sweep" => DecompileSweep.Run(args[1..]),
-        "vmap-check" => VmapCheck.Run(args[1..]),
-        "vmap-world-compare" => VmapWorldCompare.Run(args[1..]),
-        "world-charts" => VmapWorldCompare.Charts(args[1..]),
         "selftest" => SelfTest.Run(args[1..]),
         // main's resource parity tools (merged 2026-11-05).
         "kv3-parity" => Kv3Parity.Run(args[1..]),
@@ -146,24 +140,6 @@ static void Usage()
                     .vtex, which the game keeps under _buildcubemaps only while it
                     builds. --game names the install's game folder for a package
                     copied outside it. A map the renderer does not port yet is refused.
-
-      s2c decompile-map <maps/<map>.vpk> -o <out.vmap> [--cs2 <CS2 install dir>] [--content <addon content dir>]
-                    A compiled map package back to a Hammer .vmap (vmap 40): the
-                    entities with their keys and outputs in the compile's walk
-                    order, brush entities' hulls, prefabs (their maps written under
-                    --content, by default the folder holding the output's maps/),
-                    instances and paths. World geometry is not rebuilt yet; what
-                    is left out is listed (docs/DECOMPILE.md).
-
-      s2c decompile-sweep <workshop content/730 dir> --report <out.jsonl> [--cs2 <dir>] [--only <id,...>] [--timeout <s>]
-                    decompile-map over every map of every workshop item, one JSON
-                    line per map (ran or not, time, counts, notes grouped); resumes
-                    from the report; driver: tools/map-survey/decompile_sweep.py.
-
-      s2c decompile-scripts <addon _dir.vpk | .vjs_c ...> --content <addon content dir>
-                    The cs_script sources (.js) back from an addon's compiled
-                    scripts, byte for byte (each checked against the CRC its
-                    RED2 records), at the content paths RED2 names.
 
       s2c id        <resource/path.vtex>
                     Print the 64-bit RERL id the engine looks that path up by.
