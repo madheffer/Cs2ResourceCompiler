@@ -41,6 +41,7 @@ try
         "decompile-scripts" => Commands.DecompileScripts(args[1..]),
         "decompile-sweep" => DecompileSweep.Run(args[1..]),
         "vmap-check" => VmapCheck.Run(args[1..]),
+        "vmap-world-compare" => VmapWorldCompare.Run(args[1..]),
         "selftest" => SelfTest.Run(args[1..]),
         // main's resource parity tools (merged 2026-11-05).
         "kv3-parity" => Kv3Parity.Run(args[1..]),
