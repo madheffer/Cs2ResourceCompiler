@@ -54,7 +54,7 @@ internal static class EntityRenderModels
         transformOf ??= CTransform.FromNode;
         var toEntity = transformOf(entity).Inverse().Matrix();
         var result = new List<Piece>();
-        var taken = new HashSet<string>(StringComparer.Ordinal);
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var mesh in meshes)
         {
             var names = mesh.Get<DmxBinary.Element>("meshData")?.Get<object?[]>("materials")?.Select(x => x as string ?? "").ToArray() ?? [];
@@ -74,13 +74,54 @@ internal static class EntityRenderModels
             for (var k = 0; k < pieces.Count; k++)
             {
                 var (piece, material) = pieces[k];
-                var name = $"hammer_mesh_{k}";
-                for (var n = 1; !taken.Add(name); n++)
-                    name = $"hammer_mesh_{k}{n}";
+                var name = UniqueName($"hammer_mesh_{k}", taken);
+                taken.Add(name);
                 result.Add(new Piece(name, Entry(piece, material, toWorld, toEntity, precise, signature(material)), signature(material)));
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// ModelDoc's unique node name (rc 0923 181f1a7e0, from 181410e00 when ModelDoc_CreateNode adds a named node):
+    /// a name no existing one equals (V_stricmp_fast) is kept. Otherwise its trailing digits, leading zeros
+    /// skipped, give N: the base is the name up to those digits and the first try N + 1; with no trailing
+    /// number, or only zeros, the base is the whole name and the first try 1. Tries go up while a name is
+    /// taken, at most as far as the first try plus the count of existing names, then "". So hammer_mesh_0
+    /// becomes hammer_mesh_01, 02 ..., hammer_mesh_1 becomes hammer_mesh_2, 3 ... (ze_doom_p2's downers).
+    /// </summary>
+    internal static string UniqueName(string name, IReadOnlySet<string> taken)
+    {
+        if (!taken.Contains(name))
+            return name;
+        var digits = name.Length;
+        while (digits > 0 && char.IsAsciiDigit(name[digits - 1]))
+            digits--;
+        var first = digits;
+        while (first < name.Length && name[first] == '0')
+            first++;
+        string stem;
+        long n;
+        if (first < name.Length)
+        {
+            stem = name[..first];
+            n = (long)CNumbers.Atoi(name[first..]) + 1;
+            if ((uint)n == 0xffffffff)
+                n = 1;
+        }
+        else
+        {
+            stem = name;
+            n = 1;
+        }
+        var last = n + taken.Count;
+        for (; n <= last; n++)
+        {
+            var candidate = stem + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (!taken.Contains(candidate))
+                return candidate;
+        }
+        return "";
     }
 
     // The piece in the entity's space with tangents recomputed, reduced to the streams its material reads.

@@ -6678,3 +6678,24 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Result: ze_obj_christmas_factory -world -vis 431 of 432 files Valve's (the .vwrld stamp); was 168 of 477
        with real clusters. probe01, cardtest, ze_hold_em_p, atixref and both elf maps unchanged.
      - Not read: the count local_1ac (which trace scene field), and where FUN_180047cf0's flat box (+0x118) goes.
+
+294. **Entity model mesh names and the hull counts** (2026-11-15, CS2 open: rc 0923 decompiles of
+     ModelDoc_CreateNode 18140ebc0, FUN_181410e00, the unique-name generator 181f1a7e0,
+     Folded_CModelDocPhysicsShape_Hull::vf65 18152f050; Valve's fresh -world compile of ze_doom_p2,
+     %TEMP%/fresh_compile/ze_doom_p2_world_1115.vpk). READ (names) + MEASURED (counts).
+     - A ModelDoc node whose name another node of its type already has (V_stricmp_fast; FNV-1a hash set of the
+       existing names) is renamed by 181f1a7e0: the trailing digits, leading zeros skipped, give N, the stem is
+       the name up to those digits and the first try N + 1; with no trailing number, or only zeros, the stem is
+       the whole name and the first try 1; tries climb while taken, at most first try + the count of existing
+       names, then "". hammer_mesh_0 -> 01, 02 ...; hammer_mesh_1 -> 2, 3 ...; hammer_mesh_01 -> 02. Ported as
+       EntityRenderModels.UniqueName (was: append 1, 2 ... to every taken name, right only for _0). ze_doom_p2's
+       downers, ascensor, door_sewer6 and icondown models (13) now Valve's.
+     - RED2's physics_shape_hull_count and physics_shape_count count hull nodes (vf65 adds 1 per node). A hull
+       that passes the compile's shape check (BrushHulls.ShapePoints) but that RnHullCreate refuses counts
+       without a shape in PHYS; one that fails the shape check does not count. Measured: unnamed_3_1780 62 for 61
+       hulls (1 refused by RnHullCreate, 8 failed checks), icondown2_2_692 4 (2 failed checks). Ported as
+       WorldPhysics.DroppedHullNodes for brush entity models. Not read: where the shape check sits relative to
+       the node's creation (FUN_1802c0e70 holds the "Inconsistent hull geometry" error); the world's and the
+       static props' hull counts are not changed.
+     - Result: ze_doom_p2 -world 538 of 539 files Valve's (the .vwrld stamp), was 524. probe01, cardtest,
+       ze_hold_em_p, atixref, ze_obj_christmas_factory and ze_obj_elf_penis_factory unchanged.

@@ -57,6 +57,15 @@ public sealed class WorldPhysics
     /// <summary>How many mesh pieces went into the soups (RED2's physics_shape_mesh_count).</summary>
     public int MeshPieces { get; private set; }
 
+    /// <summary>
+    /// Hull nodes the model compile made no shape of: the hull passed the shape check (BrushHulls.ShapePoints)
+    /// but RnHullCreate refused it. RED2's counts are per node (Folded_CModelDocPhysicsShape_Hull::vf65, rc
+    /// 18152f050, adds 1 to physics_shape_hull_count, then CModelDocBasePhysicsShape::vf65 to
+    /// physics_shape_count), and such a hull still counts, while one failing the shape check does not (measured,
+    /// ledger 294: ze_doom_p2's unnamed_3_1780 counts 62 for 61 hulls, 8 failed checks uncounted; icondown2 2).
+    /// </summary>
+    public int DroppedHullNodes { get; set; }
+
     /// <param name="surfaceName">A surface's name by hash (the game's surfaceproperties), for a prop's.</param>
     /// <param name="entityModel">A brush entity's model rather than the world's (see AttributeOf).</param>
     /// <param name="soupInput">Told each soup's RnMeshCreate input (indices, vertices, per-triangle materials), for replays.</param>
@@ -257,7 +266,7 @@ public static class WorldPhysicsTrees
             Argument("mapbuilder_entity_classname", "StringArg", entityClass == null ? 0 : Maps.SettleWorld.NameHash(entityClass)));
         var special = Array(Collection(("m_String", new KVObject("ModelDoc Compiler Version")), ("m_CompilerIdentifier", new KVObject("CompileModel")),
             ("m_nFingerprint", U(3)), ("m_nUserData", new KVObject(0u))));
-        var shapes = model.Spheres.Count + model.Capsules.Count + model.Hulls.Count + model.MeshPieces;
+        var shapes = model.Spheres.Count + model.Capsules.Count + model.Hulls.Count + model.DroppedHullNodes + model.MeshPieces;
         var user = Collection(("compile_warnings", new KVObject(0L)));
         // Only when a listed entry is "default" (atixref, c2m2's prefab; ze_hold_em_p has none, and no key).
         if (model.ListedSurfaces.Any(i => model.Surfaces[i].Hash == Maps.SettleWorld.NameHash("default")))
@@ -276,7 +285,7 @@ public static class WorldPhysicsTrees
         // mesh count, atixref's empty func_water model no count at all), the keys
         // in alphabetical order (s2c_rounds: capsule, count, mesh, sphere).
         foreach (var (key, count) in new[] { ("physics_shape_capsule_count", model.Capsules.Count), ("physics_shape_count", shapes),
-                     ("physics_shape_hull_count", model.Hulls.Count), ("physics_shape_mesh_count", model.MeshPieces),
+                     ("physics_shape_hull_count", model.Hulls.Count + model.DroppedHullNodes), ("physics_shape_mesh_count", model.MeshPieces),
                      ("physics_shape_sphere_count", model.Spheres.Count) })
             if (count > 0)
                 user.Add(key, I(count));

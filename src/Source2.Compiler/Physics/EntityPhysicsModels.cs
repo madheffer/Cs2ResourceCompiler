@@ -157,6 +157,7 @@ public static class EntityPhysicsModels
                 ? "[PR#]" + (fixing.GetValue<int>("nodeID") ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" : null;
             var path = EntityLumpAuthor.BrushModelPath(EntityLumpAuthor.FixedName(targetName, fixup, schema), idPath, mapName);
             var pieces = new List<WorldCollision.Piece>();
+            var droppedHullNodes = 0;
             var physicsOnly = true;
             // A prefab's meshes were saved in the prefab's own map.
             var version = prefabs.Length > 0 && prefabs[^1].Attributes.TryGetValue(MapPrefabs.DocumentKey, out var loaded) && loaded is DmxBinary.Document prefabDoc
@@ -198,10 +199,16 @@ public static class EntityPhysicsModels
                     {
                         var qh = RnHullBuilder.BuildHull(input, RnHullBuilder.Options.MapBuilder, out _);
                         var points = qh == null ? null : BrushHulls.ShapePoints([.. qh.HullVertices.Select(v => new System.Numerics.Vector3(v.X, v.Y, v.Z))]);
+                        // A piece the builder cannot hull, or whose hull fails the shape check, adds nothing; one
+                        // that passes the check but that RnHullCreate refuses still counts in RED2's shape counts
+                        // (WorldPhysics.DroppedHullNodes; measured on ze_doom_p2, ledger 294).
                         var hull = points == null ? null : RnHullBuilder.Create(points, RnHullBuilder.Options.Compile, out _);
-                        // A piece the builder cannot hull adds nothing.
                         if (hull == null)
+                        {
+                            if (points != null)
+                                droppedHullNodes++;
                             continue;
+                        }
                         hull.RegionSvm = RegionSvmBuilder.Build(hull);
                         RnHullBuilder.Transform(hull, RnHullBuilder.Identity);
                         pieces.Add(new WorldCollision.Piece(nodeId, slot, name, physics, hull.VertexPositions, []) { Hull = hull, ToolMaterial = name });
@@ -231,7 +238,9 @@ public static class EntityPhysicsModels
             // (func_water, whose render goes to the world).
             physicsOnly |= schema?.HasFlag(className, "physics_only_model") == true
                          || schema?.HasFlag(className, "render_as_world_but_physics_as_entity") == true;
-            return new Model(nodeId, className, path, physicsOnly, WorldPhysics.Build(pieces, entityModel: true))
+            var built = WorldPhysics.Build(pieces, entityModel: true);
+            built.DroppedHullNodes = droppedHullNodes;
+            return new Model(nodeId, className, path, physicsOnly, built)
             {
                 Entity = entity, Meshes = meshes, TransformOf = transformOf, Applied = applied,
             };
