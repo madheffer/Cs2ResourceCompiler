@@ -67,7 +67,7 @@ internal static class WorldNodeBuild
     public static List<Node> PropEntries(DmxBinary.Document doc, GameContent content, ShaderLibrary shaders, List<string>? notes = null, bool buildBakes = false,
                                          FgdSchema? schema = null)
     {
-        var entries = NodePropEntries.FromWorld(doc, content, notes, shaders);
+        var entries = NodePropEntries.FromWorld(doc, content, notes, shaders, schema);
         MaterialAttributes Attributes(string material) => content.Material(material) is { } info ? MaterialAttributes.Of(info, shaders, content.TextureSize) : MaterialAttributes.Empty;
         var lightmapped = new Dictionary<DmxBinary.Element, bool>(ReferenceEqualityComparer.Instance);
         if (buildBakes)
@@ -217,7 +217,10 @@ internal static class WorldNodeBuild
             var (stride, v, streams) = Filtered(e.Material, b.Vertices, e.Stride, e.Streams, e.PreciseTexcoords, h.Attributes);
             list.Add(new MergerInput(e.Material, stride, v, b.Indices, new WrbMeshEntry
             {
-                Attributes = h.Attributes, Material = e.Material, ObjectFlags = h.ObjectFlags, Field28 = h.Tint, Stride = stride, Streams = streams,
+                // COverlayMeshList::OnAdd (180271150) ORs 0x2000 into +0xbc of every entry the overlay list
+                // takes, a world mesh with an overlay material too (ze_obj_elf_penis_factory_mat's 19 decal meshes).
+                Attributes = h.Attributes, Material = e.Material, ObjectFlags = h.ObjectFlags | (kind == MeshLists.Kind.Overlay ? 0x2000u : 0u),
+                Field28 = h.Tint, Stride = stride, Streams = streams,
                 Field1a3 = h.Byte1a3, Field_b8 = h.EmissiveBoost, Field1a8 = 1f, Cubemap = envMaps[i].Cubemap, LightProbe = envMaps[i].Probe,
                 Mesh184 = 1f, Field9c = h.Field9c, Field1a1 = h.Byte1a1, Field1a0 = h.Byte1a0, Field_b0 = h.FadeMin, FadeMax = h.FadeMax, Origin = h.Origin,
                 Matrix = e.Matrix, NodeId = h.NodeId, FieldA8 = (h.ObjectFlags & 8) != 0 ? 0 : -1, SkyboxSlot = h.SkyboxSlot,

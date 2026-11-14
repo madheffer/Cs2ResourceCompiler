@@ -34,7 +34,9 @@ namespace Source2.Compiler.Maps;
 internal static class NodePropEntries
 {
     /// <param name="shaders">The shaders the materials' attributes come from (NeedsLocalSpaceVertices); the content's own when null.</param>
-    public static List<NodeMeshEntries.Entry> FromWorld(DmxBinary.Document doc, GameContent content, List<string>? notes = null, ShaderLibrary? shaders = null)
+    /// <param name="schema">The FGD a missing prop key's default comes from (<see cref="NodeEntryHeader.PropKey"/>).</param>
+    public static List<NodeMeshEntries.Entry> FromWorld(DmxBinary.Document doc, GameContent content, List<string>? notes = null, ShaderLibrary? shaders = null,
+                                                        FgdSchema? schema = null)
     {
         var (_, entities) = MapMeshes.ReadWithEntities(doc);
         var copyIds = CopyIds(doc, content);
@@ -64,7 +66,7 @@ internal static class NodePropEntries
         var entries = new List<NodeMeshEntries.Entry>();
         foreach (var group in baked.GroupBy(b => b.List, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal))
             foreach (var (node, id, model, _, _) in group.OrderByDescending(b => b.Walk))
-                entries.AddRange(Entries(node, id, model, content, notes, shaders));
+                entries.AddRange(Entries(node, id, model, content, notes, shaders, schema));
         return entries;
     }
 
@@ -117,7 +119,8 @@ internal static class NodePropEntries
 
     private static readonly uint NeedsLocalSpaceVertices = MeshEntryFlags.Key("NeedsLocalSpaceVertices");
 
-    private static IEnumerable<NodeMeshEntries.Entry> Entries(MapMeshes.EntityNode node, int id, string modelName, GameContent content, List<string>? notes, ShaderLibrary? shaders)
+    private static IEnumerable<NodeMeshEntries.Entry> Entries(MapMeshes.EntityNode node, int id, string modelName, GameContent content, List<string>? notes, ShaderLibrary? shaders,
+                                                               FgdSchema? schema)
     {
         var keys = node.Element.Get<DmxBinary.Element>("entity_properties")!;
         if (content.LoadedModel(modelName + "_c") is not { } model)
@@ -128,7 +131,7 @@ internal static class NodePropEntries
         if (!string.IsNullOrEmpty(keys.Get<string>("materialoverride")))
             notes?.Add($"prop {id}: materialoverride is not ported");
         var remap = MaterialGroup(model, keys.Get<string>("skin"));
-        var lodLevel = int.TryParse(keys.Get<string>("lodlevel"), out var l) ? l : -1;
+        var lodLevel = int.TryParse(NodeEntryHeader.PropKey(keys, "lodlevel", schema), out var l) ? l : -1;
         var lodMask = lodLevel == -1 ? 0xff : 1 << lodLevel;
         var prop = Physics.WorldCollision.PropOf(node);
         var scales = node.Element.GetValue<Vector3>("scales") ?? Vector3.One;

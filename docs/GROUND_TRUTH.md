@@ -6622,3 +6622,35 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Not ported, read: a lit build's aggregate-instance path in 1802b3060 (a lightmapped prop that can aggregate:
        flags 3 | 8 kept, or bit 0x10 with "should be clutter" for a local-space one under
        AggregateInstanceStreamVertexThreshold).
+
+292. **Standalone prop objects, the overlay list's flag and a generated map's missing prop keys** (2026-11-15, CS2
+     closed; rc 0923 decompiles of WRBNode_FinishLists 180275080, EntityLump_StaticModelRecord 180245770 (key names
+     read from the string table: fademindist, fademaxdist, visoccluder, baketoworld, disableshadows,
+     disableinlowquality, emissive, emissive_lighting_boost, emissive_mode, lightmapscalebias, renderwithdynamic,
+     rendertocubemaps, bakelightdoublesided, clutterinstance, donotcollapse, disablemerging, rendercolor, renderamt,
+     lodlevel, skin), COverlayMeshList::OnAdd 180271150; specimens ze_obj_elf_penis_factory and _mat, generated
+     .vmaps whose props carry only classname, model, solid and sometimes disableshadows, against Valve's -world
+     packages of 11-14). READ + MEASURED.
+     - FinishLists builds each standalone prop object's flags fresh from the record: 8 for a .vmdl model; 0x100000
+       when emissive (+0x173, read with default 1) and emissive_mode (+0x178) is 1, which also takes
+       emissive_lighting_boost (+0x174, default 1) as the object's boost (else 1.0); 0x20 when disableshadows
+       (+0x16f) is 1 or 3; 0x80 disableinlowquality (+0x170); 0x200 renderwithdynamic (+0x171); 0x400
+       rendertocubemaps (+0x172, default 1); 0x8000 with a lighting origin under
+       UseStaticEnvMapForObjectsWithLightingOrigin. Ported as NodeEntryHeader.StandaloneObject: the 135
+       disableshadows 1 fluorescent lights now carry Valve's 1064. Not ported: the lighting origin's position
+       (+0x16e and +0x17e copy +0x130 into the object).
+     - The record's tint alpha is renderamt (default 0xff) / 255 (+0x154); rendercolor gives only r, g, b.
+     - COverlayMeshList::OnAdd ORs 0x2000 into +0xbc of every entry the overlay list takes, so a world mesh whose
+       material puts it in the overlay list is an OBJECT_TYPE_OVERLAY object too, not only an info_overlay's
+       mesh (_mat's 19 mesh_overlay objects, 9248 / 9216).
+     - lodlevel: the record reads it with a code default of -1, yet Valve's objects for these props have
+       m_nLODOverride 0 and none joins an aggregate. csgo.fgd's prop_static override declares lodlevel's default
+       "0", so the key table the record reads already holds the FGD's default (the rule of ledger 291, now on a
+       second key). Every other record key's FGD default equals its code default. A smart prop's node has no
+       class and so no FGD defaults: atixref's radiator smart prop still aggregates (lodlevel -1). Ported as
+       NodeEntryHeader.PropKey (FGD only for a node with a classname) in the aggregate test, the LOD mask and the
+       standalone LOD override. Where the defaults are put into the key table is still not read.
+     - Result: ze_obj_elf_penis_factory 271 of 272 and _mat 300 of 301 files Valve's (the .vwrld stamp aside, from
+       17 extra aggregates and 3 differing files). probe01, cardtest, ze_hold_em_p -world unchanged (all but the
+       stamp); atixref unchanged at 548 of 553 (metal_door_001's two buckets and n0.vwnod's fragment order,
+       Valve variance; default_ents' two settled angles).

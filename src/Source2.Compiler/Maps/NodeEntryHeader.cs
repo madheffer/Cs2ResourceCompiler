@@ -86,6 +86,53 @@ public sealed record NodeEntryHeader
     }
 
     /// <summary>
+    /// A prop key as the record reads it: the .vmap's value, else the class's FGD default (csgo.fgd's
+    /// prop_static override included). Measured on two keys (ledger 291): rendertocubemaps (default 1,
+    /// s2c_foliagels) and lodlevel (csgo.fgd's default "0", not base.fgd's -1: ze_obj_elf_penis_factory's
+    /// props without the key compile with m_nLODOverride 0 and stay out of the aggregates; the record's own
+    /// read, 180245770, defaults lodlevel to -1, so the key table already holds the FGD's). A smart prop's
+    /// node has no class and so no FGD defaults: the record's code defaults apply (atixref's radiator
+    /// aggregates, lodlevel -1). Where Valve puts the defaults in is not read. Hammer saves every key, so
+    /// only generated maps leave keys out.
+    /// </summary>
+    public static string? PropKey(DmxBinary.Element keys, string name, FgdSchema? schema)
+        => keys.Get<string>(name) ?? (keys.Get<string>("classname") is { } cls ? schema?.KeyOf(cls, name)?.Default : null);
+
+    /// <summary>
+    /// A standalone prop's scene object flags and emissive boost, as WRBNode_FinishLists (rc 0923 180275080)
+    /// sets them from the prop record (EntityLump_StaticModelRecord 180245770, each key read with its code
+    /// default): 8 for a .vmdl model; 0x100000 when emissive (+0x173, default 1) and emissive_mode (+0x178) is 1,
+    /// which also takes emissive_lighting_boost (+0x174, default 1) as the boost (else 1); 0x20 when
+    /// disableshadows (+0x16f) is 1 or 3; 0x80 disableinlowquality; 0x200 renderwithdynamic; 0x400
+    /// rendertocubemaps (default 1); 0x8000 with a lighting origin (UseStaticEnvMapForObjectsWithLightingOrigin
+    /// on in CS2). The 0x20 rule: ze_obj_elf_penis_factory's 135 disableshadows 1 props (Valve's 1064).
+    /// </summary>
+    public static (uint Flags, float EmissiveBoost) StandaloneObject(DmxBinary.Element keys, string model, FgdSchema? schema)
+    {
+        string? Key(string name) => PropKey(keys, name, schema);
+        bool Bool(string name, bool fallback) => Key(name) is { } v ? v is "1" or "true" or "True" : fallback;
+        int Int(string name, int fallback) => Key(name) is { } v ? (int)CNumbers.Atoi(v) : fallback;
+        var flags = model.ContainsAscii(".vmdl") ? 8u : 0u;
+        var boost = 1f;
+        if (Bool("emissive", true) && Int("emissive_mode", 0) == 1)
+        {
+            flags |= 0x100000;
+            boost = float.TryParse(Key("emissive_lighting_boost"), NumberStyles.Float, CultureInfo.InvariantCulture, out var b) ? b : 1f;
+        }
+        if (Int("disableshadows", 0) is 1 or 3)
+            flags |= 0x20;
+        if (Bool("disableinlowquality", false))
+            flags |= 0x80;
+        if (Bool("renderwithdynamic", false))
+            flags |= 0x200;
+        if (Bool("rendertocubemaps", true))
+            flags |= 0x400;
+        if (!string.IsNullOrEmpty(Key("lightingorigin")))
+            flags |= 0x8000;
+        return (flags, boost);
+    }
+
+    /// <summary>
     /// The header of a baked prop's entry (WRBNode_PropEntry from the prop
     /// record of 180245770, then AddStaticProps): the tint is rendercolor / 255,
     /// the fades fademindist and fademaxdist, +0xb8 emissive_lighting_boost,
@@ -101,7 +148,7 @@ public sealed record NodeEntryHeader
         // prop_static with no rendertocubemaps key compiles with flag 0x400 (default 1;
         // s2c_foliagels against Valve's compile). Hammer saves every key, so only
         // generated maps leave keys out.
-        string? Key(string name) => keys.Get<string>(name) ?? schema?.KeyOf(keys.Get<string>("classname") ?? "prop_static", name)?.Default;
+        string? Key(string name) => PropKey(keys, name, schema);
         bool On(string name) => Key(name) is "1" or "true" or "True";
         float Number(string name, float fallback) => float.TryParse(Key(name), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : fallback;
         var tint = Vector4.One;
@@ -109,13 +156,15 @@ public sealed record NodeEntryHeader
         {
             var parts = color.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => byte.TryParse(x, out var b) ? b : (byte)255).ToArray();
             if (parts.Length >= 3)
-                tint = new Vector4(parts[0] * 0.003921569f, parts[1] * 0.003921569f, parts[2] * 0.003921569f, parts.Length > 3 ? parts[3] * 0.003921569f : 1f);
+                tint = new Vector4(parts[0] * 0.003921569f, parts[1] * 0.003921569f, parts[2] * 0.003921569f, 1f);
         }
+        // 180245770: the alpha is renderamt (default 0xff) / 255, not rendercolor's fourth byte (+0x154).
+        tint.W = (Key("renderamt") is { } amount ? (int)CNumbers.Atoi(amount) : 0xff) * 0.003921569f;
         // +0x98 is the prop record's +0x17c (NodePropEntries.Lightmapped), which
         // also clears NeedsLightProbe through the record.
         var flags = MeshEntryFlags.Compute(material, baked ? record with { Baked = true } : record);
         var objectFlags = (model.ContainsAscii(".vmdl") ? 8u : 0u) | (On("disableinlowquality") ? 0x80u : 0u)
-            | (On("rendertocubemaps") ? 0x400u : 0u) | ((placementFlags & 2) != 0 ? 0x20000u : 0u);
+            | ((Key("rendertocubemaps") is null || On("rendertocubemaps")) ? 0x400u : 0u) | ((placementFlags & 2) != 0 ? 0x20000u : 0u);
         return new NodeEntryHeader
         {
             Tint = tint,
@@ -131,7 +180,7 @@ public sealed record NodeEntryHeader
             Fieldc0 = placementFlags,
             Byte1a0 = 1,
             Byte1a2 = 0,
-            Byte1a3 = (byte)(On("emissive") ? 1 : 0),
+            Byte1a3 = (byte)(Key("emissive") is null || On("emissive") ? 1 : 0),
             // AddStaticProps (180255b90, after WRB_MeshEntryFlags): a mesh whose placement
             // flags lack bit 0 (a local-space prop, flags 8) gains attribute bit 1 (no
             // merge), so it joins the instanced list and compiles as its own "nomerge"

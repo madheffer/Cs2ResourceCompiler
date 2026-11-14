@@ -167,8 +167,9 @@ public static class WorldNodeFiles
             var header = NodeEntryHeader.Prop(p.Keys, p.NodeId, p.Model, NodePropEntries.RecordOf(p.Keys), MaterialAttributes.Empty, placementFlags: 0, schema: schema);
             var (cubemap, probe) = p.Bounds is { } bounds
                 ? EnvVolumes.ForEntry(new Vector3(float.MaxValue), "", (1ul << 20) | (1ul << 21), () => bounds, volumes) : (0, 0);
-            var lod = int.TryParse(p.Keys.Get<string>("lodlevel"), out var l) ? l : -1;
-            sceneObjects.Add(new(p.Model, header.ObjectFlags, 0, cubemap, probe, header.EmissiveBoost, header.FadeMin, header.FadeMax)
+            var lod = int.TryParse(NodeEntryHeader.PropKey(p.Keys, "lodlevel", schema), out var l) ? l : -1;
+            var (objectFlags, boost) = NodeEntryHeader.StandaloneObject(p.Keys, p.Model, schema);
+            sceneObjects.Add(new(p.Model, objectFlags, 0, cubemap, probe, boost, header.FadeMin, header.FadeMax)
             {
                 Transform = p.Matrix, Tint = header.Tint, Skin = string.IsNullOrEmpty(p.Skin) ? "default" : p.Skin, LodOverride = lod,
             });

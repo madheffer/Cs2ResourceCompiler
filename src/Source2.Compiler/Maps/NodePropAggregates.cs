@@ -209,7 +209,7 @@ internal static class NodePropAggregates
             }
             var entries = new List<Entry>();
             var all = true;
-            foreach (var (_, keys, matrix, id, skin) in props.Where(p => Candidate(p.Keys)))
+            foreach (var (_, keys, matrix, id, skin) in props.Where(p => Candidate(p.Keys, schema)))
             {
                 var remap = NodePropEntries.MaterialGroup(model, skin);
                 var materialOverride = keys.Get<string>("materialoverride");
@@ -246,7 +246,7 @@ internal static class NodePropAggregates
             if (all)
                 joined.AddRange(entries);
             if (standalone != null)
-                leftOver.Add((modelName, [.. props.Select(p => (Standalone(p), Candidate(p.Keys) && all))]));
+                leftOver.Add((modelName, [.. props.Select(p => (Standalone(p), Candidate(p.Keys, schema) && all))]));
         }
         // The streams PrepareForMerge leaves a mesh; it passes over an entry with attribute bit 0 or 11 (& 0x801).
         var keptStreams = new Dictionary<int, List<int>>();
@@ -366,10 +366,10 @@ internal static class NodePropAggregates
     }
 
     /// <summary>18026d7a0's per-prop test, the keys it reads (UseStaticEnvMapForObjectsWithLightingOrigin on).</summary>
-    public static bool Candidate(DmxBinary.Element keys)
+    public static bool Candidate(DmxBinary.Element keys, FgdSchema? schema = null)
     {
         float Number(string name) => float.TryParse(keys.Get<string>(name), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0f;
-        var lod = int.TryParse(keys.Get<string>("lodlevel"), out var l) ? l : -1;
+        var lod = int.TryParse(NodeEntryHeader.PropKey(keys, "lodlevel", schema), out var l) ? l : -1;
         return lod == -1 && !NodePropEntries.Flag(keys.Get<string>("renderwithdynamic")) && Number("fademindist") <= 0f && Number("fademaxdist") <= 0f
             && string.IsNullOrEmpty(keys.Get<string>("lightingorigin"));
     }
