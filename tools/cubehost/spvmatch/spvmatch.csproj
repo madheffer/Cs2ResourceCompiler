@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Built against the test project's Release output (VRF with the VCS 72 patch): build that first. -->
+  <!-- Built against the test project's Release output: build that first. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -9,7 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="ValvePak"><HintPath>$(Bin)/ValvePak.dll</HintPath></Reference>
-    <Reference Include="ValveResourceFormat"><HintPath>$(Bin)/ValveResourceFormat.dll</HintPath></Reference>
     <Reference Include="ZstdSharp"><HintPath>$(Bin)/ZstdSharp.dll</HintPath></Reference>
     <Reference Include="Source2.Compiler"><HintPath>$(Bin)/Source2.Compiler.dll</HintPath></Reference>
     <Reference Include="ValveKeyValue"><HintPath>$(Bin)/ValveKeyValue.dll</HintPath></Reference>

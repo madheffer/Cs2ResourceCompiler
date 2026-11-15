@@ -1,11 +1,8 @@
+using Source2.Compiler.KeyValues;
 using System.IO.Hashing;
 using System.Text;
 using Source2.Compiler;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 
 namespace Source2.Compiler.Tests;
@@ -56,7 +53,7 @@ public class Source2ContainerAuthorTests
         using var res = ResourceTrees.Read(compiled, "my_custom.vdata_c");
 
         Assert.Equal(0, res.Version);
-        var edit = Assert.IsType<ResourceEditInfo2>(res.EditInfo);
+        var edit = Assert.IsType<TestEditInfo>(res.EditInfo);
 
         // The input dependency is THIS compile's source - name and CRC32 -
         // not the donor's ("scripts/weapons.vdata" was the old donor leak).
@@ -91,7 +88,7 @@ public class Source2ContainerAuthorTests
         using var res = ResourceTrees.Read(compiled, "my_events.vsndevts_c");
 
         Assert.Equal(1, res.Version);
-        var edit = Assert.IsType<ResourceEditInfo2>(res.EditInfo);
+        var edit = Assert.IsType<TestEditInfo>(res.EditInfo);
 
         // resourcecompiler records every defined sound event as a subasset
         // definition - the old donor path shipped the DONOR's event list.
@@ -143,7 +140,7 @@ public class Source2ContainerAuthorTests
 
         // Block sequence - minus FLCI, the editor-only source-line map we
         // deliberately don't author (pre-FLCI stock resources load without it).
-        var valveBlocks = valve.Blocks.Select(b => b.Type).Where(t => t != BlockType.FLCI).ToArray();
+        var valveBlocks = valve.Blocks.Select(b => b.Type).Where(t => t != "FLCI").ToArray();
         var myBlocks = mine.Blocks.Select(b => b.Type).ToArray();
         Assert.Equal(valveBlocks, myBlocks);
 
@@ -162,8 +159,8 @@ public class Source2ContainerAuthorTests
         Assert.Equal(valve.EditInfo!.InputDependencies[0].FileCRC, mine.EditInfo!.InputDependencies[0].FileCRC);
 
         // Subasset definitions (vsndevts: the defined event names).
-        var myDefs = (mine.EditInfo as ResourceEditInfo2)?.SubassetDefinitions;
-        var valveDefs = (valve.EditInfo as ResourceEditInfo2)?.SubassetDefinitions;
+        var myDefs = (mine.EditInfo as TestEditInfo)?.SubassetDefinitions;
+        var valveDefs = (valve.EditInfo as TestEditInfo)?.SubassetDefinitions;
         Assert.Equal(valveDefs is null, myDefs is null);
         if (valveDefs is not null)
         {

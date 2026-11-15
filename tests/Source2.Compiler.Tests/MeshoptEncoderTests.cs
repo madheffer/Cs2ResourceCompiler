@@ -1,7 +1,6 @@
+using Source2.Compiler.Meshes;
 using Source2.Compiler.Meshopt;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -52,10 +51,10 @@ public class MeshoptEncoderTests(ITestOutputHelper output)
             if (!path.Contains("/worldnodes/", StringComparison.Ordinal))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var model = (Model)resource.DataBlock!;
-            var mesh = model.GetEmbeddedMeshesAndLoD().First().Mesh;
+            var model = (CompiledModel)resource.DataBlock!;
+            var mesh = model.EmbeddedMeshesAndLod().First().Mesh;
             var vertexBlocks = RawBlocks(bytes, "MVTX");
             var indexBlocks = RawBlocks(bytes, "MIDX");
             for (var b = 0; b < vertexBlocks.Count; b++)
@@ -66,7 +65,7 @@ public class MeshoptEncoderTests(ITestOutputHelper output)
                     other++;
                     continue;
                 }
-                var vb = mesh.VBIB.VertexBuffers[b];
+                var vb = mesh.Vbib.VertexBuffers[b];
                 var ours = MeshoptEncoder.EncodeVertexBuffer(vb.Data, (int)vb.ElementCount, (int)vb.ElementSizeInBytes);
                 if (ours.AsSpan().SequenceEqual(raw))
                     vertexOk++;
@@ -76,7 +75,7 @@ public class MeshoptEncoderTests(ITestOutputHelper output)
             for (var b = 0; b < indexBlocks.Count; b++)
             {
                 var raw = indexBlocks[b];
-                var ib = mesh.VBIB.IndexBuffers[b];
+                var ib = mesh.Vbib.IndexBuffers[b];
                 var indices = new uint[ib.ElementCount];
                 for (var i = 0; i < indices.Length; i++)
                     indices[i] = ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToUInt32(ib.Data, i * 4);

@@ -1,10 +1,12 @@
+using Source2.Compiler.Materials;
+using Source2.Compiler.Shaders.Vfx;
+using Source2.Compiler.Textures;
 using AtiFormat = Source2.Compiler.RcTexture.AtiCompress.Format;
 using System.Numerics;
 using Source2.Compiler.Lighting;
 using Source2.Compiler.Lighting.Bake;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -93,7 +95,7 @@ public class CpuBakeTests(ITestOutputHelper output)
             return;
         var packing = PackingGeometry.Read(File.ReadAllBytes(Path.Combine(folder, "lightmap_packing_geometry.dat")));
         using var halton = LoadResource(Core("textures/dev/scrambled_halton.vdata_c")!);
-        var permutations = HaltonSamples.Permutations(((BinaryKV3)halton.DataBlock!).Data.Root["permutations"].AsBlob());
+        var permutations = HaltonSamples.Permutations(((TestKv3Block)halton.DataBlock!).Data.Root["permutations"].AsBlob());
         RtxScene? rtx = null;
         // CPUBAKE_GPU=1: Valve's ray tracing SPIR-V on this PC's GPU (RtxBakeHost) instead of the transpiled raygens.
         using var gpuDevice = Environment.GetEnvironmentVariable("CPUBAKE_GPU") == "1" ? new Source2.Compiler.Gpu.GpuDevice(rayTracing: true) : null;
@@ -790,9 +792,9 @@ public class CpuBakeTests(ITestOutputHelper output)
         }
     }
 
-    private static ValveResourceFormat.Resource LoadResource(byte[] bytes)
+    private static TestResource LoadResource(byte[] bytes)
     {
-        var res = new ValveResourceFormat.Resource();
+        var res = new TestResource();
         res.Read(new MemoryStream(bytes));
         return res;
     }
@@ -807,9 +809,9 @@ public class CpuBakeTests(ITestOutputHelper output)
         using var content = new GameContent(pak);
         var bytes = content.Read(name + "_c");
         Assert.NotNull(bytes);
-        using var res = new ValveResourceFormat.Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(bytes!));
-        var mat = (Material)res.DataBlock!;
+        var mat = (CompiledMaterial)res.DataBlock!;
         output.WriteLine($"shader {mat.ShaderName}");
         foreach (var (k, v) in mat.IntAttributes) output.WriteLine($"int attr {k} = {v}");
         foreach (var (k, v) in mat.FloatAttributes) output.WriteLine($"float attr {k} = {v}");
@@ -842,8 +844,8 @@ public class CpuBakeProbe(ITestOutputHelper output)
             if (shaders.FindEntry($"shaders/vfx/{name}.vcs") is not { } e)
                 return null;
             shaders.ReadEntry(e, out var bytes);
-            var p = new ValveResourceFormat.CompiledShader.VfxProgramData();
-            p.Read(name + ".vcs", new MemoryStream(bytes));
+            var p = VfxProgramData.Read(name + ".vcs", bytes);
+            
             return new VfxProgram(p);
         }
         var text = File.ReadAllText(sceneInfo);
@@ -860,15 +862,13 @@ public class CpuBakeProbe(ITestOutputHelper output)
             var rtx = Load($"{shader}_vulkan_60_rtx");
             var fparams = info.Params.Where(p => p.Key.StartsWith("F_", StringComparison.Ordinal)).ToDictionary(p => p.Key, p => (byte)p.Value);
             var id = features is null || rtx is null ? -1
-                : ValveResourceFormat.IO.ShaderDataProvider.GetStaticConfiguration_ForFeatureState(features.Data, rtx.Data, fparams).StaticComboId;
+                : VfxCombos.GetStaticConfiguration_ForFeatureState(features.Data, rtx.Data, fparams).StaticComboId;
             var exists = rtx?.Data.StaticComboEntries.ContainsKey(id) == true;
             output.WriteLine($"{m}: {shader} [{string.Join(" ", fparams.Select(p => $"{p.Key}={p.Value}"))}] rtx combo {id}{(exists ? "" : " (not present)")}");
-            features?.Data.Dispose();
-            rtx?.Data.Dispose();
         }
     }
 
-    private sealed record VfxProgram(ValveResourceFormat.CompiledShader.VfxProgramData Data);
+    private sealed record VfxProgram(VfxProgramData Data);
 
     /// <summary>
     /// <c>LMTEX=&lt;vrad3 folder&gt;|&lt;map vpk&gt;|&lt;map name&gt;</c>: irradiance.exr through the game's
@@ -885,9 +885,9 @@ public class CpuBakeProbe(ITestOutputHelper output)
         using var pkg = new ValvePak.Package();
         pkg.Read(vpk);
         pkg.ReadEntry(pkg.FindEntry($"maps/{map}/lightmaps/irradiance.vtex_c")!, out var vtex);
-        using var res = new ValveResourceFormat.Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(vtex));
-        var t = (Texture)res.DataBlock!;
+        var t = (CompiledTexture)res.DataBlock!;
         output.WriteLine($"shipped: {t.Width}x{t.Height}x{t.Depth} {t.Format} flags {t.Flags} mips {t.NumMipLevels}");
         var shipped = new byte[t.CalculateBufferSizeForMipLevel(0)];
         t.ReadTextureMipLevel(shipped, 0);
@@ -928,9 +928,9 @@ public class CpuBakeProbe(ITestOutputHelper output)
         foreach (var (exrName, vtexName, format) in new[] { ("directional_irradiance.exr", "directional_irradiance", AtiFormat.Dxt1), ("lightmap_chart_color.exr", "debug_chart_color", AtiFormat.Dxt1), ("direct_light_shadows.exr", "direct_light_shadows", AtiFormat.Ati1n) })
         {
             pkg.ReadEntry(pkg.FindEntry($"maps/{map}/lightmaps/{vtexName}.vtex_c")!, out var vtex);
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(vtex));
-            var t = (Texture)res.DataBlock!;
+            var t = (CompiledTexture)res.DataBlock!;
             var shipped = new byte[t.CalculateBufferSizeForMipLevel(0)];
             t.ReadTextureMipLevel(shipped, 0);
             var exr = Vrad3Exr.Read(File.ReadAllBytes(Path.Combine(folder, exrName)));
@@ -967,14 +967,14 @@ public class CpuBakeProbe(ITestOutputHelper output)
     {
         if (Environment.GetEnvironmentVariable("PKGTEX") is not { Length: > 0 } spec || spec.Split('|') is not [var valveVpk, var oursVpk, var map])
             return;
-        (Texture T, byte[] Mip) Read(string vpk, string name)
+        (CompiledTexture T, byte[] Mip) Read(string vpk, string name)
         {
             using var pkg = new ValvePak.Package();
             pkg.Read(vpk);
             pkg.ReadEntry(pkg.FindEntry($"maps/{map}/lightmaps/{name}.vtex_c")!, out var vtex);
-            var res = new ValveResourceFormat.Resource();
+            var res = new TestResource();
             res.Read(new MemoryStream(vtex));
-            var t = (Texture)res.DataBlock!;
+            var t = (CompiledTexture)res.DataBlock!;
             var mip = new byte[t.CalculateBufferSizeForMipLevel(0)];
             t.ReadTextureMipLevel(mip, 0);
             return (t, mip);
@@ -1013,11 +1013,11 @@ public class CpuBakeProbe(ITestOutputHelper output)
         foreach (var (exrName, channel) in new[] { ("irradiance.exr", "irradiance"), ("directional_irradiance.exr", "directional_irradiance"), ("lightmap_chart_color.exr", "debug_chart_color"), ("direct_light_shadows.exr", "direct_light_shadows"), ("lpv_atlas_ambientcube.exr", "env_light_probe_volume_atlas"), ("lpv_atlas_dlshd.exr", "env_light_probe_volume_atlas_dlshd") })
         {
             pkg.ReadEntry(pkg.FindEntry($"maps/{map}/lightmaps/{channel}.vtex_c")!, out var shipped);
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(shipped));
             var args = res.EditInfo!.ArgumentDependencies;
             var image = LightmapTextures.Bitmap(Vrad3Exr.Read(File.ReadAllBytes(Path.Combine(folder, exrName))));
-            var t = (Texture)res.DataBlock!;
+            var t = (CompiledTexture)res.DataBlock!;
             var ours = channel.StartsWith("env_light_probe", StringComparison.Ordinal)
                 ? LightmapTextures.AtlasVtex(image, t.Width, t.Height, t.Depth, channel.EndsWith("dlshd", StringComparison.Ordinal) ? LightmapTextures.ImageFormat.Bc7 : LightmapTextures.ImageFormat.Bc6h, $"csgo_addons/{addon}", null, bin, ambientCube: !channel.EndsWith("dlshd", StringComparison.Ordinal))
                 : LightmapTextures.Vtex(channel, image, LightmapTextures.Cs2Channels[channel], $"csgo_addons/{addon}", nativeFolder: bin);
@@ -1047,9 +1047,9 @@ public class CpuBakeProbe(ITestOutputHelper output)
         foreach (var (exrName, vtexName) in new[] { ("lpv_atlas_ambientcube.exr", "env_light_probe_volume_atlas"), ("lpv_atlas_dlshd.exr", "env_light_probe_volume_atlas_dlshd") })
         {
             pkg.ReadEntry(pkg.FindEntry($"maps/{map}/lightmaps/{vtexName}.vtex_c")!, out var vtex);
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(vtex));
-            var t = (Texture)res.DataBlock!;
+            var t = (CompiledTexture)res.DataBlock!;
             var shipped = new byte[t.CalculateBufferSizeForMipLevel(0)];
             t.ReadTextureMipLevel(shipped, 0);
             var image = LightmapTextures.Bitmap(Vrad3Exr.Read(File.ReadAllBytes(Path.Combine(folder, exrName))));
@@ -1110,9 +1110,9 @@ public class CpuBakeProbe(ITestOutputHelper output)
         foreach (var (exrName, vtexName) in new[] { ("irradiance.exr", "irradiance"), ("directional_irradiance.exr", "directional_irradiance"), ("lightmap_chart_color.exr", "debug_chart_color"), ("direct_light_shadows.exr", "direct_light_shadows") })
         {
             pkg.ReadEntry(pkg.FindEntry($"maps/{map}/lightmaps/{vtexName}.vtex_c")!, out var vtex);
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(vtex));
-            var t = (Texture)res.DataBlock!;
+            var t = (CompiledTexture)res.DataBlock!;
             var exr = Vrad3Exr.Read(File.ReadAllBytes(Path.Combine(folder, exrName)));
             var n = exr.Width * exr.Height;
             var rgba = new float[n * 4];
@@ -1147,11 +1147,11 @@ public class CpuBakeProbe(ITestOutputHelper output)
         if (Environment.GetEnvironmentVariable("TEXPIX") is not { Length: > 0 } name || CS2Fixtures.StockPak() is not { } pak)
             return;
         using var content = new GameContent(pak);
-        using var res = new ValveResourceFormat.Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(content.Read(name + "_c")!));
-        var t = (Texture)res.DataBlock!;
+        var t = (CompiledTexture)res.DataBlock!;
         output.WriteLine($"{t.Width}x{t.Height} {t.Format} flags {t.Flags} codec {t.RetrieveCodecFromResourceEditInfo()} reflectivity {t.Reflectivity}");
-        foreach (var codec in new[] { ValveResourceFormat.TextureDecoders.TextureCodec.None, ValveResourceFormat.TextureDecoders.TextureCodec.Auto })
+        foreach (var codec in new[] { Source2.Compiler.Textures.TextureCodec.None, Source2.Compiler.Textures.TextureCodec.Auto })
         {
             using var bmp = t.GenerateBitmap(0, 0, 0, codec);
             var px = new[] { bmp.GetPixel(bmp.Width / 2, bmp.Height / 2), bmp.GetPixel(bmp.Width / 4, bmp.Height / 4), bmp.GetPixel(bmp.Width / 3, bmp.Height * 2 / 3) };
@@ -1169,10 +1169,10 @@ public class CpuBakeProbe(ITestOutputHelper output)
         using var shaders = new ValvePak.Package();
         shaders.Read(Path.Combine(game, "csgo", "shaders_vulkan_dir.vpk"));
         shaders.ReadEntry(shaders.FindEntry($"shaders/vfx/{shader}_vulkan_60_rtx.vcs")!, out var bytes);
-        using var p = new ValveResourceFormat.CompiledShader.VfxProgramData();
-        p.Read(shader + "_vulkan_60_rtx.vcs", new MemoryStream(bytes));
+        var p = VfxProgramData.Read(shader + "_vulkan_60_rtx.vcs", bytes);
+        
         var data = p.GetStaticCombo(long.Parse(combo, System.Globalization.CultureInfo.InvariantCulture));
-        void Dump(string label, ValveResourceFormat.CompiledShader.VfxVariableIndexArray a)
+        void Dump(string label, VfxVariableIndexArray a)
         {
             output.WriteLine($"{label}: {a.Fields.Length} fields, render state from {a.FirstRenderStateElement}, constants from {a.FirstConstantElement}");
             foreach (var f in a.Fields)
@@ -1193,13 +1193,10 @@ public class CpuBakeProbe(ITestOutputHelper output)
         using var shaders = new ValvePak.Package();
         shaders.Read(Path.Combine(game, "csgo", "shaders_vulkan_dir.vpk"));
         shaders.ReadEntry(shaders.FindEntry($"shaders/vfx/{shader}_vulkan_60_rtx.vcs")!, out var bytes);
-        using var p = new ValveResourceFormat.CompiledShader.VfxProgramData();
-        p.Read(shader + "_vulkan_60_rtx.vcs", new MemoryStream(bytes));
-        foreach (var cb in p.ExtConstantBufferDescriptions)
-            output.WriteLine($"cbuffer {cb.Name} size {cb.BufferSize}: {string.Join(", ", cb.Variables.Select(x => $"{x.Name}@{x.Offset}[{x.VectorSize}x{x.RowCount}]"))}");
+        var p = VfxProgramData.Read(shader + "_vulkan_60_rtx.vcs", bytes);
         foreach (var v in p.VariableDescriptions)
         {
-            var expr = v.CompiledExpression.Length > 0 ? ValveResourceFormat.CompiledShader.ShaderUtilHelpers.ParseDynamicExpression(v.CompiledExpression) : "";
+            var expr = v.CompiledExpression.Length > 0 ? VfxCombos.ParseDynamicExpression(v.CompiledExpression) : "";
             output.WriteLine($"{v.Name}\t{v.VfxType}\t{v.VariableSource}\tsrc '{v.SourceString}'\tf [{string.Join(",", v.FloatDefs)}] i [{string.Join(",", v.IntDefs)}] tex '{v.DefaultInputTexture}'\treg {v.RegisterType} off {v.RegisterOffset} srcidx {v.SourceIndex} elems {v.RegisterElements} bits {v.TypeSpecificBits} srgb {v.SrgbRead}\t{expr.Replace("\n", " ")}");
         }
     }
@@ -1218,9 +1215,9 @@ public class CpuBakeProbe(ITestOutputHelper output)
             if (e.TypeName == "vtex_c")
             {
                 pkg.ReadEntry(e, out var bytes);
-                using var res = new ValveResourceFormat.Resource();
+                using var res = new TestResource();
                 res.Read(new MemoryStream(bytes));
-                var t = (Texture)res.DataBlock!;
+                var t = (CompiledTexture)res.DataBlock!;
                 line += $" {t.Width}x{t.Height}x{t.Depth} {t.Format} flags {t.Flags} mips {t.NumMipLevels}";
             }
             output.WriteLine(line);
@@ -1238,15 +1235,15 @@ public class CpuBakeProbe(ITestOutputHelper output)
         foreach (var e in pkg.Entries.SelectMany(x => x.Value).Where(e => e.TypeName == "vtex_c" && e.GetFullPath().Contains(part, StringComparison.OrdinalIgnoreCase)).OrderBy(e => e.GetFullPath(), StringComparer.Ordinal))
         {
             pkg.ReadEntry(e, out var bytes);
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(bytes));
             output.WriteLine($"== {e.GetFullPath()} {bytes.Length} bytes, header version {res.HeaderVersion} version {res.Version}");
             output.WriteLine("file head: " + Convert.ToHexString(bytes.AsSpan(0, Math.Min(bytes.Length, 16 + 12 * res.Blocks.Count))));
             foreach (var b in res.Blocks)
                 output.WriteLine($"  {b.Type} offset {b.Offset} size {b.Size}");
-            var data = res.DataBlock!;
+            var data = res.GetBlockByType("DATA")!;
             output.WriteLine("DATA head: " + Convert.ToHexString(bytes.AsSpan((int)data.Offset, (int)Math.Min(data.Size, 96))));
-            var t = (Texture)data;
+            var t = (CompiledTexture)res.DataBlock!;
             output.WriteLine($"  {t.Width}x{t.Height}x{t.Depth} {t.Format} flags {t.Flags} mips {t.NumMipLevels} reflectivity {string.Join(",", t.Reflectivity)}");
             foreach (var b in res.Blocks.Where(b => b != data))
                 output.WriteLine($"--- {b.Type}" + Environment.NewLine + b);
@@ -1437,7 +1434,7 @@ public class CpuBakeProbe(ITestOutputHelper output)
         foreach (var (exrName, channel) in new[] { ("irradiance.exr", "irradiance"), ("directional_irradiance.exr", "directional_irradiance"), ("lightmap_chart_color.exr", "debug_chart_color"), ("direct_light_shadows.exr", "direct_light_shadows"), ("lpv_atlas_dlshd.exr", "env_light_probe_volume_atlas_dlshd") })
         {
             pkg.ReadEntry(pkg.FindEntry($"maps/{map}/lightmaps/{channel}.vtex_c")!, out var shipped);
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(shipped));
             var want = (uint)res.EditInfo!.ArgumentDependencies.First(a => a.ParameterType == "ImageArg").Fingerprint;
             var exr = Vrad3Exr.Read(File.ReadAllBytes(Path.Combine(folder, exrName)));
@@ -1505,12 +1502,12 @@ public class CpuBakeProbe(ITestOutputHelper output)
     // The RED2 blocks' KV3 trees, value types included, where they differ, and the raw block sizes.
     private static IEnumerable<string> Red2Diff(byte[] a, byte[] b)
     {
-        using var ra = new ValveResourceFormat.Resource();
+        using var ra = new TestResource();
         ra.Read(new MemoryStream(a));
-        using var rb = new ValveResourceFormat.Resource();
+        using var rb = new TestResource();
         rb.Read(new MemoryStream(b));
-        var ba = (ValveResourceFormat.Blocks.ResourceEditInfo2)ra.Blocks.First(x => x.Type == ValveResourceFormat.BlockType.RED2);
-        var bb = (ValveResourceFormat.Blocks.ResourceEditInfo2)rb.Blocks.First(x => x.Type == ValveResourceFormat.BlockType.RED2);
+        var ba = (TestEditInfo)ra.Blocks.First(x => x.Type == "RED2");
+        var bb = (TestEditInfo)rb.Blocks.First(x => x.Type == "RED2");
         yield return $"sizes {ba.Size} vs {bb.Size}";
         foreach (var line in KvTreeDiff.Diff(ba.Data!.Root, bb.Data!.Root))
             yield return line;
@@ -1518,19 +1515,19 @@ public class CpuBakeProbe(ITestOutputHelper output)
 
     private static int MipCount(byte[] vtex)
     {
-        using var r = new ValveResourceFormat.Resource();
+        using var r = new TestResource();
         r.Read(new MemoryStream(vtex));
-        return ((ValveResourceFormat.ResourceTypes.Texture)r.DataBlock!).NumMipLevels;
+        return ((CompiledTexture)r.DataBlock!).NumMipLevels;
     }
 
     private static string CompareMip0(byte[] a, byte[] b, int mip = 0)
     {
-        using var ra = new ValveResourceFormat.Resource();
+        using var ra = new TestResource();
         ra.Read(new MemoryStream(a));
-        using var rb = new ValveResourceFormat.Resource();
+        using var rb = new TestResource();
         rb.Read(new MemoryStream(b));
-        var ta = (ValveResourceFormat.ResourceTypes.Texture)ra.DataBlock!;
-        var tb = (ValveResourceFormat.ResourceTypes.Texture)rb.DataBlock!;
+        var ta = (CompiledTexture)ra.DataBlock!;
+        var tb = (CompiledTexture)rb.DataBlock!;
         if (ta.Width != tb.Width || ta.Height != tb.Height || ta.Depth != tb.Depth || ta.Format != tb.Format)
             return "not comparable";
         if (mip >= ta.NumMipLevels || mip >= tb.NumMipLevels)
@@ -1539,7 +1536,7 @@ public class CpuBakeProbe(ITestOutputHelper output)
         ta.ReadTextureMipLevel(ma, (uint)mip);
         var mb = new byte[tb.CalculateBufferSizeForMipLevel((uint)mip)];
         tb.ReadTextureMipLevel(mb, (uint)mip);
-        var block = ta.Format is ValveResourceFormat.VTexFormat.DXT1 or ValveResourceFormat.VTexFormat.ATI1N ? 8 : 16;
+        var block = ta.Format is Source2.Compiler.Textures.VTexFormat.DXT1 or Source2.Compiler.Textures.VTexFormat.ATI1N ? 8 : 16;
         var bw = (Math.Max(1, ta.Width >> mip) + 3) / 4;
         int differ = 0, first = -1;
         for (var k = 0; k < ma.Length / block; k++)
@@ -1556,9 +1553,9 @@ public class CpuBakeProbe(ITestOutputHelper output)
     // A .vtex_c's header and RED2 arguments, for the option builds' differences.
     private static string DescribeVtex(byte[] bytes)
     {
-        using var res = new ValveResourceFormat.Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(bytes));
-        var t = (ValveResourceFormat.ResourceTypes.Texture)res.DataBlock!;
+        var t = (CompiledTexture)res.DataBlock!;
         var args = string.Join(" ", res.EditInfo!.ArgumentDependencies.Select(a => $"{a.ParameterName}:{a.ParameterType}={a.Fingerprint:x}/{a.FingerprintDefault:x}"));
         return $"{t.Width}x{t.Height}x{t.Depth} {t.Format} mips {t.NumMipLevels} flags {t.Flags} | {args}";
     }
@@ -1568,15 +1565,15 @@ public class CpuBakeProbe(ITestOutputHelper output)
     {
         if (Environment.GetEnvironmentVariable("CPUBAKE_TEXAPI") is not { } name || CS2Fixtures.StockPak() is not { } pak)
             return;
-        foreach (var m in typeof(ValveResourceFormat.ResourceTypes.Texture).GetMethods().Where(m => m.DeclaringType == typeof(ValveResourceFormat.ResourceTypes.Texture)))
+        foreach (var m in typeof(CompiledTexture).GetMethods().Where(m => m.DeclaringType == typeof(CompiledTexture)))
             output.WriteLine($"{m.ReturnType.Name} {m.Name}({string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name + " " + p.Name))})");
-        foreach (var p in typeof(ValveResourceFormat.ResourceTypes.Texture).GetProperties())
+        foreach (var p in typeof(CompiledTexture).GetProperties())
             output.WriteLine($"prop {p.PropertyType.Name} {p.Name}");
         using var content = new GameContent(pak);
         var bytes = content.Read(name + "_c");
-        using var res = new ValveResourceFormat.Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(bytes!));
-        var t = (ValveResourceFormat.ResourceTypes.Texture)res.DataBlock!;
+        var t = (CompiledTexture)res.DataBlock!;
         output.WriteLine($"{t.Width}x{t.Height} depth {t.Depth} format {t.Format} flags {t.Flags} mips {t.NumMipLevels}");
     }
 }

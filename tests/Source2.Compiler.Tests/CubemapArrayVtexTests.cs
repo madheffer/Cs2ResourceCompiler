@@ -1,9 +1,7 @@
+using Source2.Compiler.KeyValues;
 using System.Buffers.Binary;
 using Source2.Compiler.Cubemaps;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -45,11 +43,10 @@ public sealed class CubemapArrayVtexTests(ITestOutputHelper output)
         // (ledger 61); the older writer stored them as the signed 15 / 16.
         OldZeros(ours);
 
-        using var resource = new Resource();
-        LegacyContainer.SetResourceVersion(resource, 1);
-        resource.Blocks.Add(AuthoredKv3.Block(ours, KV3IDLookup.Get("generic"), BlockType.RED2, resource));
-        resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.DATA, Data(valve), resource));
-        var container = ValveLayout.Serialize(resource);
+        var resource = new ResourceFile { Version = 1 };
+        resource.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(ours, Kv3Formats.Get("generic"))));
+        resource.Blocks.Add(new ResourceBlock("DATA", Data(valve)));
+        var container = resource.Write();
         output.WriteLine($"{exrs.Count} cubes; container {container.Length} bytes, Valve's file {valve.Length}");
         var first = 0;
         while (first < container.Length && container[first] == valve[first])

@@ -1,10 +1,8 @@
+using Source2.Compiler.Meshes;
 using System.Numerics;
 using Source2.Compiler.Maps;
 using Source2.Compiler.Physics;
 using Source2.Compiler.Simulation;
-using ValveResourceFormat;
-using ValveResourceFormat.NavMesh;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -33,9 +31,9 @@ public sealed class BombDamageTests(ITestOutputHelper output)
     /// <summary>The blobs of Valve's file: bombsites, positions, damage_values.</summary>
     private static (byte[] Sites, byte[] Positions, byte[] Damage) ValveFile(byte[] vdata)
     {
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(vdata));
-        var data = ((BinaryKV3)resource.DataBlock!).Data.Root;
+        var data = ((TestKv3Block)resource.DataBlock!).Data.Root;
         var d = data["data"];
         return (d["bombsites"].AsBlob(), d["positions"].AsBlob(), d["damage_values"].AsBlob());
     }
@@ -85,11 +83,11 @@ public sealed class BombDamageTests(ITestOutputHelper output)
             return;
         using var package = new ValvePak.Package();
         package.Read(t.Package);
-        using var physics = new Resource();
+        using var physics = new TestResource();
         physics.Read(new MemoryStream(Entry(package, $"maps/{t.Map}/world_physics.vmdl_c")));
-        var phys = ((Model)physics.DataBlock!).GetEmbeddedPhys()!;
+        var phys = ((CompiledModel)physics.DataBlock!).EmbeddedPhysics!;
         var meshes = phys.Parts.SelectMany(p => p.Shape.Meshes).Select(m => SettleWorld.Mesh(m.Shape)).ToList();
-        var nav = new NavMeshFile();
+        var nav = new Source2.Compiler.Maps.NavMesh.NavMeshFile();
         nav.Read(new MemoryStream(Entry(package, $"maps/{t.Map}.nav")));
         var areas = nav.Areas.Values.Select(a => new BombDamage.Area(a.Corners)).ToList();
         var (sitesBlob, _, _) = ValveFile(Entry(package, $"maps/{t.Map}/baked_bomb_damage.vdata_c"));
@@ -123,7 +121,7 @@ public sealed class BombDamageTests(ITestOutputHelper output)
             return;
         using var package = new ValvePak.Package();
         package.Read(t.Package);
-        var nav = new NavMeshFile();
+        var nav = new Source2.Compiler.Maps.NavMesh.NavMeshFile();
         nav.Read(new MemoryStream(Entry(package, $"maps/{t.Map}.nav")));
         var areas = nav.Areas.Values.Select(a => new BombDamage.Area(a.Corners)).ToList();
         var (sitesBlob, valvePositions, _) = ValveFile(Entry(package, $"maps/{t.Map}/baked_bomb_damage.vdata_c"));
@@ -134,9 +132,9 @@ public sealed class BombDamageTests(ITestOutputHelper output)
             Vector3 lo = new(f[0], f[1], f[2]), hi = new(f[3], f[4], f[5]);
             sites.Add(new BombDamage.Site(lo, hi, f[6], p => lo.X <= p.X + 5f && p.X - 5f <= hi.X && lo.Y <= p.Y + 5f && p.Y - 5f <= hi.Y && lo.Z <= p.Z + 5f && p.Z - 5f <= hi.Z));
         }
-        using var physics = new Resource();
+        using var physics = new TestResource();
         physics.Read(new MemoryStream(Entry(package, $"maps/{t.Map}/world_physics.vmdl_c")));
-        var phys = ((Model)physics.DataBlock!).GetEmbeddedPhys()!;
+        var phys = ((CompiledModel)physics.DataBlock!).EmbeddedPhysics!;
         var meshes = phys.Parts.SelectMany(p => p.Shape.Meshes).Select(m => SettleWorld.Mesh(m.Shape)).ToList();
         var hulls = phys.Parts.SelectMany(p => p.Shape.Hulls).Select(h => SettleWorld.Hull(h.Shape)).ToList();
         output.WriteLine($"{areas.Count} areas, {sites.Count} sites, {meshes.Count} meshes, {hulls.Count} hulls");
@@ -165,9 +163,9 @@ public sealed class BombDamageTests(ITestOutputHelper output)
         package.Read(t.Package);
         var vdata = Entry(package, $"maps/{t.Map}/baked_bomb_damage.vdata_c");
         var (sites, positions, damage) = ValveFile(vdata);
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(vdata));
-        var expected = ((ValveResourceFormat.Blocks.ResourceEditInfo2)resource.GetBlockByType(BlockType.RED2)!).AdditionalInputDependencies[0].FileCRC;
+        var expected = ((TestEditInfo)resource.GetBlockByType("RED2")!).AdditionalInputDependencies[0].FileCRC;
         var text = BombDamage.VdataText(sites, positions, damage);
         var crlf = System.IO.Hashing.Crc32.HashToUInt32(System.Text.Encoding.UTF8.GetBytes(text));
         var lf = System.IO.Hashing.Crc32.HashToUInt32(System.Text.Encoding.UTF8.GetBytes(text.Replace("\r\n", "\n")));
@@ -190,7 +188,7 @@ public sealed class BombDamageTests(ITestOutputHelper output)
             return;
         using var package = new ValvePak.Package();
         package.Read(t.Package);
-        var nav = new NavMeshFile();
+        var nav = new Source2.Compiler.Maps.NavMesh.NavMeshFile();
         nav.Read(new MemoryStream(Entry(package, $"maps/{t.Map}.nav")));
         var areas = nav.Areas.Values.Select(a => new BombDamage.Area(a.Corners)).ToList();
         var (sitesBlob, _, valveDamage) = ValveFile(Entry(package, $"maps/{t.Map}/baked_bomb_damage.vdata_c"));
@@ -201,9 +199,9 @@ public sealed class BombDamageTests(ITestOutputHelper output)
             Vector3 lo = new(f[0], f[1], f[2]), hi = new(f[3], f[4], f[5]);
             sites.Add(new BombDamage.Site(lo, hi, f[6], p => lo.X <= p.X + 5f && p.X - 5f <= hi.X && lo.Y <= p.Y + 5f && p.Y - 5f <= hi.Y && lo.Z <= p.Z + 5f && p.Z - 5f <= hi.Z));
         }
-        using var physics = new Resource();
+        using var physics = new TestResource();
         physics.Read(new MemoryStream(Entry(package, $"maps/{t.Map}/world_physics.vmdl_c")));
-        var phys = ((Model)physics.DataBlock!).GetEmbeddedPhys()!;
+        var phys = ((CompiledModel)physics.DataBlock!).EmbeddedPhysics!;
         var meshes = phys.Parts.SelectMany(p => p.Shape.Meshes).Select(m => SettleWorld.Mesh(m.Shape)).ToList();
         var world = new World(meshes, []);
         var grid = BombDamage.Build(areas, sites, world);

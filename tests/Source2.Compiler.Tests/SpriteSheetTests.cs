@@ -1,5 +1,4 @@
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
+using Source2.Compiler.Textures;
 using Xunit;
 
 namespace Source2.Compiler.Tests;
@@ -31,9 +30,9 @@ public class SpriteSheetTests
 
     private static bool HasSheet(byte[] vtexC)
     {
-        using var res = new Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(vtexC));
-        return res.DataBlock is Texture t && t.ExtraData.ContainsKey(VTexExtraData.SHEET);
+        return res.DataBlock is CompiledTexture t && t.ExtraData.ContainsKey(VTexExtraData.SHEET);
     }
 
     [Fact]
@@ -42,9 +41,9 @@ public class SpriteSheetTests
         var bytes = SheetTexture();
         if (bytes is null) { CS2Fixtures.Skip("a compiled .vtex_c carrying a SHEET"); return; }
 
-        using var res = new Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(bytes));
-        var tex = (Texture)res.DataBlock!;
+        var tex = (CompiledTexture)res.DataBlock!;
         var expected = tex.ExtraData[VTexExtraData.SHEET];
         var decoded = tex.GetSpriteSheetData()!;
 
@@ -89,22 +88,22 @@ public class SpriteSheetTests
 
         // Feed it through a real texture so VRF's own reader parses it, rather
         // than testing the writer against a second copy of the writer's logic.
-        var vtex = ResourceBuilder.BuildTexture(new ResourceBuilder.TextureDef
+        var vtex = PackageResourceBuilder.BuildTexture(new PackageResourceBuilder.TextureDef
         {
             RawRgba = new byte[16 * 16 * 4],
             RawWidth = 16,
             RawHeight = 16,
             GenerateMipmaps = false,
-            Compression = ResourceBuilder.TextureCompression.None,
+            Compression = PackageResourceBuilder.TextureCompression.None,
             SheetData = sheet,
-            Flags = ResourceBuilder.VTexFlags.NO_LOD,
+            Flags = PackageResourceBuilder.VTexFlags.NO_LOD,
         });
 
-        using var res = new Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(vtex));
-        var tex = (Texture)res.DataBlock!;
+        var tex = (CompiledTexture)res.DataBlock!;
 
-        Assert.Equal(ResourceBuilder.VTexFlags.NO_LOD, (ushort)tex.Flags);
+        Assert.Equal(PackageResourceBuilder.VTexFlags.NO_LOD, (ushort)tex.Flags);
         Assert.True(tex.ExtraData.ContainsKey(VTexExtraData.SHEET));
 
         var back = tex.GetSpriteSheetData()!;
@@ -131,18 +130,18 @@ public class SpriteSheetTests
     [Fact]
     public void PlainTexture_DeclaresNoSheet()
     {
-        var vtex = ResourceBuilder.BuildTexture(new ResourceBuilder.TextureDef
+        var vtex = PackageResourceBuilder.BuildTexture(new PackageResourceBuilder.TextureDef
         {
             RawRgba = new byte[16 * 16 * 4],
             RawWidth = 16,
             RawHeight = 16,
             GenerateMipmaps = false,
-            Compression = ResourceBuilder.TextureCompression.None,
+            Compression = PackageResourceBuilder.TextureCompression.None,
         });
 
-        using var res = new Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(vtex));
-        var tex = (Texture)res.DataBlock!;
+        var tex = (CompiledTexture)res.DataBlock!;
 
         Assert.False(tex.ExtraData.ContainsKey(VTexExtraData.SHEET));
         Assert.Null(tex.GetSpriteSheetData());

@@ -1,3 +1,4 @@
+using Source2.Compiler.Shaders.Vfx;
 using Source2.Compiler.Gpu;
 using Source2.Compiler.Lighting.Bake;
 using Xunit;
@@ -54,7 +55,7 @@ public class GpuBakeTests(ITestOutputHelper output)
                 {
                     var combo = prog.GetStaticCombo(id);
                     foreach (var rs in combo.DynamicComboRenderStates)
-                        if (rs is ValveResourceFormat.CompiledShader.VfxRenderStateInfoPixelShader ps)
+                        if (rs is VfxRenderStateInfoPixelShader ps)
                             output.WriteLine($"  static {id} dynamic {rs.DynamicComboId} file {rs.ShaderFileId}: raster {ps.RasterizerStateDesc} depth {ps.DepthStencilStateDesc?.DepthTestEnable} write {ps.DepthStencilStateDesc?.DepthWriteEnable} func {ps.DepthStencilStateDesc?.DepthFunc} blend {ps.BlendStateDesc?.BlendEnable[0]} mask {ps.BlendStateDesc?.RenderTargetWriteMask[0]}");
                         else
                             output.WriteLine($"  static {id} dynamic {rs.DynamicComboId} file {rs.ShaderFileId}");
@@ -73,7 +74,7 @@ public class GpuBakeTests(ITestOutputHelper output)
                 // expr:<shader>@<variable>: its compiled expressions as VRF prints them.
                 var prog = lib.Get(esh) ?? throw new FileNotFoundException(esh);
                 foreach (var d in prog.Rtx.VariableDescriptions.Where(v => v.Name == evar))
-                    output.WriteLine($"{name}: {d.VariableSource} {d.VfxType}: {(d.CompiledExpression.Length > 0 ? ValveResourceFormat.CompiledShader.ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression) : "(none)")}");
+                    output.WriteLine($"{name}: {d.VariableSource} {d.VfxType}: {(d.CompiledExpression.Length > 0 ? VfxCombos.ParseDynamicExpression(d.CompiledExpression) : "(none)")}");
                 continue;
             }
             if (name.StartsWith("vars:", StringComparison.Ordinal))

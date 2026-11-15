@@ -1,11 +1,9 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Buffers.Binary;
 using System.Numerics;
 using Source2.Compiler.Maps;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -184,17 +182,16 @@ public class PropTrianglesReplay(ITestOutputHelper output)
     {
         if (load(modelName) is not { } bytes)
             return null;
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        if (resource.DataBlock is not Model model)
+        if (resource.DataBlock is not CompiledModel model)
             return null;
         var positions = new List<Vector3>();
         var triangles = new List<int>();
-        void AddMesh(Mesh mesh)
+        void AddMesh(Vbib vbib, ValveKeyValue.KVObject meshData)
         {
-            var vbib = mesh.VBIB;
             var starts = new Dictionary<int, int>();
-            foreach (var sceneObject in mesh.Data.GetArray("m_sceneObjects"))
+            foreach (var sceneObject in meshData.GetArray("m_sceneObjects"))
             {
                 foreach (var drawCall in sceneObject.GetArray("m_drawCalls"))
                 {
@@ -210,32 +207,31 @@ public class PropTrianglesReplay(ITestOutputHelper output)
                         }
                         start = positions.Count;
                         starts[vb] = start;
-                        positions.AddRange(VBIB.GetVector3AttributeArray(buffer, position));
+                        positions.AddRange(Vbib.GetVector3AttributeArray(buffer, position));
                     }
                     if (start < 0)
                         continue;
                     var indexBuffer = vbib.IndexBuffers[drawCall.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
-                    foreach (var index in ValveResourceFormat.IO.GltfModelExporter.ReadIndices(indexBuffer, drawCall.GetInt32Property("m_nStartIndex"),
-                                                                                             drawCall.GetInt32Property("m_nIndexCount"), drawCall.GetInt32Property("m_nBaseVertex")))
+                    var first = drawCall.GetInt32Property("m_nStartIndex");
+                    var indexCount = drawCall.GetInt32Property("m_nIndexCount");
+                    var baseVertex = drawCall.GetInt32Property("m_nBaseVertex");
+                    foreach (var index in Enumerable.Range(first, indexCount).Select(i => baseVertex + (indexBuffer.ElementSizeInBytes == 4
+                                 ? BitConverter.ToInt32(indexBuffer.Data, i * 4) : BitConverter.ToUInt16(indexBuffer.Data, i * 2))))
                         triangles.Add(start + index);
                 }
             }
         }
-        foreach (var embedded in model.GetEmbeddedMeshesAndLoD())
+        foreach (var embedded in model.EmbeddedMeshesAndLod())
         {
-            if ((embedded.LoDMask & 1) != 0)
-                AddMesh(embedded.Mesh);
+            if ((embedded.LodMask & 1) != 0)
+                AddMesh(embedded.Mesh.Vbib, embedded.Mesh.Data);
         }
-        foreach (var reference in model.GetReferenceMeshNamesAndLoD())
+        foreach (var reference in model.ReferenceMeshes)
         {
-            if ((reference.LoDMask & 1) == 0 || load(reference.MeshName) is not { } meshBytes)
+            if ((reference.LodMask & 1) == 0 || load(reference.MeshName) is not { } meshBytes)
                 continue;
-            using var meshResource = new Resource();
-            meshResource.Read(new MemoryStream(meshBytes));
-            if (meshResource.DataBlock is not Mesh mesh)
-                continue;
-            model.SetExternalMeshData(mesh);
-            AddMesh(mesh);
+            var mesh = CompiledMesh.Read(meshBytes);
+            AddMesh(mesh.Vbib, mesh.Data);
         }
         return positions.Count > 0 ? (positions.ToArray(), triangles.ToArray()) : null;
     }

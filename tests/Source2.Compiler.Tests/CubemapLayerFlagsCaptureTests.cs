@@ -1,10 +1,8 @@
+using Source2.Compiler.KeyValues;
 using System.Text.Json.Nodes;
 using Source2.Compiler.Cubemaps;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 

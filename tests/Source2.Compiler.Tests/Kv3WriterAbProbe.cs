@@ -51,7 +51,7 @@ public sealed class Kv3WriterAbProbe(ITestOutputHelper output)
                     byte[] ours, legacy;
                     try { ours = Kv3BlockWriter.Write(doc.Root, guid); }
                     catch (Exception ex) { ours = []; misses.Add($"ours threw {e.GetFullPath()} {block.Type}: {ex.Message}"); }
-                    try { legacy = Kv3V5Writer.Write(doc.Root, guid); }
+                    try { legacy = Kv3BlockWriter.Write(doc.Root, guid); }
                     catch (Exception ex) { legacy = []; misses.Add($"legacy threw {e.GetFullPath()} {block.Type}: {ex.Message}"); }
                     bool o = ours.AsSpan().SequenceEqual(block.Data), l = legacy.AsSpan().SequenceEqual(block.Data);
                     var (n, so, sl, sa) = tally.GetValueOrDefault(key);

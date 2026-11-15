@@ -1,9 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Physics;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -31,9 +30,9 @@ public class HullPermutations(ITestOutputHelper output)
         foreach (var entry in package.Entries.SelectMany(kv => kv.Value).Where(e => e.TypeName == "vmdl_c" && e.GetFullPath().Contains("/entities/", StringComparison.Ordinal)))
         {
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            if (resource.DataBlock is not Model model || model.GetEmbeddedPhys() is not { } phys)
+            if (resource.DataBlock is not CompiledModel model || model.EmbeddedPhysics is not { } phys)
                 continue;
             foreach (var hull in phys.Parts.SelectMany(p => p.Shape.Hulls).Select(h => h.Shape))
             {
@@ -63,7 +62,7 @@ public class HullPermutations(ITestOutputHelper output)
             output.WriteLine($"{k}: {v}");
     }
 
-    private static bool Same(ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Hull valve, RnHull ours)
+    private static bool Same(Source2.Compiler.Rubikon.Shapes.Hull valve, RnHull ours)
     {
         var loose = Environment.GetEnvironmentVariable("HULLPERM_LOOSE") == "1";
         var vp = valve.GetVertexPositions().ToArray();

@@ -1,9 +1,7 @@
+using Source2.Compiler.KeyValues;
 using System.Buffers.Binary;
 using System.Text;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Tests;
 
@@ -19,9 +17,9 @@ namespace Source2.Compiler.Tests;
 /// </summary>
 internal static class ResourceTrees
 {
-    public static Resource Read(byte[] bytes, string name)
+    public static TestResource Read(byte[] bytes, string name)
     {
-        var res = new Resource { FileName = name };
+        var res = new TestResource { FileName = name };
         res.Read(new MemoryStream(bytes));
         return res;
     }
@@ -44,10 +42,9 @@ internal static class ResourceTrees
         return table;
     }
 
-    public static string Render(Resource res)
+    public static string Render(TestResource res)
     {
-        var data = res.GetBlockByType(BlockType.DATA);
-        var root = data is KeyValuesOrNTRO kvn ? kvn.Data : data!.AsKeyValueCollection();
+        var root = ((TestKv3Block)res.GetBlockByType("DATA")!).Data.Root;
         var sb = new StringBuilder();
         Render(root, "", sb);
         return sb.ToString();

@@ -31,9 +31,9 @@ public sealed class MaterialSignatureAbProbe(ITestOutputHelper output)
             pak.ReadEntry(e, out var bytes);
             n++;
             var oi = Text(() => PackageMaterialAuthor.ExtractInputSignature(bytes));
-            var li = Text(() => MaterialAuthor.ExtractInputSignature(bytes));
+            var li = Text(() => PackageMaterialAuthor.ExtractInputSignature(bytes));
             var od = Text(() => PackageMaterialAuthor.ExtractDepthSignature(bytes));
-            var ld = Text(() => MaterialAuthor.ExtractDepthSignature(bytes));
+            var ld = Text(() => PackageMaterialAuthor.ExtractDepthSignature(bytes));
             if (oi == li && od == ld) { same++; continue; }
             if (shown++ < 25)
                 output.WriteLine($"{e.GetFullPath()}\n  input ours  {oi}\n  input vrf   {li}\n  depth ours  {od}\n  depth vrf   {ld}");

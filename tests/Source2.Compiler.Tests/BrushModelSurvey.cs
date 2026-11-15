@@ -1,8 +1,6 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -33,7 +31,7 @@ public class BrushModelSurvey(ITestOutputHelper output)
             var hit = package.Entries.SelectMany(kv => kv.Value).First(e => e.GetFullPath().EndsWith(parts[0], StringComparison.OrdinalIgnoreCase));
             package.ReadEntry(hit, out var raw);
             File.WriteAllBytes(parts[1], raw);
-            using var res = new Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(raw));
             using var text = new StreamWriter(parts[1] + ".blocks.txt");
             foreach (var block in res.Blocks)
@@ -51,20 +49,20 @@ public class BrushModelSurvey(ITestOutputHelper output)
         foreach (var entry in entries.Where(e => e.TypeName == "vmdl_c").Take(limit))
         {
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var model = (Model)resource.DataBlock!;
+            var model = (CompiledModel)resource.DataBlock!;
             var line = $"{entry.GetFullPath()}: ";
-            foreach (var (mesh, index, name, lod) in model.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, index, name, lod) in model.EmbeddedMeshesAndLod())
             {
                 var draws = mesh.Data.GetArray("m_sceneObjects").SelectMany(o => o.GetArray("m_drawCalls")).ToList();
                 var tris = draws.Sum(d => d.GetInt32Property("m_nIndexCount")) / 3;
                 var mats = string.Join(",", draws.Select(d => Path.GetFileNameWithoutExtension(d.GetStringProperty("m_material"))).Distinct());
                 line += $"mesh {name} lod {lod} draws {draws.Count} tris {tris} [{mats}]; ";
             }
-            foreach (var reference in model.GetReferenceMeshNamesAndLoD())
+            foreach (var reference in model.ReferenceMeshes)
                 line += $"ref mesh {reference.MeshName}; ";
-            if (model.GetEmbeddedPhys() is { } phys)
+            if (model.EmbeddedPhysics is { } phys)
             {
                 foreach (var part in phys.Parts)
                     line += $"phys hulls {part.Shape.Hulls.Length} meshes {part.Shape.Meshes.Length} spheres {part.Shape.Spheres.Length} capsules {part.Shape.Capsules.Length}; ";

@@ -1,3 +1,4 @@
+using Source2.Compiler.KeyValues;
 using System.Buffers.Binary;
 using System.Numerics;
 using Source2.Compiler.Maps;
@@ -243,11 +244,8 @@ public class VisCfgDump(ITestOutputHelper output)
     {
         if (Environment.GetEnvironmentVariable("VISCFG") is not { Length: > 0 } path)
             return;
-        using var reader = new BinaryReader(File.OpenRead(path));
-        using var owner = new ValveResourceFormat.Resource();
-        var kv = new ValveResourceFormat.ResourceTypes.BinaryKV3 { Resource = owner };
-        kv.Read(reader);
-        output.WriteLine(kv.ToString());
+        var kv = Kv3Binary.Read(File.ReadAllBytes(path));
+        output.WriteLine(kv.Root.ToKV3String(kv.Header?.Format));
     }
 }
 

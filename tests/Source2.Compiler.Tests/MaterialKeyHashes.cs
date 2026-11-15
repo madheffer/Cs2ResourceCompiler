@@ -1,6 +1,5 @@
+using Source2.Compiler.Materials;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -34,9 +33,9 @@ public class MaterialKeyHashes(ITestOutputHelper output)
                 if (!entry.GetFullPath().Contains(parts[1], StringComparison.OrdinalIgnoreCase) || seen++ > 400)
                     continue;
                 package.ReadEntry(entry, out var bytes);
-                using var resource = new Resource();
+                using var resource = new TestResource();
                 resource.Read(new MemoryStream(bytes));
-                if (resource.DataBlock is not Material mat)
+                if (resource.DataBlock is not CompiledMaterial mat)
                     continue;
                 foreach (var k in mat.IntParams.Keys.Concat(mat.FloatParams.Keys).Concat(mat.VectorParams.Keys).Concat(mat.TextureParams.Keys)
                                      .Concat(mat.IntAttributes.Keys).Concat(mat.StringAttributes.Keys).Concat(mat.FloatAttributes.Keys).Concat(mat.VectorAttributes.Keys))

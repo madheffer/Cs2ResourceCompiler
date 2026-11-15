@@ -1,8 +1,6 @@
+using Source2.Compiler.KeyValues;
 using ValveKeyValue;
 using Source2.Compiler.Maps;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Vis = Source2.Compiler.Maps.VoxelVisibility;
 
 namespace Source2.Compiler.Tests;
@@ -26,11 +24,11 @@ internal static class VisFixtures
     {
         foreach (var (map, bytes) in MapFixtures.AllResources(Suffix, limit))
         {
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
 
-            var block = resource.GetBlockByType(BlockType.VXVS);
-            if (block is null || resource.DataBlock is not BinaryKV3 kv3)
+            var block = resource.GetBlockByType("VXVS");
+            if (block is null || resource.DataBlock is not TestKv3Block kv3)
                 continue;
 
             var root = kv3.Data.Root;
@@ -39,7 +37,7 @@ internal static class VisFixtures
 
             var layout = VoxelVisibilityReader.LayoutOf(root);
             var vxvs = bytes.AsSpan((int)block.Offset, (int)block.Size).ToArray();
-            yield return new Specimen(map, VoxelVisibilityReader.Read(bytes, resource), layout, vxvs);
+            yield return new Specimen(map, VoxelVisibilityReader.Read(resource.Compiled), layout, vxvs);
         }
     }
 

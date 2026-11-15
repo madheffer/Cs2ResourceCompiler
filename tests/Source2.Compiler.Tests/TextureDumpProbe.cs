@@ -1,7 +1,6 @@
+using Source2.Compiler.Textures;
 using SkiaSharp;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -22,9 +21,9 @@ public class TextureDumpProbe(ITestOutputHelper output)
             return;
         foreach (var file in spec.Split(';'))
         {
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(File.ReadAllBytes(file)));
-            var texture = (Texture)resource.DataBlock!;
+            var texture = (CompiledTexture)resource.DataBlock!;
             using var bitmap = texture.GenerateBitmap();
             double r = 0, g = 0, b = 0, a = 0;
             var n = 0;
@@ -54,9 +53,9 @@ public class TextureDumpProbe(ITestOutputHelper output)
             if (!path.Contains(p[1], StringComparison.OrdinalIgnoreCase))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var texture = (Texture)resource.DataBlock!;
+            var texture = (CompiledTexture)resource.DataBlock!;
             try
             {
                 using var bitmap = texture.GenerateBitmap();

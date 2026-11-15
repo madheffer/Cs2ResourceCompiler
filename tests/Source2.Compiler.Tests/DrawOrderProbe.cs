@@ -1,10 +1,9 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using System.Text.Json;
 using Source2.Compiler.Maps;
 using Source2.Compiler.Meshopt;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -124,12 +123,12 @@ public class DrawOrderProbe(ITestOutputHelper output)
             if (!entry.DirectoryName.Contains("worldnodes", StringComparison.OrdinalIgnoreCase))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var model = (Model)resource.DataBlock!;
-            foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
+            var model = (CompiledModel)resource.DataBlock!;
+            foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
             {
-                var vbib = mesh.VBIB;
+                var vbib = mesh.Vbib;
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var dc in so.GetArray("m_drawCalls"))
                     {

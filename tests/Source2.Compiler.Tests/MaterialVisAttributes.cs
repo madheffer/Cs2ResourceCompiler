@@ -1,6 +1,5 @@
+using Source2.Compiler.Materials;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -47,9 +46,9 @@ public class MaterialVisAttributes(ITestOutputHelper output)
                 output.WriteLine($"{name}: not found");
                 continue;
             }
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var material = (Material)resource.DataBlock!;
+            var material = (CompiledMaterial)resource.DataBlock!;
             var attributes = material.IntAttributes.Where(a => a.Key.StartsWith("mapbuilder", StringComparison.OrdinalIgnoreCase)
                                                              || a.Key.StartsWith("tools.", StringComparison.OrdinalIgnoreCase))
                                                    .Select(a => $"{a.Key}={a.Value}");

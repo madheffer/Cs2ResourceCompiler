@@ -1,8 +1,7 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Maps;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -29,18 +28,18 @@ public class PropAggregatesReplay(ITestOutputHelper output)
     }
 
     // The texcoord fields of a draw's vertex buffers.
-    static string LayoutOf(IEnumerable<ValveResourceFormat.Blocks.VBIB.OnDiskBufferData> vbs)
+    static string LayoutOf(IEnumerable<OnDiskBufferData> vbs)
         => string.Join(" ", vbs.SelectMany(vb => vb.InputLayoutFields).Where(f => f.SemanticName == "TEXCOORD").Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}"));
 
     // The vertex layout of a model's draw call, counting calls as NodePropAggregates does (every LOD, in mesh order).
     static string SourceLayout(GameContent content, string model, int call)
     {
         var n = 0;
-        foreach (var (mesh, _, _, _) in content.LoadedModel(model + "_c")!.GetEmbeddedMeshesAndLoD())
+        foreach (var (mesh, _, _, _) in content.LoadedModel(model + "_c")!.EmbeddedMeshesAndLod())
             foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                 foreach (var dc in so.GetArray("m_drawCalls"))
                     if (n++ == call)
-                        return LayoutOf(dc.GetArray("m_vertexBuffers").Select(b => mesh.VBIB.VertexBuffers[b.GetInt32Property("m_hBuffer")]));
+                        return LayoutOf(dc.GetArray("m_vertexBuffers").Select(b => mesh.Vbib.VertexBuffers[b.GetInt32Property("m_hBuffer")]));
         return "?";
     }
 
@@ -91,23 +90,23 @@ public class PropAggregatesReplay(ITestOutputHelper output)
         foreach (var entry in package.Entries!.SelectMany(kv => kv.Value).Where(e => e.GetFullPath().EndsWith(".vwnod_c", StringComparison.Ordinal)))
         {
             package.ReadEntry(entry, out var nodeBytes);
-            using var nodeResource = new Resource();
+            using var nodeResource = new TestResource();
             nodeResource.Read(new MemoryStream(nodeBytes));
-            foreach (var o in ((WorldNode)nodeResource.DataBlock!).Data.GetArray("m_aggregateSceneObjects") ?? [])
+            foreach (var o in ((TestKv3Typed)nodeResource.DataBlock!).Data.GetArray("m_aggregateSceneObjects") ?? [])
             {
                 var name = o.GetStringProperty("m_renderableModel") ?? "";
                 if (!name.Contains("agg_prop", StringComparison.Ordinal))
                     continue;
                 package.ReadEntry(package.FindEntry(Path.ChangeExtension(name, ".vmdl_c"))!, out var bytes);
-                using var resource = new Resource();
+                using var resource = new TestResource();
                 resource.Read(new MemoryStream(bytes));
                 var shipped = new List<ShippedDraw>();
-                foreach (var (mesh, _, _, _) in ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD())
+                foreach (var (mesh, _, _, _) in ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod())
                     foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                         foreach (var dc in so.GetArray("m_drawCalls"))
                         {
-                            var vb = mesh.VBIB.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                            var ib = mesh.VBIB.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                            var vb = mesh.Vbib.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                            var ib = mesh.Vbib.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                             int I(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
                             var bas = dc.GetInt32Property("m_nBaseVertex");
                             Vector3 V(int i)
@@ -121,7 +120,7 @@ public class PropAggregatesReplay(ITestOutputHelper output)
                             var lo = idx.Min();
                             shipped.Add(new ShippedDraw(dc.GetStringProperty("m_material") ?? "",
                                 [.. Enumerable.Range(0, count / 3).Select(t => Key(V(idx[t * 3]), V(idx[(t * 3) + 1]), V(idx[(t * 3) + 2])))],
-                                [.. Enumerable.Range(lo, idx.Max() - lo + 1).Select(V)]) { Layout = LayoutOf(dc.GetArray("m_vertexBuffers").Select(b => mesh.VBIB.VertexBuffers[b.GetInt32Property("m_hBuffer")])) });
+                                [.. Enumerable.Range(lo, idx.Max() - lo + 1).Select(V)]) { Layout = LayoutOf(dc.GetArray("m_vertexBuffers").Select(b => mesh.Vbib.VertexBuffers[b.GetInt32Property("m_hBuffer")])) });
                         }
                 // Our aggregate holding the first draw; then every draw and fragment beside it.
                 if (!ourByDrawSet.TryGetValue(shipped[0].Material.ToLowerInvariant() + "#" + SetKey(shipped[0].Triangles), out var hit))

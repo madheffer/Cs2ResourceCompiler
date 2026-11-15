@@ -1,8 +1,5 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 
 namespace Source2.Compiler.Tests;
@@ -44,7 +41,7 @@ public class MapResourceAuthoringTests
         // for reasons that have nothing to do with the author: a world's
         // m_nCompileTimestamp is UInt32 in the struct RC serialized, and an entity
         // lump's 0.1f renders as "0.1" and returns as a double.
-        var data = Assert.IsAssignableFrom<KeyValuesOrNTRO>(valve.DataBlock);
+        var data = Assert.IsAssignableFrom<TestKv3Typed>(valve.DataBlock);
         var ours = Source2ContainerAuthor.AuthorKv3Tree(data.Data, data.Format!.Value, sourceExtension);
         using var mine = ResourceTrees.Read(ours, Path.GetFileName(suffix));
 
@@ -62,7 +59,7 @@ public class MapResourceAuthoringTests
         if (bytes is null) { MapFixtures.Skip("/world.vrman_c"); return; }
 
         using var valve = ResourceTrees.Read(bytes, "world.vrman_c");
-        var theirs = BlockBytes(bytes, valve, BlockType.DATA);
+        var theirs = BlockBytes(bytes, valve, "DATA");
 
         var groups = ResourceManifestAuthor.ReadData(theirs);
         Assert.NotEmpty(groups);
@@ -77,7 +74,7 @@ public class MapResourceAuthoringTests
         using var mine = ResourceTrees.Read(ours, "world.vrman_c");
 
         Assert.Equal(valve.Version, mine.Version);
-        Assert.Equal(theirs, BlockBytes(ours, mine, BlockType.DATA));
+        Assert.Equal(theirs, BlockBytes(ours, mine, "DATA"));
         AssertIdentity(valve, mine, "Manifest Compiler Version", "CompileResourceManifest", 2);
         AssertReferences(valve, mine);
     }
@@ -89,7 +86,7 @@ public class MapResourceAuthoringTests
         if (bytes is null) { MapFixtures.Skip(".vmap_c"); return; }
 
         using var valve = ResourceTrees.Read(bytes, "map.vmap_c");
-        var red2 = Assert.IsType<ResourceEditInfo2>(valve.EditInfo).Data!.Root;
+        var red2 = Assert.IsType<TestEditInfo>(valve.EditInfo).Data!.Root;
         var children = red2.GetArray<string>("m_ChildResourceList")!;
         var source = valve.EditInfo!.InputDependencies.Single(d => d.ContentRelativeFilename.EndsWith(".vmap"));
 
@@ -124,7 +121,7 @@ public class MapResourceAuthoringTests
         // Authoring no textures of our own, there is nothing to repeat it for.
         Assert.Equal(Identities(valve).Distinct(), Identities(mine).Distinct());
 
-        var myRed2 = Assert.IsType<ResourceEditInfo2>(mine.EditInfo).Data!.Root;
+        var myRed2 = Assert.IsType<TestEditInfo>(mine.EditInfo).Data!.Root;
         Assert.Equal(children, myRed2.GetArray<string>("m_ChildResourceList")!);
         Assert.Equal(1, (int)myRed2["m_SearchableUserData"]!["WorldModelDocAll"]!);
         Assert.Equal(0, (int)myRed2["m_SearchableUserData"]!["IsChildResource"]!);
@@ -144,7 +141,7 @@ public class MapResourceAuthoringTests
     /// The map child identity, which is what separates these types from every
     /// other one the compiler writes.
     /// </summary>
-    private static void AssertIdentity(Resource valve, Resource mine, string special, string identifier, int fingerprint)
+    private static void AssertIdentity(TestResource valve, TestResource mine, string special, string identifier, int fingerprint)
     {
         var expected = new[] { (special, identifier, (uint)fingerprint) };
         Assert.Equal(expected, Identities(valve));
@@ -157,25 +154,25 @@ public class MapResourceAuthoringTests
         // m_SpecialInputDependencies; the 0923 compiler writes it empty, as we do.
         foreach (var res in new[] { valve, mine })
         {
-            var red2 = Assert.IsType<ResourceEditInfo2>(res.EditInfo).Data!.Root;
+            var red2 = Assert.IsType<TestEditInfo>(res.EditInfo).Data!.Root;
             if (res == mine || red2.ContainsKey("m_SpecialInputDependencies"))
                 Assert.Empty(red2["m_SpecialInputDependencies"]!.Values);
             Assert.Equal(1, (int)red2["m_SearchableUserData"]!["IsChildResource"]!);
         }
     }
 
-    private static (string, string, uint)[] Identities(Resource res)
+    private static (string, string, uint)[] Identities(TestResource res)
         => [.. res.EditInfo!.SpecialDependencies.Select(d => (d.String, d.CompilerIdentifier, d.Fingerprint))];
 
     /// <summary>Every reference Valve recorded, under the same engine id.</summary>
-    private static void AssertReferences(Resource valve, Resource mine)
+    private static void AssertReferences(TestResource valve, TestResource mine)
     {
         var ours = (mine.ExternalReferences?.ResourceRefInfoList ?? []).ToDictionary(r => r.Id, r => r.Name);
         foreach (var entry in valve.ExternalReferences?.ResourceRefInfoList ?? [])
             Assert.Equal(entry.Name, Assert.Contains(entry.Id, (IDictionary<ulong, string>)ours));
     }
 
-    private static byte[] BlockBytes(byte[] file, Resource res, BlockType type)
+    private static byte[] BlockBytes(byte[] file, TestResource res, string type)
     {
         var block = res.GetBlockByType(type)
                     ?? throw new InvalidOperationException($"No {type} block.");

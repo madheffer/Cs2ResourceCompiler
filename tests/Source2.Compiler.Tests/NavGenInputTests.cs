@@ -118,9 +118,9 @@ public sealed class NavGenInputTests(ITestOutputHelper output)
         ValveKeyValue.KVObject Root(string name)
         {
             package.ReadEntry(package.FindEntry(name)!, out var bytes);
-            using var resource = new ValveResourceFormat.Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            return ((ValveResourceFormat.ResourceTypes.BinaryKV3)resource.DataBlock!).Data.Root;
+            return ((TestKv3Block)resource.DataBlock!).Data.Root;
         }
         static object Scalar(ValveKeyValue.KVObject v) => v.ValueType == ValveKeyValue.KVValueType.Boolean ? (bool)v : (double)v;
         var hulls = new Dictionary<string, IReadOnlyDictionary<string, object>>();

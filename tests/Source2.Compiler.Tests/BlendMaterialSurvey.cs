@@ -1,6 +1,5 @@
+using Source2.Compiler.Materials;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -26,7 +25,7 @@ public class BlendMaterialSurvey(ITestOutputHelper output)
         foreach (var entry in package.Entries!.GetValueOrDefault("vmat_c") ?? [])
         {
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             try
             {
                 resource.Read(new MemoryStream(bytes));
@@ -35,7 +34,7 @@ public class BlendMaterialSurvey(ITestOutputHelper output)
             {
                 continue;
             }
-            if (resource.DataBlock is not Material mat || !mat.ShaderName.StartsWith("csgo_environment_blend", StringComparison.OrdinalIgnoreCase))
+            if (resource.DataBlock is not CompiledMaterial mat || !mat.ShaderName.StartsWith("csgo_environment_blend", StringComparison.OrdinalIgnoreCase))
                 continue;
             total++;
             var nb = mat.IntParams.TryGetValue("F_USE_NEW_BLENDING", out var v) && v != 0;

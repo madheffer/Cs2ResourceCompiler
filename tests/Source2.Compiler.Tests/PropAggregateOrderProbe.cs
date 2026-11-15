@@ -1,9 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Maps;
 using Source2.Compiler.Meshopt;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -47,14 +46,14 @@ public class PropAggregateOrderProbe(ITestOutputHelper output)
             if (!entry.DirectoryName.Contains("worldnodes", StringComparison.OrdinalIgnoreCase) || !entry.FileName.Contains(Environment.GetEnvironmentVariable("PROPAGG_KIND") ?? "agg_prop", StringComparison.Ordinal))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            foreach (var (mesh, _, _, _) in ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, _) in ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod())
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var dc in so.GetArray("m_drawCalls"))
                     {
-                        var vb = mesh.VBIB.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                        var ib = mesh.VBIB.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                        var vb = mesh.Vbib.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                        var ib = mesh.Vbib.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                         int I(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
                         var bas = dc.GetInt32Property("m_nBaseVertex");
                         Vector3 V(int i)
@@ -166,16 +165,16 @@ public class PropAggregateOrderProbe(ITestOutputHelper output)
             var list = boundsOf[model] = [];
             if (content.LoadedModel(model + "_c") is not { } md)
                 continue;
-            foreach (var (mesh, _, _, lod) in md.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, lod) in md.EmbeddedMeshesAndLod())
             {
                 if ((lod & 1) == 0)
                     continue;
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var call in so.GetArray("m_drawCalls"))
                     {
-                        var vb = mesh.VBIB.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                        var ib = mesh.VBIB.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
-                        var pos = ValveResourceFormat.Blocks.VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
+                        var vb = mesh.Vbib.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                        var ib = mesh.Vbib.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                        var pos = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
                         int I(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
                         var st = call.GetInt32Property("m_nStartIndex");
                         var bs = call.GetInt32Property("m_nBaseVertex");
@@ -240,9 +239,9 @@ public class PropAggregateOrderProbe(ITestOutputHelper output)
         foreach (var entry in package.Entries!.SelectMany(kv => kv.Value).Where(e => e.GetFullPath().EndsWith(".vwnod_c", StringComparison.Ordinal)))
         {
             package.ReadEntry(entry, out var nodeBytes);
-            using var nodeResource = new Resource();
+            using var nodeResource = new TestResource();
             nodeResource.Read(new MemoryStream(nodeBytes));
-            var data = ((WorldNode)nodeResource.DataBlock!).Data;
+            var data = ((TestKv3Typed)nodeResource.DataBlock!).Data;
             if (Environment.GetEnvironmentVariable("PROPAGG_NODEKEYS") == "1")
             {
                 output.WriteLine($"NODE {entry.GetFullPath()}: {string.Join(", ", data.Keys)}");
@@ -261,16 +260,16 @@ public class PropAggregateOrderProbe(ITestOutputHelper output)
                     continue;
                 var agg = package.FindEntry(Path.ChangeExtension(name, ".vmdl_c"))!;
                 package.ReadEntry(agg, out var bytes);
-                using var resource = new Resource();
+                using var resource = new TestResource();
                 resource.Read(new MemoryStream(bytes));
                 var draws = new List<string>();
                 var drawModels = new List<List<string>>();
-                foreach (var (mesh, _, _, _) in ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD())
+                foreach (var (mesh, _, _, _) in ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod())
                     foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                         foreach (var dc in so.GetArray("m_drawCalls"))
                         {
-                            var vb = mesh.VBIB.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                            var ib = mesh.VBIB.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                            var vb = mesh.Vbib.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                            var ib = mesh.Vbib.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                             int I(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
                             var bas = dc.GetInt32Property("m_nBaseVertex");
                             Vector3 V(int i)
@@ -383,13 +382,13 @@ public class PropAggregateOrderProbe(ITestOutputHelper output)
         {
             if (content.LoadedModel(name + "_c") is not { } model)
                 continue;
-            foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var call in so.GetArray("m_drawCalls"))
                     {
-                        var vb = mesh.VBIB.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                        var ib = mesh.VBIB.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
-                        var pos = ValveResourceFormat.Blocks.VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
+                        var vb = mesh.Vbib.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                        var ib = mesh.Vbib.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                        var pos = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
                         int I(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
                         var start = call.GetInt32Property("m_nStartIndex");
                         var count = call.GetInt32Property("m_nIndexCount");

@@ -1,9 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Physics;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -28,9 +27,9 @@ public class HullPasses(ITestOutputHelper output)
         foreach (var entry in package.Entries.SelectMany(kv => kv.Value).Where(e => e.TypeName == "vmdl_c"))
         {
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            if (resource.DataBlock is not Model model || model.GetEmbeddedPhys() is not { } phys)
+            if (resource.DataBlock is not CompiledModel model || model.EmbeddedPhysics is not { } phys)
                 continue;
             foreach (var v in phys.Parts.SelectMany(p => p.Shape.Hulls).Select(h => h.Shape))
             {

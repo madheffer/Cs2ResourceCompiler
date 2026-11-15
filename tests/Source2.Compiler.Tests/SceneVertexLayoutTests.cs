@@ -26,7 +26,7 @@ public class SceneVertexLayoutTests(ITestOutputHelper output)
         for (var m = 0; m < meshes.Count; m++)
         {
             var mesh = (BakeScene.Mesh)read.Invoke(null, [meshes[m]])!;
-            var signature = MaterialAuthor.ExtractInputSignature(content.Read(mesh.Material + "_c")!);
+            var signature = PackageMaterialAuthor.ExtractInputSignature(content.Read(mesh.Material + "_c")!);
             var r = SceneVertexLayout.Build(mesh, m, signature);
             Assert.Equal(r.Stride * mesh.Positions.Length, r.Words.Length * 4);
             var text = string.Join(" ", r.Fields.Select(f => $"{f.Name}{f.SemanticIndex}:{f.Format}@{f.Offset}"));

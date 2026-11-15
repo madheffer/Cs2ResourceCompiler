@@ -217,9 +217,9 @@ public sealed class NavCompileTests(ITestOutputHelper output)
         var bomb = NavCompile.BombDamageFile(NavCompile.Areas(nav.Mesh), sites, NavCompile.World(Entry(package, $"maps/{map}/world_physics.vmdl_c")), addon, map);
         var valveBomb = Entry(package, $"maps/{map}/baked_bomb_damage.vdata_c");
         {
-            using var resource = new ValveResourceFormat.Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(valveBomb));
-            var blob = ((ValveResourceFormat.ResourceTypes.BinaryKV3)resource.DataBlock!).Data.Root["data"]["bombsites"].AsBlob();
+            var blob = ((TestKv3Block)resource.DataBlock!).Data.Root["data"]["bombsites"].AsBlob();
             for (var i = 0; i + 28 <= blob.Length; i += 28)
                 output.WriteLine($"  Valve site: {string.Join(" ", Enumerable.Range(0, 7).Select(k => BitConverter.ToSingle(blob, i + k * 4).ToString("R")))}");
             foreach (var site in sites)

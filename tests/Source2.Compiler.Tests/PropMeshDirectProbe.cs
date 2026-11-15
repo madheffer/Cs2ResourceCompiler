@@ -1,6 +1,7 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Maps;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -22,14 +23,14 @@ public sealed class PropMeshDirectProbe(ITestOutputHelper output)
         using var content = new GameContent(pak);
         var model = content.LoadedModel(modelName + "_c")!;
         NodePropEntries.PropMesh? ours = null;
-        foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
+        foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
             foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                 foreach (var call in so.GetArray("m_drawCalls"))
                 {
                     if (!(call.GetStringProperty("m_material") ?? "").Contains(want, StringComparison.OrdinalIgnoreCase))
                         continue;
-                    var vb = mesh.VBIB.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                    var ib = mesh.VBIB.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                    var vb = mesh.Vbib.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                    var ib = mesh.Vbib.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                     int Index(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
                     var start = call.GetInt32Property("m_nStartIndex");
                     var count = call.GetInt32Property("m_nIndexCount");

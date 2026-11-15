@@ -1,6 +1,5 @@
+using Source2.Compiler.Shaders.Vfx;
 using Source2.Compiler.Maps;
-using ValveResourceFormat.CompiledShader;
-using ValveResourceFormat.IO;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -31,7 +30,7 @@ public class VsInputSignatureProbe(ITestOutputHelper output)
                 .ToDictionary(p => p.Key, p => (byte)p.Value);
             foreach (var program in set.Programs.Where(p => p.VcsProgramType == VcsProgramType.VertexShader))
             {
-                var (config, id) = ShaderDataProvider.GetStaticConfiguration_ForFeatureState(set.Features, program, features);
+                var (config, id) = VfxCombos.GetStaticConfiguration_ForFeatureState(set.Features, program, features);
                 if (!program.StaticComboEntries.ContainsKey(id))
                 {
                     output.WriteLine($"{path}: vs static combo {id} absent");

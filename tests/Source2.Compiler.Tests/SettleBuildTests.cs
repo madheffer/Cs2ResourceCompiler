@@ -4,8 +4,6 @@ using System.Text.Json;
 using Source2.Compiler.Maps;
 using Source2.Compiler.Physics;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 

@@ -1,6 +1,6 @@
+using Source2.Compiler.Shaders.Vfx;
+using Source2.Compiler.Textures;
 using Source2.Compiler.Maps;
-using ValveResourceFormat.CompiledShader;
-using ValveResourceFormat.IO;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -40,13 +40,13 @@ public class DefaultHitGroupTests(ITestOutputHelper output)
             var features = (info.Params ?? new Dictionary<string, long>()).Where(p => p.Key.StartsWith("F_", StringComparison.Ordinal)).ToDictionary(p => p.Key, p => (byte)p.Value);
             foreach (var program in set.Programs)
             {
-                var (_, id) = ShaderDataProvider.GetStaticConfiguration_ForFeatureState(set.Features, program, features);
+                var (_, id) = VfxCombos.GetStaticConfiguration_ForFeatureState(set.Features, program, features);
                 if (!program.StaticComboEntries.ContainsKey(id))
                     continue;
                 foreach (var a in program.GetStaticCombo(id).Attributes)
                 {
                     var binding = a.VariableBinding >= 0 && a.VariableBinding < program.VariableDescriptions.Length ? program.VariableDescriptions[a.VariableBinding].Name : "";
-                    output.WriteLine($"  {program.VcsProgramType} {a.Name} {a.Murmur32:x8} {a.VfxType} const {a.ConstValue} expr {(a.DynExpression is { } e ? ShaderUtilHelpers.ParseDynamicExpression(e) : "")} binding {binding}");
+                    output.WriteLine($"  {program.VcsProgramType} {a.Name} {a.Murmur32:x8} {a.VfxType} const {a.ConstValue} expr {(a.DynExpression is { } e ? VfxCombos.ParseDynamicExpression(e) : "")} binding {binding}");
                 }
             }
             output.WriteLine($"  textures {string.Join(" ", info.Textures.Select(t => $"{t.Key}={t.Value}"))}");
@@ -70,9 +70,9 @@ public class DefaultHitGroupTests(ITestOutputHelper output)
                 output.WriteLine($"{path}: missing");
                 continue;
             }
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(bytes));
-            var tex = (ValveResourceFormat.ResourceTypes.Texture)res.DataBlock!;
+            var tex = (CompiledTexture)res.DataBlock!;
             output.WriteLine($"{path}: {tex.Format} {tex.Width}x{tex.Height} mips {tex.NumMipLevels} flags {tex.Flags}");
             var t = Lighting.Bake.RtxScene.LoadTexture(bytes, false)!;
             var m = t.Mips[0];

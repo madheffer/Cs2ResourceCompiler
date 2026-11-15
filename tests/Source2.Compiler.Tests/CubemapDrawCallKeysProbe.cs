@@ -1,5 +1,5 @@
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -19,9 +19,9 @@ public sealed class CubemapDrawCallKeysProbe(ITestOutputHelper output)
         foreach (var entry in package.Entries!.SelectMany(kv => kv.Value).Where(e => e.GetFullPath().EndsWith(".vwnod_c", StringComparison.Ordinal)))
         {
             package.ReadEntry(entry, out var nodeBytes);
-            using var nodeResource = new ValveResourceFormat.Resource();
+            using var nodeResource = new TestResource();
             nodeResource.Read(new MemoryStream(nodeBytes));
-            foreach (var o in ((WorldNode)nodeResource.DataBlock!).Data.GetArray("m_aggregateSceneObjects") ?? [])
+            foreach (var o in ((TestKv3Typed)nodeResource.DataBlock!).Data.GetArray("m_aggregateSceneObjects") ?? [])
             {
                 var keys = string.Join(" ", o.Children.Where(c => !c.Value.IsArray && c.Value.ValueType != ValveKeyValue.KVValueType.Collection).Select(c => $"{c.Key}={c.Value}"));
                 var m0 = o.GetArray("m_aggregateMeshes").FirstOrDefault();
@@ -34,17 +34,17 @@ public sealed class CubemapDrawCallKeysProbe(ITestOutputHelper output)
             if (!entry.DirectoryName.Contains("worldnodes", StringComparison.Ordinal))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new ValveResourceFormat.Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            foreach (var (mesh, _, _, _) in ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, _) in ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod())
                 foreach (var dc in mesh.Data.GetArray("m_sceneObjects").SelectMany(so => so.GetArray("m_drawCalls")))
                 {
                     var material = dc.GetStringProperty("m_material");
                     if (!seen.Add(material))
                         continue;
                     var keys = string.Join(" ", dc.Children.Where(c => !c.Value.IsArray && c.Value.ValueType != ValveKeyValue.KVValueType.Collection).Select(c => $"{c.Key}={c.Value}"));
-                    var fields = string.Join(" ", mesh.VBIB.VertexBuffers[0].InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}"));
-                    output.WriteLine($"{material}: {keys} | {fields} | streams {mesh.VBIB.VertexBuffers.Count}");
+                    var fields = string.Join(" ", mesh.Vbib.VertexBuffers[0].InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}"));
+                    output.WriteLine($"{material}: {keys} | {fields} | streams {mesh.Vbib.VertexBuffers.Count}");
                 }
         }
     }

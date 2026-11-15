@@ -1,7 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Maps;
 using ValvePak;
 using ValveKeyValue;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -31,7 +32,7 @@ public class WorldNodeModelsTests(ITestOutputHelper output)
         {
             if (!signatures.TryGetValue(path, out var f))
                 signatures[path] = f = compiled.Content.Read(path + "_c") is { } bytes
-                    ? new WorldNodeModels.MaterialFacts(MaterialAuthor.ExtractInputSignature(bytes), MaterialAuthor.ExtractDepthSignature(bytes))
+                    ? new WorldNodeModels.MaterialFacts(PackageMaterialAuthor.ExtractInputSignature(bytes), PackageMaterialAuthor.ExtractDepthSignature(bytes))
                     : new WorldNodeModels.MaterialFacts([], []);
             return f;
         }
@@ -96,9 +97,9 @@ public class WorldNodeModelsTests(ITestOutputHelper output)
                 var detail = string.Join(" ", valveBuffers.Zip(built.Buffers).Select((p, i) => $"{p.First.Type}{i} {p.First.Bytes.Length}/{p.Second.Bytes.Length}{(p.First.Bytes.AsSpan().SequenceEqual(p.Second.Bytes) ? " same" : "")}"));
                 tally["buffers"] = tally.GetValueOrDefault("buffers") + 1;
                 // The first decoded difference per vertex buffer: vertex, byte, layout field.
-                using var vr = new ValveResourceFormat.Resource();
+                using var vr = new TestResource();
                 vr.Read(new MemoryStream(valve));
-                var vbib = ((ValveResourceFormat.ResourceTypes.Model)vr.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh.VBIB;
+                var vbib = ((CompiledModel)vr.DataBlock!).EmbeddedMeshesAndLod().First().Mesh.Vbib;
                 // Exact but for color 1, the previous bake's per-vertex lighting (an input).
                 var lightingOnly = vbib.VertexBuffers.Count == built.RawVertexBuffers.Count && valveBuffers[^1].Bytes.AsSpan().SequenceEqual(built.Buffers[^1].Bytes);
                 for (var b = 0; b < Math.Min(vbib.VertexBuffers.Count, built.RawVertexBuffers.Count); b++)
@@ -162,10 +163,10 @@ public class WorldNodeModelsTests(ITestOutputHelper output)
         {
         var vrman = vr;
         package.ReadEntry(vrman, out var vrmanBytes);
-        using (var r = new ValveResourceFormat.Resource())
+        using (var r = new TestResource())
         {
             r.Read(new MemoryStream(vrmanBytes));
-            var data = r.GetBlockByType(ValveResourceFormat.BlockType.DATA)!;
+            var data = r.GetBlockByType("DATA")!;
             var groups = ResourceManifestAuthor.ReadData(vrmanBytes.AsSpan((int)data.Offset, (int)data.Size));
             output.WriteLine($"{vr.GetFullPath()}: {string.Join(" / ", groups.Select(g => string.Join(", ", g)))}");
         }
@@ -216,7 +217,7 @@ public class WorldNodeModelsTests(ITestOutputHelper output)
         {
             if (!facts.TryGetValue(path, out var f))
                 facts[path] = f = content.Read(path + "_c") is { } bytes
-                    ? new WorldNodeModels.MaterialFacts(MaterialAuthor.ExtractInputSignature(bytes), MaterialAuthor.ExtractDepthSignature(bytes))
+                    ? new WorldNodeModels.MaterialFacts(PackageMaterialAuthor.ExtractInputSignature(bytes), PackageMaterialAuthor.ExtractDepthSignature(bytes))
                     : new WorldNodeModels.MaterialFacts([], []);
             return f;
         }
@@ -247,13 +248,13 @@ public class WorldNodeModelsTests(ITestOutputHelper output)
                 continue;
             models++;
             package.ReadEntry(entry, out var valve);
-            using var resource = new ValveResourceFormat.Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(valve));
-            var mesh = ((ValveResourceFormat.ResourceTypes.Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh;
+            var mesh = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().First().Mesh;
             var dc = mesh.Data.GetArray("m_sceneObjects")[0].GetArray("m_drawCalls")[0];
-            var vb = mesh.VBIB.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-            var pos = ValveResourceFormat.Blocks.VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
-            var ib = mesh.VBIB.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+            var vb = mesh.Vbib.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+            var pos = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
+            var ib = mesh.Vbib.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
             var start = dc.GetInt32Property("m_nStartIndex");
             var off = dc.GetInt32Property("m_nAppliedIndexOffset");
             var idx = Enumerable.Range(start, dc.GetInt32Property("m_nIndexCount")).Select(i => (ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4)) - off).ToList();
@@ -263,7 +264,7 @@ public class WorldNodeModelsTests(ITestOutputHelper output)
                 continue;
             matched++;
             if (Environment.GetEnvironmentVariable("WNPROPS_DEPTH") == "1")
-                output.WriteLine($"DEPTH {agg.Material}: valve vbs {mesh.VBIB.VertexBuffers.Count}, depth elems {string.Join(",", Material(agg.Material).Depth.Select(e => e.Semantic))}");
+                output.WriteLine($"DEPTH {agg.Material}: valve vbs {mesh.Vbib.VertexBuffers.Count}, depth elems {string.Join(",", Material(agg.Material).Depth.Select(e => e.Semantic))}");
             var name = $"maps/{Path.GetFileNameWithoutExtension(vmap)}/worldnodes/{Path.GetFileNameWithoutExtension(entry.FileName)}.vmdl";
             var mine = WorldNodeModels.BuildPropAggregate(name, agg.ModelDraws, agg.TexcoordFormats, Material);
             var trees = WorldPhysicsAuthorTests.Trees(valve);

@@ -15,6 +15,12 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
+    <!-- Reference libraries some probes compare against or use (LZ4 levels, BC6H decode, glTF export, SPIR-V
+         to GLSL); they came through ValveResourceFormat before the split and are test-only. -->
+    <PackageReference Include="K4os.Compression.LZ4" Version="1.3.8" />
+    <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.6" />
+    <PackageReference Include="TinyBCSharp" Version="0.1.2" />
+    <PackageReference Include="Vortice.SpirvCross" Version="1.5.4" />
     <!-- D3D11 for BcD3D11DecodeProbe only (CS2's default renderer); same Silk.NET version as the GPU project's Vulkan. -->
     <PackageReference Include="Silk.NET.Direct3D11" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Direct3D.Compilers" Version="2.23.0" />

@@ -1,3 +1,4 @@
+using Source2.Compiler.Meshes;
 using System.Numerics;
 using Source2.Compiler.Maps;
 using Source2.Compiler.Physics;
@@ -146,18 +147,18 @@ public class CableReplay(ITestOutputHelper output)
         foreach (var file in path.Split(';'))
         {
             output.WriteLine("== " + file);
-            using (var res = new ValveResourceFormat.Resource())
+            using (var res = new TestResource())
             {
                 res.Read(file);
-                var model = (ValveResourceFormat.ResourceTypes.Model)res.DataBlock!;
-                foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
-                    foreach (var vb in mesh.VBIB.VertexBuffers)
+                var model = (CompiledModel)res.DataBlock!;
+                foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
+                    foreach (var vb in mesh.Vbib.VertexBuffers)
                     {
                         var field = vb.InputLayoutFields.First(f => f.SemanticName == "POSITION");
-                        var positions = ValveResourceFormat.Blocks.VBIB.GetVector3AttributeArray(vb, field);
+                        var positions = Vbib.GetVector3AttributeArray(vb, field);
                         output.WriteLine($"render vb {positions.Length} positions ({field.Format}): " + string.Join(" ", positions.Take(16).Select(x => $"({x.X:R},{x.Y:R},{x.Z:R})")));
                     }
-                var phys = model.GetEmbeddedPhys();
+                var phys = model.EmbeddedPhysics;
                 foreach (var mesh in phys?.Parts[0].Shape.Meshes ?? [])
                 {
                     var v = mesh.Shape.GetVertices().ToArray();

@@ -1,7 +1,6 @@
+using Source2.Compiler.Meshes;
 using System.Globalization;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -23,9 +22,9 @@ public class PhysMeshDumpProbe(ITestOutputHelper output)
             using var pkg = new Package();
             pkg.Read(vpk);
             pkg.ReadEntry(pkg.FindEntry(path)!, out var bytes);
-            using var r = new Resource();
+            using var r = new TestResource();
             r.Read(new MemoryStream(bytes));
-            var phys = ((Model)r.DataBlock!).GetEmbeddedPhys()!;
+            var phys = ((CompiledModel)r.DataBlock!).EmbeddedPhysics!;
             return [.. phys.Parts[0].Shape.Meshes.Select(m => (m.Shape.GetVertices().ToArray(), m.Shape.GetTriangles().ToArray().SelectMany(t => new[] { t.X, t.Y, t.Z }).ToArray()))];
         }
         var x = Read(a);

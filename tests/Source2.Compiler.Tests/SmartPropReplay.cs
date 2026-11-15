@@ -1,7 +1,6 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Maps;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -33,9 +32,9 @@ public class SmartPropReplay(ITestOutputHelper output)
             foreach (var entry in package.Entries.SelectMany(kv => kv.Value).Where(e => e.GetFullPath().EndsWith(".vwnod_c", StringComparison.Ordinal)))
             {
                 package.ReadEntry(entry, out var nodeBytes);
-                using var nodeResource = new Resource();
+                using var nodeResource = new TestResource();
                 nodeResource.Read(new MemoryStream(nodeBytes));
-                var data = ((WorldNode)nodeResource.DataBlock!).Data;
+                var data = ((TestKv3Typed)nodeResource.DataBlock!).Data;
                 output.WriteLine($"{entry.GetFullPath()}: {data.GetArray("m_sceneObjects")?.Count} objects, {data.GetArray("m_aggregateSceneObjects")?.Count} aggregates");
                 foreach (var o in (data.GetArray("m_aggregateSceneObjects") ?? []).Where(o => o.GetStringProperty("m_renderableModel")?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true))
                 {
@@ -48,11 +47,11 @@ public class SmartPropReplay(ITestOutputHelper output)
                     if (aggEntry == null)
                         continue;
                     package.ReadEntry(aggEntry, out var aggBytes);
-                    using var aggResource = new Resource();
+                    using var aggResource = new TestResource();
                     aggResource.Read(new MemoryStream(aggBytes));
-                    var aggModel = (Model)aggResource.DataBlock!;
+                    var aggModel = (CompiledModel)aggResource.DataBlock!;
                     output.WriteLine($"  model data: {string.Join(", ", aggModel.Data.Keys)}");
-                    foreach (var part in aggModel.GetEmbeddedPhys()?.Parts ?? [])
+                    foreach (var part in aggModel.EmbeddedPhysics?.Parts ?? [])
                     {
                         output.WriteLine($"  part: hulls {part.Shape.Hulls.Length} meshes {part.Shape.Meshes.Length}");
                         foreach (var mesh in part.Shape.Meshes)
@@ -74,9 +73,9 @@ public class SmartPropReplay(ITestOutputHelper output)
         {
             var file = node.Get<string>("smartPropFilename")!;
             var bytes = models.Read(Path.ChangeExtension(file, ".vsmart_c"))!;
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var root = ((BinaryKV3)resource.DataBlock!).Data;
+            var root = ((TestKv3Block)resource.DataBlock!).Data;
             var (configuration, parameters) = SmartPropEvaluator.NodeData(node);
             if (Environment.GetEnvironmentVariable("SMARTPROP_FILTER") is { Length: > 0 } only && !file.Contains(only, StringComparison.OrdinalIgnoreCase))
                 continue;

@@ -1,3 +1,4 @@
+using Source2.Compiler.Shaders.Vfx;
 using Source2.Compiler.Gpu;
 using Source2.Compiler.Lighting.Bake;
 using Xunit;
@@ -22,7 +23,7 @@ public class LpvShaderProbe(ITestOutputHelper output)
         var seen = new HashSet<string>();
         for (var st = 0; st < 64; st++)
         {
-            ValveResourceFormat.CompiledShader.VfxStaticComboData combo;
+            VfxStaticComboData combo;
             try { combo = rtx.GetStaticCombo(st); } catch (Exception) { continue; }
             for (var dy = 0; dy < 16; dy++)
             {

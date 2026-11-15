@@ -40,7 +40,7 @@ public class NoVisClusterProbe(ITestOutputHelper output)
             foreach (var b in built.Where(b => Path.GetFileNameWithoutExtension(b.Source.Entry.Material) == m))
                 output.WriteLine($"built node {b.Source.Header.NodeId} v {b.Vertices.Length / b.Source.Entry.Stride} streams {string.Join(",", b.Source.Entry.Streams.Select(x => $"{x.Name}/{x.First}/{x.Count}/{x.Type}"))}");
             if (built.FirstOrDefault(b => Path.GetFileNameWithoutExtension(b.Source.Entry.Material) == m) is { } one && content.Read(one.Source.Entry.Material + "_c") is { } bytes)
-                output.WriteLine($"signature {string.Join(",", Source2.Compiler.MaterialAuthor.ExtractInputSignature(bytes).Select(x => x.Semantic))}");
+                output.WriteLine($"signature {string.Join(",", PackageMaterialAuthor.ExtractInputSignature(bytes).Select(x => x.Semantic))}");
         }
         var (min, max) = (new Vector3(float.MaxValue), new Vector3(float.MinValue));
         foreach (var b in built)

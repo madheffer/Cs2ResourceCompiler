@@ -1,6 +1,5 @@
+using Source2.Compiler.KeyValues;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -28,13 +27,13 @@ public class ResourceDumpProbe(ITestOutputHelper output)
             package.Read(@"D:\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\pak01_dir.vpk");
             package.ReadEntry(package.FindEntry(p[0])!, out bytes);
         }
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
         var text = new System.Text.StringBuilder();
         text.AppendLine($"== {resource.ResourceType} resver {resource.Version} blocks {string.Join(' ', resource.Blocks.Select(b => $"{b.Type}@{b.Offset}+{b.Size}"))}");
         foreach (var block in resource.Blocks)
         {
-            if (block.Type is BlockType.RERL or BlockType.REDI)
+            if (block.Type is "RERL" or "REDI")
                 continue;
             text.AppendLine($"== {block.Type}");
             try

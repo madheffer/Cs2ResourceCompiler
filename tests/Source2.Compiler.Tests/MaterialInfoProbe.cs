@@ -1,6 +1,5 @@
+using Source2.Compiler.Materials;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -25,9 +24,9 @@ public class MaterialInfoProbe(ITestOutputHelper output)
             package.ReadEntry(entry, out bytes);
         else
             core.ReadEntry(core.FindEntry(name + "_c")!, out bytes);
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        var mat = (Material)resource.DataBlock!;
+        var mat = (CompiledMaterial)resource.DataBlock!;
         output.WriteLine($"shader {mat.ShaderName}");
         foreach (var (k, v) in mat.IntParams) output.WriteLine($"int {k} = {v}");
         foreach (var (k, v) in mat.FloatParams) output.WriteLine($"float {k} = {v}");
@@ -81,7 +80,7 @@ public class MaterialInfoProbe(ITestOutputHelper output)
         foreach (var entry in package.Entries!.GetValueOrDefault("vmat_c") ?? [])
         {
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             try
             {
                 resource.Read(new MemoryStream(bytes));
@@ -90,7 +89,7 @@ public class MaterialInfoProbe(ITestOutputHelper output)
             {
                 continue;
             }
-            if (resource.DataBlock is not Material mat || !mat.ShaderName.Equals(shader + ".vfx", StringComparison.OrdinalIgnoreCase))
+            if (resource.DataBlock is not CompiledMaterial mat || !mat.ShaderName.Equals(shader + ".vfx", StringComparison.OrdinalIgnoreCase))
                 continue;
             var value = mat.IntAttributes.TryGetValue(attribute, out var v) ? v.ToString() : "absent";
             var set = mat.IntParams.TryGetValue("g_nUVSet1", out var s) ? s.ToString() : "-";

@@ -2,7 +2,6 @@ using System.Numerics;
 using Source2.Compiler.Anim;
 using Source2.Compiler.Kv3;
 using ValvePak;
-using ValveResourceFormat;
 using Xunit;
 using Source2.Compiler.KeyValues;
 
@@ -25,9 +24,9 @@ public class NmClipCodecTests
         foreach (var e in Source2.Compiler.Io.VpkEntries.ByExtension(pak)["vnmclip_c"].Where(e => e.GetFullPath().StartsWith("animation/anims/viewmodel/", StringComparison.Ordinal)).Take(take))
         {
             pak.ReadEntry(e, out var bytes);
-            using var res = new Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(bytes));
-            var b = res.GetBlockByType(BlockType.DATA)!;
+            var b = res.GetBlockByType("DATA")!;
             yield return (e.GetFullPath(), bytes.AsSpan((int)b.Offset, (int)b.Size).ToArray());
         }
     }

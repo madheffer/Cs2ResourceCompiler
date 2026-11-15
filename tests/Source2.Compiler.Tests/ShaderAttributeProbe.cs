@@ -1,5 +1,5 @@
+using Source2.Compiler.Shaders.Vfx;
 using ValvePak;
-using ValveResourceFormat.CompiledShader;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -41,8 +41,7 @@ public class ShaderAttributeProbe(ITestOutputHelper output)
                 continue;
             }
             package.ReadEntry(entry, out var bytes);
-            using var program = new VfxProgramData();
-            program.Read($"{shader}_{Platform}_{part}.vcs", new MemoryStream(bytes));
+            var program = VfxProgramData.Read($"{shader}_{Platform}_{part}.vcs", bytes);
             foreach (var v in program.VariableDescriptions.Where(v => wanted.Contains(v.Name)))
                 output.WriteLine($"{shader} {part}: {v.Name} {v.VfxType} ({(int)v.VfxType}) source {v.VariableSource} ({(int)v.VariableSource}) register {v.RegisterType} ({(int)v.RegisterType})"
                     + $" int {string.Join(",", v.IntDefs)} float {string.Join(",", v.FloatDefs)}"
@@ -79,10 +78,10 @@ public class ShaderAttributeProbe(ITestOutputHelper output)
                 continue;
             }
             package.ReadEntry(entry, out var bytes);
-            using var program = new VfxProgramData();
+            VfxProgramData program;
             try
             {
-                program.Read($"{shader}.vcs", new MemoryStream(bytes));
+                program = VfxProgramData.Read($"{shader}.vcs", bytes);
             }
             catch (Exception e)
             {
@@ -115,7 +114,7 @@ public class ShaderAttributeProbe(ITestOutputHelper output)
             foreach (var vd in program.VariableDescriptions)
             {
                 string expr = "";
-                try { expr = vd.CompiledExpression.Length > 0 ? new ValveResourceFormat.Serialization.VfxEval.VfxEval(vd.CompiledExpression).DynamicExpressionResult : ""; } catch (Exception e) { expr = "?" + e.GetType().Name; }
+                try { expr = vd.CompiledExpression.Length > 0 ? new Source2.Compiler.Shaders.VfxEval(vd.CompiledExpression).DynamicExpressionResult : ""; } catch (Exception e) { expr = "?" + e.GetType().Name; }
                 var line = $"{vd.Name} source {vd.VariableSource} {vd.SourceString} type {vd.VfxType} reg {vd.RegisterType} off {vd.RegisterOffset} def i[{string.Join(",", vd.IntDefs)}] f[{string.Join(",", vd.FloatDefs)}] expr {expr}";
                 if (parts[1].Split(',').Any(w => line.Contains(w, StringComparison.OrdinalIgnoreCase)))
                     output.WriteLine($"VARIABLE {shader}: {line}");

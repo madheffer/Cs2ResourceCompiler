@@ -1,7 +1,5 @@
+using Source2.Compiler.Meshes;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -25,19 +23,19 @@ public class VertexStreamProbe(ITestOutputHelper output)
             using var pkg = new Package();
             pkg.Read(vpk);
             pkg.ReadEntry(pkg.FindEntry(path)!, out var bytes);
-            using var r = new Resource();
+            using var r = new TestResource();
             r.Read(new MemoryStream(bytes));
-            var mesh = ((Model)r.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh;
-            foreach (var vb in mesh.VBIB.VertexBuffers)
+            var mesh = ((CompiledModel)r.DataBlock!).EmbeddedMeshesAndLod().First().Mesh;
+            foreach (var vb in mesh.Vbib.VertexBuffers)
                 foreach (var f in vb.InputLayoutFields.Where(f => f.SemanticName.Equals(semantic, StringComparison.OrdinalIgnoreCase) && f.SemanticIndex == index))
                 {
                     output.WriteLine($"{Path.GetFileName(vpk)}: {vb.ElementCount} vertices, {f.Format} at {f.Offset}");
-                    var (_, count) = VBIB.GetFormatInfo(f);
+                    var (_, count) = Vbib.GetFormatInfo(f.Format);
                     return count switch
                     {
-                        2 => [.. VBIB.GetVector2AttributeArray(vb, f).Select(v => new[] { v.X, v.Y })],
-                        3 => [.. VBIB.GetVector3AttributeArray(vb, f).Select(v => new[] { v.X, v.Y, v.Z })],
-                        _ => [.. VBIB.GetVector4AttributeArray(vb, f).Select(v => new[] { v.X, v.Y, v.Z, v.W })],
+                        2 => [.. Vbib.GetVector2AttributeArray(vb, f).Select(v => new[] { v.X, v.Y })],
+                        3 => [.. Vbib.GetVector3AttributeArray(vb, f).Select(v => new[] { v.X, v.Y, v.Z })],
+                        _ => [.. Vbib.GetVector4AttributeArray(vb, f).Select(v => new[] { v.X, v.Y, v.Z, v.W })],
                     };
                 }
             return [];

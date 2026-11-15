@@ -1,10 +1,12 @@
+using Source2.Compiler.Materials;
+using Source2.Compiler.Textures;
+using Source2.Compiler.Shaders.Vfx;
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Silk.NET.Vulkan;
 using Source2.Compiler.Gpu;
-using ValveResourceFormat.CompiledShader;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -461,7 +463,7 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
                 }
             }
             // generic's _Globals_ of each world colour draw from its material (the package names it per draw call).
-            var programs = new Dictionary<string, (CubemapFacePipelines.Pass, ValveResourceFormat.CompiledShader.VfxRenderStateInfoPixelShader?)>(FacePrograms.Value);
+            var programs = new Dictionary<string, (CubemapFacePipelines.Pass, VfxRenderStateInfoPixelShader?)>(FacePrograms.Value);
             var drawMaterials = new Dictionary<int, (string, ValveProgram)>();
             foreach (var (sha, (material, globals)) in MaterialGlobals(actions, sha => File.ReadAllBytes(Path.Combine(dir, "blobs", sha + ".bin")), facesDir, spirvDir, failures, programs, drawMaterials))
             {
@@ -713,21 +715,21 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
     /// depth downsamples' pixel programs with their render state. generic's colour programs come per material
     /// (<see cref="MaterialGlobals"/>).
     /// </summary>
-    private static readonly Lazy<Dictionary<string, (CubemapFacePipelines.Pass, ValveResourceFormat.CompiledShader.VfxRenderStateInfoPixelShader?)>> FacePrograms = new(() =>
+    private static readonly Lazy<Dictionary<string, (CubemapFacePipelines.Pass, VfxRenderStateInfoPixelShader?)>> FacePrograms = new(() =>
     {
         var game = Path.Combine(Environment.GetEnvironmentVariable("CS2_DIR") ?? @"D:\Steam\steamapps\common\Counter-Strike Global Offensive", "game");
         using var csgo = new ValvePak.Package();
         csgo.Read(Path.Combine(game, "csgo", "shaders_vulkan_dir.vpk"));
         using var core = new ValvePak.Package();
         core.Read(Path.Combine(game, "core", "shaders_vulkan_dir.vpk"));
-        var map = new Dictionary<string, (CubemapFacePipelines.Pass, ValveResourceFormat.CompiledShader.VfxRenderStateInfoPixelShader?)>();
+        var map = new Dictionary<string, (CubemapFacePipelines.Pass, VfxRenderStateInfoPixelShader?)>();
         foreach (var compressed in new[] { 0, 1 })
             map[Sha1(ValveProgram.Load(csgo, "csgo_depth_only", "vulkan_50", "vs", new Dictionary<string, int>(), new Dictionary<string, int> { ["D_COMPRESSED_NORMALS_AND_TANGENTS"] = compressed }).Spirv)]
                 = (CubemapFacePipelines.Pass.DepthPrepass, null);
         void Pixel(ValvePak.Package pak, string shader, Dictionary<string, int> dynamics, CubemapFacePipelines.Pass pass)
         {
             var program = ValveProgram.Load(pak, shader, "vulkan_50", "ps", new Dictionary<string, int>(), dynamics);
-            map[Sha1(program.Spirv)] = (pass, (ValveResourceFormat.CompiledShader.VfxRenderStateInfoPixelShader)program.RenderState);
+            map[Sha1(program.Spirv)] = (pass, (VfxRenderStateInfoPixelShader)program.RenderState);
         }
         Pixel(csgo, "sky", new() { ["D_FOG_TYPE"] = 0 }, CubemapFacePipelines.Pass.Sky);
         Pixel(core, "downsample_depth", new() { ["D_MINMAX_CHECKER_2X2"] = 1, ["D_NON_MSAA_DEPTH"] = 1 }, CubemapFacePipelines.Pass.DownsampleHalf);
@@ -776,7 +778,7 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
     /// pawn's AO box). A depth-only draw is a sun cascade's when it draws into the shadow atlas (a depth target with
     /// no stencil), else the prepass's.
     /// </summary>
-    private static SceneDrawState? OurPipeline(JsonNode r, SceneDrawState theirs, Dictionary<string, (CubemapFacePipelines.Pass Pass, ValveResourceFormat.CompiledShader.VfxRenderStateInfoPixelShader? State)> programs)
+    private static SceneDrawState? OurPipeline(JsonNode r, SceneDrawState theirs, Dictionary<string, (CubemapFacePipelines.Pass Pass, VfxRenderStateInfoPixelShader? State)> programs)
     {
         if (theirs.PixelSpirv is { } ps)
             return programs.TryGetValue(Sha1(ps), out var p) && p.State != null ? CubemapFacePipelines.Apply(theirs, p.Pass, p.State) : null;
@@ -834,7 +836,7 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
     /// ShaderIDColors (ledger 120). By captured block hash: the material and our block.
     /// </summary>
     private static Dictionary<string, (string Material, byte[] Globals)> MaterialGlobals(IEnumerable<JsonNode> actions, Func<string, byte[]> blob, string facesDir, string spirvDir, List<string> failures,
-        Dictionary<string, (CubemapFacePipelines.Pass, ValveResourceFormat.CompiledShader.VfxRenderStateInfoPixelShader?)>? programs = null,
+        Dictionary<string, (CubemapFacePipelines.Pass, VfxRenderStateInfoPixelShader?)>? programs = null,
         Dictionary<int, (string Material, ValveProgram Program)>? draws = null)
     {
         var models = PackageModels.Value.GetOrAdd(Directory.GetFiles(facesDir, "*.vpk").Single(), LoadModels);
@@ -863,7 +865,7 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
             var module = File.ReadAllBytes(Path.Combine(spirvDir, $"{int.Parse(((string)ps["shader"]!).Split(' ')[^1], System.Globalization.CultureInfo.InvariantCulture):x}.spv"));
             if (!program.Spirv.AsSpan().SequenceEqual(module))
                 failures.Add($"{r["eid"]}: {materialPath}'s generic colour program is not the draw's module");
-            programs?.TryAdd(Sha1(program.Spirv), (CubemapFacePipelines.Pass.Colour, (ValveResourceFormat.CompiledShader.VfxRenderStateInfoPixelShader)program.RenderState));
+            programs?.TryAdd(Sha1(program.Spirv), (CubemapFacePipelines.Pass.Colour, (VfxRenderStateInfoPixelShader)program.RenderState));
             // Materials whose blocks are the same bytes share one captured block (the game uploads by content).
             if (had.Item2 != null && !had.Item2.AsSpan().SequenceEqual(globals))
                 failures.Add($"{r["eid"]}: block {sha[..8]} serves {had.Item1} and {materialPath}, whose blocks differ");
@@ -1064,10 +1066,10 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
     /// <summary>A .vtex_c's subresources (mip, slice) as RenderDoc dumps them: a cube or array mip's layers one after another.</summary>
     private static Func<int, int, byte[]> Subresources(byte[] vtex)
     {
-        using var resource = new ValveResourceFormat.Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(vtex));
-        var tex = (Texture)resource.DataBlock!;
-        var layers = tex.Depth > 1 ? tex.Depth : (tex.Flags & ValveResourceFormat.VTexFlags.CUBE_TEXTURE) != 0 ? 6 : 1;
+        var tex = (CompiledTexture)resource.DataBlock!;
+        var layers = tex.Depth > 1 ? tex.Depth : (tex.Flags & Source2.Compiler.Textures.VTexFlags.CUBE_TEXTURE) != 0 ? 6 : 1;
         var mips = new Dictionary<uint, byte[]>();
         foreach (var (level, _, _, _, size) in tex.GetEveryMipLevelMetrics())
         {
@@ -1118,17 +1120,17 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
             if (!entry.DirectoryName.Contains("worldnodes", StringComparison.OrdinalIgnoreCase))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new ValveResourceFormat.Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            foreach (var (mesh, _, _, _) in ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, _) in ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod())
             {
                 var draws = mesh.Data.GetArray("m_sceneObjects").SelectMany(so => so.GetArray("m_drawCalls"))
                     .Select(dc => (dc.GetInt32Property("m_nStartIndex"), dc.GetInt32Property("m_nIndexCount"), dc.GetInt32Property("m_nBaseVertex"), dc.GetStringProperty("m_material"))).ToList();
-                if (mesh.VBIB.VertexBuffers.Count > 0)
-                    models.Add(new PackageModel(entry.GetFullPath(), Sha1(mesh.VBIB.VertexBuffers[0].Data), draws,
-                        mesh.VBIB.VertexBuffers[0].Data, mesh.VBIB.IndexBuffers[0].Data, (int)mesh.VBIB.IndexBuffers[0].ElementSizeInBytes,
-                        [.. mesh.VBIB.VertexBuffers[0].InputLayoutFields.Select(x => new CubemapFaceVertexLayout.Field(x.SemanticName, x.SemanticIndex, CubemapFaceVertexLayout.FromDxgi(x.Format.ToString()), x.Offset))],
-                        mesh.VBIB.VertexBuffers[0].ElementSizeInBytes));
+                if (mesh.Vbib.VertexBuffers.Count > 0)
+                    models.Add(new PackageModel(entry.GetFullPath(), Sha1(mesh.Vbib.VertexBuffers[0].Data), draws,
+                        mesh.Vbib.VertexBuffers[0].Data, mesh.Vbib.IndexBuffers[0].Data, (int)mesh.Vbib.IndexBuffers[0].ElementSizeInBytes,
+                        [.. mesh.Vbib.VertexBuffers[0].InputLayoutFields.Select(x => new CubemapFaceVertexLayout.Field(x.SemanticName, x.SemanticIndex, CubemapFaceVertexLayout.FromDxgi(x.Format.ToString()), x.Offset))],
+                        mesh.Vbib.VertexBuffers[0].ElementSizeInBytes));
             }
         }
         return models;
@@ -1152,7 +1154,7 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
         return (program, block);
     }
 
-    private static Material LoadMaterial(string game, string path)
+    private static CompiledMaterial LoadMaterial(string game, string path)
     {
         foreach (var pak in new[] { Path.Combine(game, "csgo", "pak01_dir.vpk"), Path.Combine(game, "core", "pak01_dir.vpk") })
         {
@@ -1161,9 +1163,9 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
             if (p.FindEntry(path + "_c") is { } e)
             {
                 p.ReadEntry(e, out var bytes);
-                using var resource = new ValveResourceFormat.Resource();
+                using var resource = new TestResource();
                 resource.Read(new MemoryStream(bytes));
-                return (Material)resource.DataBlock!;
+                return (CompiledMaterial)resource.DataBlock!;
             }
         }
         throw new FileNotFoundException(path);
@@ -1273,7 +1275,7 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
     private static readonly Lazy<Dictionary<string, byte[]>> ProgramBlocks = new(() =>
     {
         var game = Path.Combine(Environment.GetEnvironmentVariable("CS2_DIR") ?? @"D:\Steam\steamapps\common\Counter-Strike Global Offensive", "game");
-        Material Load(string path)
+        CompiledMaterial Load(string path)
         {
             foreach (var pak in new[] { Path.Combine(game, "csgo", "pak01_dir.vpk"), Path.Combine(game, "core", "pak01_dir.vpk") })
             {
@@ -1282,14 +1284,14 @@ public sealed class CubemapFaceReplayTests(ITestOutputHelper output)
                 if (p.FindEntry(path + "_c") is { } e)
                 {
                     p.ReadEntry(e, out var bytes);
-                    using var resource = new ValveResourceFormat.Resource();
+                    using var resource = new TestResource();
                     resource.Read(new MemoryStream(bytes));
-                    return (Material)resource.DataBlock!;
+                    return (CompiledMaterial)resource.DataBlock!;
                 }
             }
             throw new FileNotFoundException(path);
         }
-        byte[] Globals(string vpk, string shader, Dictionary<string, int> dynamics, Material material, Dictionary<string, VfxExpression.Value> attributes, int size)
+        byte[] Globals(string vpk, string shader, Dictionary<string, int> dynamics, CompiledMaterial material, Dictionary<string, VfxExpression.Value> attributes, int size)
         {
             using var shaders = new ValvePak.Package();
             shaders.Read(Path.Combine(game, vpk, "shaders_vulkan_dir.vpk"));

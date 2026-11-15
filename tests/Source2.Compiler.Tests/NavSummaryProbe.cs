@@ -1,4 +1,3 @@
-using ValveResourceFormat.NavMesh;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -6,7 +5,7 @@ namespace Source2.Compiler.Tests;
 
 /// <summary>
 /// Exploration (<c>NAVSUMMARY=&lt;.vpk&gt;|&lt;path in it&gt;[|&lt;out .nav&gt;]</c>): a packaged
-/// .nav read with VRF's NavMeshFile: the generation parameters, the hulls, and each area's
+/// .nav read with VRF's Source2.Compiler.Maps.NavMesh.NavMeshFile: the generation parameters, the hulls, and each area's
 /// corners, connections and attributes. With a third part the raw file is saved too.
 /// </summary>
 public class NavSummaryProbe(ITestOutputHelper output)
@@ -22,7 +21,7 @@ public class NavSummaryProbe(ITestOutputHelper output)
         package.ReadEntry(package.FindEntry(p[1])!, out var bytes);
         if (p.Length > 2)
             File.WriteAllBytes(p[2], bytes);
-        var nav = new NavMeshFile();
+        var nav = new Source2.Compiler.Maps.NavMesh.NavMeshFile();
         nav.Read(new MemoryStream(bytes));
         output.WriteLine($"{bytes.Length} bytes, version {nav.Version}.{nav.SubVersion}, {nav.Areas.Count} areas, {nav.Ladders.Length} ladders, analyzed {nav.IsAnalyzed}");
         if (nav.GenerationParams is { } g)

@@ -1,7 +1,4 @@
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -49,12 +46,12 @@ public class PackageDiffProbe(ITestOutputHelper output)
             }
             List<(string, ValveKeyValue.KVObject)> Trees(byte[] bytes)
             {
-                using var r = new Resource();
+                using var r = new TestResource();
                 r.Read(new MemoryStream(bytes));
                 return [.. r.Blocks.Select(x => (x.Type.ToString(), x switch
                 {
-                    BinaryKV3 k => k.Data.Root,
-                    ResourceEditInfo2 ed => ed.Data?.Root,
+                    TestEditInfo ed => ed.Data?.Root,
+                    TestKv3Block k => k.Data.Root,
                     _ => null,
                 })).Where(x => x.Item2 != null).Select(x => (x.Item1, x.Item2!))];
             }

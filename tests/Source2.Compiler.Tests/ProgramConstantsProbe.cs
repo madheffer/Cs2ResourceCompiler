@@ -23,7 +23,7 @@ public class ProgramConstantsProbe(ITestOutputHelper output)
         foreach (var (name, offset, v) in prog.Constants.OrderBy(c => c.Offset))
         {
             string expr = "";
-            try { expr = v.CompiledExpression.Length > 0 ? new ValveResourceFormat.Serialization.VfxEval.VfxEval(v.CompiledExpression).DynamicExpressionResult : ""; } catch (Exception e) { expr = "?" + e.GetType().Name; }
+            try { expr = v.CompiledExpression.Length > 0 ? new Source2.Compiler.Shaders.VfxEval(v.CompiledExpression).DynamicExpressionResult : ""; } catch (Exception e) { expr = "?" + e.GetType().Name; }
             output.WriteLine($"CONST +{offset} {name} {v.VfxType} src {v.VariableSource} '{v.SourceString}' i[{string.Join(",", v.IntDefs)}] f[{string.Join(",", v.FloatDefs)}] {expr}");
         }
         foreach (var (kind, fields) in new[] { ("EVAL", prog.Sequence.Evaluated), ("STATE", prog.Sequence.RenderState) })
@@ -31,7 +31,7 @@ public class ProgramConstantsProbe(ITestOutputHelper output)
             {
                 var v = prog.Program.VariableDescriptions[f.VariableIndex];
                 string expr = "";
-                try { expr = v.CompiledExpression.Length > 0 ? new ValveResourceFormat.Serialization.VfxEval.VfxEval(v.CompiledExpression, features: prog.FeatureNames).DynamicExpressionResult : ""; } catch (Exception e) { expr = "?" + e.GetType().Name; }
+                try { expr = v.CompiledExpression.Length > 0 ? new Source2.Compiler.Shaders.VfxEval(v.CompiledExpression, features: prog.FeatureNames).DynamicExpressionResult : ""; } catch (Exception e) { expr = "?" + e.GetType().Name; }
                 output.WriteLine($"{kind} set {f.LayoutSet} slot {f.BindingSlot} ctl {f.Control} {v.Name} {v.VfxType} {v.RegisterType} src {v.VariableSource} srcidx {v.SourceIndex} '{v.SourceString}' i[{string.Join(",", v.IntDefs)}] f[{string.Join(",", v.FloatDefs)}] {expr}");
             }
     }

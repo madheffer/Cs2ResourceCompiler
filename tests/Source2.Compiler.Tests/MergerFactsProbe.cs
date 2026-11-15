@@ -1,3 +1,4 @@
+using Source2.Compiler.Shaders.Vfx;
 using System.Text.Json;
 using Source2.Compiler.Maps;
 using Xunit;
@@ -293,8 +294,8 @@ public class ShaderDefaultsProbe(ITestOutputHelper output)
             if (entry == null)
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var program = new ValveResourceFormat.CompiledShader.VfxProgramData();
-            program.Read($"{shader}.vcs", new MemoryStream(bytes));
+            var program = VfxProgramData.Read($"{shader}.vcs", bytes);
+            
             foreach (var v in program.VariableDescriptions.Where(v => parts[1].Split(',').Any(w => v.Name.Contains(w, StringComparison.OrdinalIgnoreCase))))
                 output.WriteLine($"{shader} {v.Name} {v.VfxType} i[{string.Join(",", v.IntDefs)}] f[{string.Join(",", v.FloatDefs)}] src {v.VariableSource}");
         }

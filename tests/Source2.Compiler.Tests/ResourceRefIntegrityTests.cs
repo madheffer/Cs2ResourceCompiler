@@ -1,10 +1,7 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler;
 using ValvePak;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 
 namespace Source2.Compiler.Tests;
@@ -25,10 +22,10 @@ namespace Source2.Compiler.Tests;
 /// </summary>
 public class ResourceRefIntegrityTests
 {
-    private static KVObject? DataRoot(Resource r)
+    private static KVObject? DataRoot(TestResource r)
     {
-        var d = r.GetBlockByType(BlockType.DATA);
-        return d is KeyValuesOrNTRO kvn ? kvn.Data : d?.AsKeyValueCollection();
+        var d = r.GetBlockByType("DATA");
+        return d is TestKv3Typed kvn ? kvn.Data : d?.AsKeyValueCollection();
     }
 
     /// <summary>Every <c>resource:</c>/<c>resource_name:</c>-flagged non-empty
@@ -66,7 +63,7 @@ public class ResourceRefIntegrityTests
     /// </summary>
     private static int AssertRefsResolve(byte[] compiled, string label)
     {
-        using var res = new Resource { FileName = label };
+        using var res = new TestResource { FileName = label };
         res.Read(new MemoryStream(compiled));
 
         var rerl = res.ExternalReferences?.ResourceRefInfoList ?? [];
@@ -110,7 +107,7 @@ public class ResourceRefIntegrityTests
     {
         var vpcf = CS2Fixtures.Template(".vpcf_c");
         if (vpcf is null) { CS2Fixtures.Skip("a compiled .vpcf_c"); return; }
-        using var before = new Resource();
+        using var before = new TestResource();
         before.Read(new MemoryStream(vpcf));
 
         // Rename every material ref the template carries into our own namespace,
@@ -121,9 +118,9 @@ public class ResourceRefIntegrityTests
                 map[n] = "materials/vpkedit_hm/" + Path.GetFileName(n);
         Assert.NotEmpty(map);
 
-        var rewritten = ResourceBuilder.RewriteParticlePaths(vpcf, map);
+        var rewritten = PackageResourceBuilder.RewriteParticlePaths(vpcf, map);
 
-        using var after = new Resource();
+        using var after = new TestResource();
         after.Read(new MemoryStream(rewritten));
         var names = (after.ExternalReferences?.ResourceRefInfoList ?? [])
             .Select(r => r.Name).ToList();
@@ -142,7 +139,7 @@ public class ResourceRefIntegrityTests
         var stockVmat = CS2Fixtures.Template(".vmat_c");
         if (stockVmat is null) { CS2Fixtures.Skip("a compiled .vmat_c"); return; }
 
-        var def = new ResourceBuilder.MaterialDef
+        var def = new PackageResourceBuilder.MaterialDef
         {
             Name = "materials/vpkedit/refcheck.vmat",
             Shader = "csgo_complex.vfx",
@@ -150,7 +147,7 @@ public class ResourceRefIntegrityTests
         def.TextureParams["g_tColor"] = "materials/vpkedit/refcheck_color.vtex";
         def.TextureParams["g_tNormal"] = "materials/vpkedit/refcheck_normal.vtex";
 
-        var mat = ResourceBuilder.BuildMaterial(stockVmat, def);
+        var mat = PackageResourceBuilder.BuildMaterial(stockVmat, def);
         Assert.Equal(2, AssertRefsResolve(mat, "BuildMaterial output"));
     }
 
@@ -176,23 +173,23 @@ public class ResourceRefIntegrityTests
         for (var i = 0; i < raw.Length; i++)
             raw[i] = (byte)(i * 7);
 
-        var def = new ResourceBuilder.TextureDef
+        var def = new PackageResourceBuilder.TextureDef
         {
             RawRgba = raw,
             RawWidth = w,
             RawHeight = h,
-            Compression = ResourceBuilder.TextureCompression.BC7,
-            Bc7Mode = ResourceBuilder.Bc7EncoderMode.Cpu,
+            Compression = PackageResourceBuilder.TextureCompression.BC7,
+            Bc7Mode = PackageResourceBuilder.Bc7EncoderMode.Cpu,
             GenerateMipmaps = true,
             SourceName = "materials/vpkedit/probe_color.png",
         };
 
-        var vtex = ResourceBuilder.BuildTexture(template!, def);
+        var vtex = PackageResourceBuilder.BuildTexture(template!, def);
 
-        using var res = new Resource { FileName = "probe.vtex_c" };
+        using var res = new TestResource { FileName = "probe.vtex_c" };
         res.Read(new MemoryStream(vtex));
 
-        var edit = Assert.IsType<ResourceEditInfo2>(res.EditInfo);
+        var edit = Assert.IsType<TestEditInfo>(res.EditInfo);
 
         // Ours, with the CRC of the bytes we actually encoded.
         var input = Assert.Single(edit.InputDependencies);
@@ -239,11 +236,11 @@ public class ResourceRefIntegrityTests
           + "<path d=\"M 8 8 L 56 8 L 56 56 L 8 56 Z\" fill=\"#ffffff\"/></svg>");
 
         const string shipAs = "panorama/images/icons/equipment/vpkedit_probe.svg";
-        var vsvg = ResourceBuilder.BuildPanoramaSvg(template, svg, shipAs);
+        var vsvg = PackageResourceBuilder.BuildPanoramaSvg(template, svg, shipAs);
 
-        using var res = new Resource { FileName = "probe.vsvg_c" };
+        using var res = new TestResource { FileName = "probe.vsvg_c" };
         res.Read(new MemoryStream(vsvg));
-        var edit = Assert.IsType<ResourceEditInfo2>(res.EditInfo);
+        var edit = Assert.IsType<TestEditInfo>(res.EditInfo);
 
         var paths = edit.InputDependencies.Select(d => d.ContentRelativeFilename).ToList();
         Assert.Contains(shipAs, paths);
@@ -261,7 +258,7 @@ public class ResourceRefIntegrityTests
     /// compiled. RC records a fixed set of sibling probes next to the source
     /// (CRC 0 / optional / not-exists) plus the real file - mirrored, because
     /// each probe is an honest "this file does not exist". Also asserts the pin
-    /// survives <see cref="ResourceBuilder.ModernizeVsnd"/>, which is what the
+    /// survives <see cref="PackageResourceBuilder.ModernizeVsnd"/>, which is what the
     /// override path actually ships.
     /// </summary>
     [Fact]
@@ -300,13 +297,13 @@ public class ResourceRefIntegrityTests
         var wavBytes = wav.ToArray();
 
         const string shipAs = "sounds/weapons/ak47/vpkedit_probe.wav";
-        var built = ResourceBuilder.BuildSound(template!, wavBytes, shipAs);
+        var built = PackageResourceBuilder.BuildSound(template!, wavBytes, shipAs);
 
-        foreach (var bytes in new[] { built, ResourceBuilder.ModernizeVsnd(built) })
+        foreach (var bytes in new[] { built, PackageResourceBuilder.ModernizeVsnd(built) })
         {
-            using var res = new Resource { FileName = "probe.vsnd_c" };
+            using var res = new TestResource { FileName = "probe.vsnd_c" };
             res.Read(new MemoryStream(bytes));
-            var edit = Assert.IsType<ResourceEditInfo2>(res.EditInfo);
+            var edit = Assert.IsType<TestEditInfo>(res.EditInfo);
             var paths = edit.InputDependencies.Select(d => d.ContentRelativeFilename).ToList();
 
             var real = Assert.Single(edit.InputDependencies, d => !d.Optional);
@@ -328,7 +325,7 @@ public class ResourceRefIntegrityTests
     /// <summary>Input-dependency paths a compiled resource declares.</summary>
     private static List<string> ReadInputPaths(byte[] compiled)
     {
-        using var res = new Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(compiled));
         return (res.EditInfo?.InputDependencies ?? [])
             .Select(d => d.ContentRelativeFilename)
@@ -365,8 +362,8 @@ public class ResourceRefIntegrityTests
                 byte[] bytes;
                 try { package.ReadEntry(e, out bytes); }
                 catch { continue; }
-                Resource res;
-                try { res = new Resource(); res.Read(new MemoryStream(bytes)); }
+                TestResource res;
+                try { res = new TestResource(); res.Read(new MemoryStream(bytes)); }
                 catch { continue; }
                 using (res)
                 {

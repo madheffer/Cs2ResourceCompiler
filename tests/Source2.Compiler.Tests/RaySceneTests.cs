@@ -95,9 +95,9 @@ public class HaltonSamplesTests(Xunit.Abstractions.ITestOutputHelper output)
         var entry = package.FindEntry("textures/dev/scrambled_halton.vdata_c");
         Assert.NotNull(entry);
         package.ReadEntry(entry!, out var bytes);
-        using var resource = new ValveResourceFormat.Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        var data = (ValveResourceFormat.ResourceTypes.BinaryKV3)resource.DataBlock!;
+        var data = (TestKv3Block)resource.DataBlock!;
         foreach (var c in data.Data.Root.Children)
             output.WriteLine($"{c.Key}: {c.Value.ValueType} {(c.Value.ValueType == ValveKeyValue.KVValueType.BinaryBlob ? c.Value.AsBlob().Length : 0)}");
     }
