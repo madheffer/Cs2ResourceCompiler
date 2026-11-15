@@ -158,6 +158,20 @@ public static class ResourceRefs
         return list;
     }
 
+    /// <summary>
+    /// A RERL block naming <paramref name="paths"/> (empty ones dropped, then the first of each case-blind
+    /// duplicate kept), each under its engine id, sorted by V_stricmp_fast as RERL's one writer (rc 18016c0e0)
+    /// sorts them; null when nothing is left, unless <paramref name="keepEmpty"/> (a map root writes its RERL
+    /// whatever it holds).
+    /// </summary>
+    public static ResourceBlock? Block(IEnumerable<string> paths, bool keepEmpty = false)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var refs = EditInfo.Red2Sorted(paths.Where(p => !string.IsNullOrEmpty(p) && seen.Add(p)), p => p)
+            .Select(p => (Source2ResourceId.ForPath(p), p)).ToList();
+        return refs.Count == 0 && !keepEmpty ? null : new ResourceBlock("RERL", Write(refs, 0));
+    }
+
     /// <summary>A RERL block to be placed at file offset <paramref name="start"/>.</summary>
     public static byte[] Write(IReadOnlyList<(ulong Id, string Name)> refs, long start)
     {

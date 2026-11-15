@@ -1,0 +1,78 @@
+// Ported from ValveResourceFormat (MIT, https://github.com/ValveResourceFormat/ValveResourceFormat),
+// CompiledShader/: the resource (KV3) layout only.
+using System.Text;
+using ValveKeyValue;
+using Source2.Compiler.KeyValues;
+
+namespace Source2.Compiler.Shaders.Vfx;
+
+/// <summary>
+/// Contains a definition for a shader combo, whether static, dynamic, or feature-specific.
+/// </summary>
+/// <remarks>
+/// Features may contain names describing each state.
+/// </remarks>
+public class VfxCombo
+{
+    /// <summary>Gets the index in the owning array.</summary>
+    public int Index { get; }
+    /// <summary>Gets or sets the offset this combo contributes to a combo id per state step.</summary>
+    public long ComboIndexValue { get; set; } // set after loading all combos
+    /// <summary>Gets the combo name.</summary>
+    public string Name { get; }
+    /// <summary>Gets the alias name.</summary>
+    public string AliasName { get; }
+    /// <summary>Gets the combo type (static or dynamic).</summary>
+    public VfxComboType ComboType { get; }
+    /// <summary>Gets the minimum value in the combo range.</summary>
+    public int RangeMin { get; }
+    /// <summary>Gets the maximum value in the combo range.</summary>
+    public int RangeMax { get; }
+    /// <summary>Gets the combo source type.</summary>
+    public int ComboSourceType { get; } // VfxStaticComboSourceType or VfxDynamicComboSourceType
+    /// <summary>Gets the feature comparison value.</summary>
+    public int FeatureComparisonValue { get; }
+    /// <summary>Gets the feature index.</summary>
+    public int FeatureIndex { get; }
+    /// <summary>Gets the display name of each state.</summary>
+    public string[] StateNames { get; } = [];
+
+    /// <summary>
+    /// Initializes a new instance from <see cref="KVObject"/> data.
+    /// </summary>
+    public VfxCombo(KVObject data, int index, int vcsVersion)
+    {
+        Index = index;
+        Name = data.GetStringProperty("m_szName");
+        AliasName = data.GetStringProperty("m_szAliasName") ?? string.Empty;
+        ComboType = data.GetEnumValue<VfxComboType>("m_comboType", normalize: true, stripExtension: "Type");
+        RangeMin = data.GetInt32Property("m_nMin");
+        RangeMax = data.GetInt32Property("m_nMax");
+        ComboSourceType = NormalizeComboSourceType(data.GetInt32Property("m_shaderComboSourceType"), vcsVersion);
+        FeatureIndex = data.GetInt32Property("m_iFeatureIndex");
+        StateNames = data.GetArray<string>("m_stringArray")!;
+
+        ComboIndexValue = data.GetIntegerProperty("m_nComboIndexValue");
+
+        if (ComboSourceType is ((int)VfxStaticComboSourceType.__SET_BY_FEATURE_EQ__) or ((int)VfxStaticComboSourceType.__SET_BY_FEATURE_NE__))
+        {
+            FeatureComparisonValue = data.GetInt32Property("m_nCompareValue");
+        }
+    }
+
+    private int NormalizeComboSourceType(int comboSourceType, int vcsVersion)
+    {
+        if (vcsVersion >= 71 && ComboType == VfxComboType.Static)
+        {
+            return NormalizeStaticComboSourceType(comboSourceType);
+        }
+
+        return comboSourceType;
+    }
+
+    /// <summary>
+    /// Maps a static combo source type from version 71 and newer, which dropped two entries, onto <see cref="VfxStaticComboSourceType"/>.
+    /// </summary>
+    internal static int NormalizeStaticComboSourceType(int comboSourceType)
+        => comboSourceType >= (int)VfxStaticComboSourceType.S_BINDLESS_RUNTIME ? comboSourceType + 2 : comboSourceType;
+}

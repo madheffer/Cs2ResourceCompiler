@@ -71,6 +71,8 @@
     <!-- rsqrtps per CPU vendor, for normal maps (Texture/Rc/RcNormalMaps.cs), and the KV3 string table. -->
     <EmbeddedResource Include="Texture/Rc/rsqrt_amd.txt;Texture/Rc/rsqrt_intel.txt" LogicalName="Source2.Compiler.RcTexture.%(Filename)%(Extension)" />
     <EmbeddedResource Include="Containers/KnownStrings.txt" LogicalName="Source2.Compiler.KnownStrings.txt" />
+    <!-- The zstd dictionaries of CS2's shader bytecode, from materialsystem2.dll (tools/re/vfx_zstd_dicts.py). -->
+    <EmbeddedResource Include="Shaders/Vfx/Resources/vfx_zstd_*.bin" LogicalName="%(Filename)%(Extension)" WithCulture="false" />
     <!-- The GPU's measured BC1-BC5 decode (Textures.Decoding.BcGpuDecode; tools/re/bc_gpu_tables.py). -->
     <!-- WithCulture false: MSBuild would read ".bin" in the name as a culture and move them to a satellite assembly. -->
     <EmbeddedResource Include="Texture/Decoding/Gpu/*.bin.gz" LogicalName="Source2.Compiler.BcGpu.%(Filename)%(Extension)" WithCulture="false" />

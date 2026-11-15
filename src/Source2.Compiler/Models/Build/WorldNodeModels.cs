@@ -755,7 +755,7 @@ public static class WorldNodeModels
     }
 
     /// <summary>A stream name the tools layout takes when the main layout leaves it.</summary>
-    internal static bool ToolsStream(string name) => ToolsNames.Contains(name) || name.StartsWith("VertexPaint", StringComparison.OrdinalIgnoreCase);
+    public static bool ToolsStream(string name) => ToolsNames.Contains(name) || name.StartsWith("VertexPaint", StringComparison.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> ToolsNames = new(
         ["position", "texcoord", "color", "normal", "tangent", "blendweight", "blendweights", "blendindices"], StringComparer.OrdinalIgnoreCase);
