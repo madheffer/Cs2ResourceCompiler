@@ -179,7 +179,7 @@ public static class WorldNodeModelTrees
         var tools = KVObject.Array();
         var toolsBlock = blockBase + model.VertexBuffers.Count + model.IndexBuffers.Count;
         foreach (var tb in model.ToolsBuffers)
-            tools.Add(Buffer(toolsBlock++, tb.Count, tb.Stride, tb.Meshopt, false, U32(1), Layout(tb.Layout)));
+            tools.Add(Buffer(toolsBlock++, tb.Count, tb.Stride, tb.Meshopt, false, U32(1), Layout(tb.Layout), tb.Zstd));
         mesh.Add("m_toolsBuffers", tools);
         mesh.Add("m_nVBIBBlock", I32(-1));
         mesh.Add("m_nToolsVBBlock", I32(-1));
@@ -229,7 +229,7 @@ public static class WorldNodeModelTrees
         return layout;
     }
 
-    private static KVObject Buffer(int block, int count, int size, bool meshopt, bool pooled, KVObject usage, KVObject layout)
+    private static KVObject Buffer(int block, int count, int size, bool meshopt, bool pooled, KVObject usage, KVObject layout, bool zstd = false)
     {
         var o = KVObject.Collection();
         o.Add("m_nBlockIndex", I32(block));
@@ -238,7 +238,7 @@ public static class WorldNodeModelTrees
         o.Add("m_bMeshoptCompressed", new KVObject(meshopt));
         o.Add("m_bMeshoptIndexSequence", new KVObject(false));
         o.Add("m_nMeshoptMeshletEncodeVersion", I32(-1));
-        o.Add("m_bCompressedZSTD", new KVObject(false));
+        o.Add("m_bCompressedZSTD", new KVObject(zstd));
         o.Add("m_bCreateBufferSRV", new KVObject(false));
         o.Add("m_bCreateBufferUAV", new KVObject(false));
         o.Add("m_bCreateRawBuffer", new KVObject(false));

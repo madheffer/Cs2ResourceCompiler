@@ -3,6 +3,13 @@
 The `Source2.Compiler` package. Versions are `0.1.<commit count of main>`; one entry per published
 version that changes something a host sees.
 
+## Unreleased (zstd tools buffers)
+
+### Added
+- `WorldNodeModel.VertexBuffer.Zstd` (m_bCompressedZSTD): a non-map model's tools buffer, when meshopt-encoded, is
+  Zstd-compressed again at the maximum level and kept when smaller, as resourcecompiler writes it (ledger 315;
+  Mako's cable models).
+
 ## Unreleased (no VRF; the map compiler leaves)
 
 The package references no ValveResourceFormat and contains no map compiler. Map types (Maps, Lighting,

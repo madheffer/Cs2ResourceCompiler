@@ -314,7 +314,14 @@ public static class WorldNodeModels
                 }
                 var tbBytes = totalVertices > 0 ? MeshoptEncoder.EncodeVertexBuffer(tb, totalVertices, stride) : [];
                 var tbMeshopt = tbBytes.Length < totalVertices * stride;
-                toolsBuffers.Add((new WorldNodeModel.VertexBuffer(totalVertices, stride, tbMeshopt, [.. toolSlots.Select(l => l.Field)]), tbMeshopt ? tbBytes : tb));
+                // The tools buffer is written with WriteVertexBuffer's Zstd byte set (rc 0923 1802ef89b: layout 3, byte 1;
+                // 1802ec350): the meshopt bytes, when they were kept, go through ZSTD_compress at ZSTD_maxCLevel and the
+                // result is kept when smaller (Mako's cable: 24 bytes, m_bCompressedZSTD).
+                var tbZstd = false;
+                if (tbMeshopt && ZstdCompress(tbBytes) is { } packed && packed.Length < tbBytes.Length)
+                    (tbBytes, tbZstd) = (packed, true);
+                toolsBuffers.Add((new WorldNodeModel.VertexBuffer(totalVertices, stride, tbMeshopt, [.. toolSlots.Select(l => l.Field)]) { Zstd = tbZstd },
+                                  tbMeshopt ? tbBytes : tb));
             }
         }
         foreach (var (_, bytes) in toolsBuffers)
@@ -752,6 +759,21 @@ public static class WorldNodeModels
             offset += FormatSize(format);
         }
         return tools;
+    }
+
+    // V_ZSTD_compress (the simple API, ZSTD_compress) at V_ZSTD_maxCLevel.
+    private static unsafe byte[]? ZstdCompress(byte[] source)
+    {
+        var bound = (int)ZstdSharp.Unsafe.Methods.ZSTD_compressBound((nuint)source.Length);
+        var output = new byte[bound];
+        fixed (byte* src = source)
+        fixed (byte* dst = output)
+        {
+            var written = ZstdSharp.Unsafe.Methods.ZSTD_compress(dst, (nuint)bound, src, (nuint)source.Length, ZstdSharp.Unsafe.Methods.ZSTD_maxCLevel());
+            if (ZstdSharp.Unsafe.Methods.ZSTD_isError(written))
+                return null;
+            return output.AsSpan(0, (int)written).ToArray();
+        }
     }
 
     /// <summary>A stream name the tools layout takes when the main layout leaves it.</summary>

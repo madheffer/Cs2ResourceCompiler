@@ -29,7 +29,11 @@ public sealed record WorldNodeModel(
     public IReadOnlyList<VertexBuffer> ToolsBuffers { get; init; } = [];
 
     /// <summary>A vertex buffer: element count and size, meshopt or raw, its layout.</summary>
-    public sealed record VertexBuffer(int Count, int Stride, bool Meshopt, IReadOnlyList<LayoutField> Layout);
+    public sealed record VertexBuffer(int Count, int Stride, bool Meshopt, IReadOnlyList<LayoutField> Layout)
+    {
+        /// <summary>m_bCompressedZSTD: the meshopt bytes Zstd'd again (a tools buffer's, when smaller).</summary>
+        public bool Zstd { get; init; }
+    }
 
     /// <summary>An index buffer: element count and size, meshopt or raw, pooled.</summary>
     public sealed record IndexBuffer(int Count, int ElementSize, bool Meshopt, bool Pooled);
