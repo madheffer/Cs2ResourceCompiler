@@ -1,5 +1,5 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Io;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Maps;
 

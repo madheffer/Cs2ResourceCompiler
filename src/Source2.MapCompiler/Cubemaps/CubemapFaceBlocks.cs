@@ -1,9 +1,7 @@
+using Source2.Compiler.KeyValues;
 using System.Globalization;
 using System.Numerics;
 using System.Text.RegularExpressions;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Cubemaps;
 
@@ -149,8 +147,8 @@ public static class CubemapFaceBlocks
         if (sky != null && (sky("tint_color") is { } tint && V(tint) != new Vector3(255, 255, 255) || sky("brightnessscale") is { } scale && F(scale) != 1f))
             throw new NotSupportedException("a tinted env_sky: SkyTint from the entity is not read");
         skyMaterial = sky == null ? null : sky("skyname") ?? throw new InvalidDataException("env_sky has no skyname");
-        using var worldResource = Read(package, package.Entries!.GetValueOrDefault("vwrld_c")!.Single());
-        var lightingInfo = ((World)worldResource.DataBlock!).Data.GetSubCollection("m_worldLightingInfo");
+        var worldResource = Read(package, package.Entries!.GetValueOrDefault("vwrld_c")!.Single());
+        var lightingInfo = (worldResource.Kv3("DATA") ?? throw new InvalidDataException("world.vwrld_c has no KV3 DATA block.")).GetSubCollection("m_worldLightingInfo");
         var uvScale = lightingInfo.GetSubCollection("m_vLightmapUvScale").ToVector2();
         int lightmapWidth, lightmapHeight;
         if (!lightingInfo.GetBooleanProperty("m_bHasLightmaps"))
@@ -162,8 +160,8 @@ public static class CubemapFaceBlocks
         else
         {
             var irradiance = (package.Entries!.GetValueOrDefault("vtex_c") ?? []).Single(e => e.DirectoryName.EndsWith("lightmaps", StringComparison.Ordinal) && e.FileName == "irradiance");
-            using var lightmap = Read(package, irradiance);
-            var tex = (Texture)lightmap.DataBlock!;
+            package.ReadEntry(irradiance, out var lightmapBytes);
+            var tex = Source2.Compiler.Textures.CompiledTexture.Read(lightmapBytes);
             (lightmapWidth, lightmapHeight) = (tex.Width, tex.Height);
         }
         var minSpec = Regex.Match(gameinfo, @"BakedLighting\s*\{[^}]*?MinSpecLightmapSize\s+(\d+)") is { Success: true } m
@@ -182,12 +180,10 @@ public static class CubemapFaceBlocks
         return cubes;
     }
 
-    private static Resource Read(ValvePak.Package package, ValvePak.PackageEntry entry)
+    private static CompiledResource Read(ValvePak.Package package, ValvePak.PackageEntry entry)
     {
         package.ReadEntry(entry, out var bytes);
-        var resource = new Resource { FileName = entry.GetFullPath() };
-        resource.Read(new MemoryStream(bytes));
-        return resource;
+        return CompiledResource.Read(bytes);
     }
 
     /// <summary>Face <paramref name="face"/> (0 to 5: +X, -X, +Y, -Y, +Z, -Z) of the cube at the scene's origin.</summary>

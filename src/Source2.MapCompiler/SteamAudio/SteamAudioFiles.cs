@@ -305,7 +305,7 @@ public static class SteamAudioFiles
         root.Add("m_compressedClusteredData", Compressed());
         root.Add("m_movables", Movables());
         root.Add("m_pProbeBatch", KVObject.Blob(batch));
-        return Kv3V5Writer.Write(root, GenericFormat);
+        return Kv3BlockWriter.Write(root, GenericFormat);
     }
 
     /// <summary>A <c>.sapaths</c> holding <paramref name="batch"/>.</summary>
@@ -317,6 +317,6 @@ public static class SteamAudioFiles
         probes.Add("m_pProbeBatch", KVObject.Blob(batch));
         root.Add("m_probes", probes);
         root.Add("m_movables", Movables());
-        return Kv3V5Writer.Write(root, GenericFormat);
+        return Kv3BlockWriter.Write(root, GenericFormat);
     }
 }

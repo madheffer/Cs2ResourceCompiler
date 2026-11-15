@@ -1,4 +1,3 @@
-using ValveResourceFormat;
 using Source2.Compiler.Kv3;
 using Source2.Compiler.KeyValues;
 
@@ -6,18 +5,16 @@ namespace Source2.Compiler.Cli;
 
 /// <summary>
 /// <c>kv3-types &lt;in.*_c&gt; [BLOCK]</c>: prints a KV3 v5 block's tree with each node's wire type,
-/// the detail VRF's reader folds away (INT32 vs UINT32 vs the zero/one codes, typed array kinds).
+/// the detail a KV tree folds away (INT32 vs UINT32 vs the zero/one codes, typed array kinds).
 /// </summary>
 internal static class Kv3Types
 {
     public static int Run(string[] args)
     {
         var bytes = File.ReadAllBytes(args[0]);
-        var type = args.Length > 1 ? Enum.Parse<BlockType>(args[1], ignoreCase: true) : BlockType.DATA;
-        using var res = new Resource { FileName = Path.GetFileName(args[0]) };
-        res.Read(new MemoryStream(bytes));
-        var block = res.Blocks.First(b => b.Type == type);
-        var t = Kv3Tree.Read(bytes.AsSpan((int)block.Offset, (int)block.Size).ToArray());
+        var type = args.Length > 1 ? args[1].ToUpperInvariant() : "DATA";
+        var block = ResourceFile.Read(bytes)[type] ?? throw new InvalidDataException($"{args[0]} has no {type} block.");
+        var t = Kv3Tree.Read(block.Data);
         void Walk(Kv3Node n, string key, int depth)
         {
             var value = n.Type == Kv3Type.String ? $" \"{(n.StringId >= 0 ? t.Strings[n.StringId] : "")}\""

@@ -1,9 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Cubemaps;
 
@@ -28,7 +27,7 @@ public static class CubemapPackageAggregates
     private static string Text(KVObject o, string key)
         => o.Children.FirstOrDefault(c => c.Key == key) is { } c ? (c.Value.IsArray ? string.Join("|", c.Value.Values.Select(v => v.ToString(System.Globalization.CultureInfo.InvariantCulture))) : c.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)) : "";
 
-    private static IEnumerable<(string Node, KVObject Aggregate, Model Model)> Objects(ValvePak.Package package, bool byPath)
+    private static IEnumerable<(string Node, KVObject Aggregate, CompiledModel Model)> Objects(ValvePak.Package package, bool byPath)
     {
         var entries = package.Entries!.SelectMany(kv => kv.Value).Where(e => e.GetFullPath().EndsWith(".vwnod_c", StringComparison.Ordinal));
         if (byPath)
@@ -36,15 +35,12 @@ public static class CubemapPackageAggregates
         foreach (var entry in entries)
         {
             package.ReadEntry(entry, out var nodeBytes);
-            using var nodeResource = new Resource();
-            nodeResource.Read(new MemoryStream(nodeBytes));
-            foreach (var o in ((WorldNode)nodeResource.DataBlock!).Data.GetArray("m_aggregateSceneObjects") ?? [])
+            var node = CompiledResource.Read(nodeBytes).Kv3("DATA") ?? throw new InvalidDataException($"{entry.GetFullPath()} has no KV3 DATA block.");
+            foreach (var o in node.GetArray("m_aggregateSceneObjects") ?? [])
             {
                 var name = o.GetStringProperty("m_renderableModel") ?? "";
                 package.ReadEntry(package.FindEntry(Path.ChangeExtension(name, ".vmdl_c"))!, out var bytes);
-                using var resource = new Resource();
-                resource.Read(new MemoryStream(bytes));
-                yield return (entry.FileName, o, (Model)resource.DataBlock!);
+                yield return (entry.FileName, o, CompiledModel.Read(bytes));
             }
         }
     }
@@ -58,10 +54,10 @@ public static class CubemapPackageAggregates
             var draws = new List<AggregateCulling.DrawCall>();
             long vertexBytes = 0;
             uint vertexStride = 0;
-            foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
             {
-                if (mesh.VBIB.VertexBuffers.Count > 0 && vertexBytes == 0)
-                    (vertexBytes, vertexStride) = (mesh.VBIB.VertexBuffers[0].Data.Length, mesh.VBIB.VertexBuffers[0].ElementSizeInBytes);
+                if (mesh.Vbib.VertexBuffers.Count > 0 && vertexBytes == 0)
+                    (vertexBytes, vertexStride) = (mesh.Vbib.VertexBuffers[0].Data.Length, mesh.Vbib.VertexBuffers[0].ElementSizeInBytes);
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                 {
                     var bounds = so.GetArray("m_drawBounds");
@@ -127,7 +123,7 @@ public static class CubemapPackageAggregates
         foreach (var (_, o, model) in Objects(package, byPath: false))
         {
             var calls = new List<KVObject>();
-            foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     calls.AddRange(so.GetArray("m_drawCalls"));
             var flags = calls.Select(c => CubemapLayerFlags.MaterialFlags(c.GetStringProperty("m_material") is { Length: > 0 } m ? Attributes(m) : null)).ToList();

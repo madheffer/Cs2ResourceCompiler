@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using ValveKeyValue;
-using ValveResourceFormat.ResourceTypes;
 
 namespace Source2.Compiler.Maps.NavGen;
 
@@ -390,7 +389,7 @@ public static class NavWriter
         {
             while (_m.Length % 8 != 0)
                 _m.WriteByte(0);
-            _m.Write(Kv3V5Writer.Write(root, format));
+            _m.Write(Kv3BlockWriter.Write(root, format));
         }
 
         public byte[] ToArray() => _m.ToArray();

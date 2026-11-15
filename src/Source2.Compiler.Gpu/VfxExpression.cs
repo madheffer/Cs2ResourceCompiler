@@ -1,5 +1,4 @@
 using Source2.Compiler.Lighting;
-using ValveResourceFormat.Utils;
 
 namespace Source2.Compiler.Gpu;
 
@@ -45,7 +44,7 @@ public static class VfxExpression
         ushort U16() { var v = BitConverter.ToUInt16(code, at); at += 2; return v; }
         uint U32() { var v = BitConverter.ToUInt32(code, at); at += 4; return v; }
         float F32() { var v = BitConverter.ToSingle(code, at); at += 4; return v; }
-        string Token(uint t) => ValveResourceFormat.Utils.StringToken.InvertedTable.GetValueOrDefault(t, $"{t:x8}");
+        string Token(uint t) => StringToken.Lookup(t) ?? $"{t:x8}";
         for (var guard = 0; guard < 100000; guard++)
         {
             var op = U8();

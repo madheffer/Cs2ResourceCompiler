@@ -1,8 +1,7 @@
+using Source2.Compiler.Shaders.Vfx;
 using Source2.Compiler.Io;
 using System.Globalization;
 using ValvePak;
-using ValveResourceFormat.CompiledShader;
-using ValveResourceFormat.IO;
 
 namespace Source2.Compiler.Maps;
 
@@ -107,7 +106,7 @@ public sealed class MaterialAttributes : MeshEntryFlags.IAttributes
         var featureValues = set.Features.StaticComboArray.Select(f => features.TryGetValue(f.Name, out var v) ? (int)v : 0).ToArray();
         foreach (var program in set.Programs)
         {
-            var (config, id) = ShaderDataProvider.GetStaticConfiguration_ForFeatureState(set.Features, program, features);
+            var (config, id) = VfxCombos.GetStaticConfiguration_ForFeatureState(set.Features, program, features);
             // A mode's static combo (S_MODE_TOOLS_VIS=1 and the like) set over the feature state.
             if (forced is { } f)
             {
@@ -117,7 +116,7 @@ public sealed class MaterialAttributes : MeshEntryFlags.IAttributes
                 config[index] = f.Value;
                 id = new ConfigMappingIds(program).Id(config);
             }
-            if (!program.StaticComboEntries.ContainsKey(id) && ShaderDataProvider.TryReduceStaticConfiguration(program, config, out var reduced))
+            if (!program.StaticComboEntries.ContainsKey(id) && VfxCombos.TryReduceStaticConfiguration(program, config, out var reduced))
                 id = new ConfigMappingIds(program).Id(reduced);
             if (!program.StaticComboEntries.ContainsKey(id))
                 continue;
@@ -129,7 +128,7 @@ public sealed class MaterialAttributes : MeshEntryFlags.IAttributes
                 if (values.ContainsKey(attribute.Murmur32))
                     continue;
                 var value = attribute.DynExpression is { } expression
-                    ? Evaluate(ShaderUtilHelpers.ParseDynamicExpression(expression), featureValues, material)
+                    ? Evaluate(VfxCombos.ParseDynamicExpression(expression), featureValues, material)
                     : attribute.ConstValue;
                 if (value != null)
                     values[attribute.Murmur32] = value;
@@ -139,9 +138,7 @@ public sealed class MaterialAttributes : MeshEntryFlags.IAttributes
 
     private sealed class ConfigMappingIds(VfxProgramData program)
     {
-        private readonly ComboConfigMapping mapping = new(program);
-
-        public long Id(int[] config) => mapping.CalcComboIdFromValues(config);
+        public long Id(int[] config) => VfxCombos.ComboId(program, config);
     }
 
     private static bool Truthy(object v) => v switch
@@ -353,8 +350,7 @@ public sealed class ShaderLibrary(params string[] packages) : IDisposable
                 if (pak.FindEntry($"shaders/vfx/{name}_{Platform}_{suffix}.vcs") is { } entry)
                 {
                     pak.ReadEntry(entry, out var bytes);
-                    var program = new VfxProgramData();
-                    program.Read($"{name}_{Platform}_{suffix}.vcs", new MemoryStream(bytes));
+                    var program = VfxProgramData.Read($"{name}_{Platform}_{suffix}.vcs", bytes);
                     return program;
                 }
             return null;
@@ -366,10 +362,6 @@ public sealed class ShaderLibrary(params string[] packages) : IDisposable
 
     public void Dispose()
     {
-        foreach (var set in sets.Values)
-            if (set != null)
-                foreach (var p in set.Programs.Append(set.Features))
-                    p.Dispose();
         foreach (var pak in paks)
             pak.Dispose();
     }

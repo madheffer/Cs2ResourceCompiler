@@ -1,11 +1,10 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Globalization;
 using System.Numerics;
 using System.Text;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Lighting;
 
@@ -109,15 +108,11 @@ public static class Vrad3Job
             if (key("model") is { } model && model.StartsWith("maps/", StringComparison.Ordinal) && model.Contains("/entities/", StringComparison.Ordinal)
                 && PathTraceProps.Record(model, key, PropTransform.Matrix(Vec(key("origin")), Vec(key("angles")), Vec(key("scales") ?? "1 1 1")), false) is { } record)
                 records.Add(record);
-        Model? Load(string name)
+        CompiledModel? Load(string name)
         {
             if (!name.StartsWith("maps/", StringComparison.Ordinal))
                 return content.LoadedModel(name + "_c");
-            if (packageModel(name + "_c") is not { } bytes)
-                return null;
-            var resource = new Resource();
-            resource.Read(new MemoryStream(bytes));
-            return (Model)resource.DataBlock!;
+            return packageModel(name + "_c") is { } bytes ? CompiledModel.Read(bytes) : null;
         }
         PathTraceProps.Add(meshes, instances, records, Load, content.Read);
 
@@ -340,11 +335,9 @@ public static class Vrad3Job
     /// <summary>A compiled lump's entities as key readers (strings as the entity system holds them), with their class names.</summary>
     public static List<(string Class, LightPrecompute.KeyReader Key)> LumpEntities(byte[] lump, string name)
     {
-        using var resource = new Resource { FileName = name };
-        resource.Read(new MemoryStream(lump));
-        var data = (EntityLump)resource.DataBlock!;
+        var data = CompiledResource.Read(lump).Kv3("DATA") ?? throw new InvalidDataException($"{name} has no KV3 DATA block.");
         var list = new List<(string, LightPrecompute.KeyReader)>();
-        foreach (var entity in data.Data.GetArray("m_entityKeyValues"))
+        foreach (var entity in data.GetArray("m_entityKeyValues"))
         {
             var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var kv in entity.GetSubCollection("keyValues3Data")?.GetSubCollection("values")?.Children ?? [])

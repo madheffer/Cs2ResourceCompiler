@@ -1,8 +1,8 @@
+using Source2.Compiler.KeyValues;
 using System.Diagnostics;
 using System.Text;
 using SkiaSharp;
 using ValvePak;
-using ValveResourceFormat;
 
 namespace Source2.Compiler.Cli;
 
@@ -70,7 +70,7 @@ internal static class SelfTest
 
         Record("vsndevts", "KV3 text to vsndevts_c", () => Kv3SourceCompiler.Compile(kv3, ".vsndevts"));
         Record("vdata", "KV3 text to vdata_c", () => VerifyContainer(
-            Kv3SourceCompiler.Compile(kv3, ".vdata"), ResourceType.VData, "CompileVData"));
+            Kv3SourceCompiler.Compile(kv3, ".vdata"), "CompileVData"));
         Record("vagrp", "KV3 text to vagrp_c", () => Kv3SourceCompiler.Compile(kv3, ".vagrp"));
 
         // 2. Round-trip a real compiled resource: decompile it, recompile the text.
@@ -80,12 +80,10 @@ internal static class SelfTest
         else
             Record("vdata round-trip", "vdata_c to text to vdata_c", () =>
         {
-            using var res = new Resource { FileName = "stock.vdata_c" };
-            res.Read(new MemoryStream(stockVdata));
-            var text = ResourceDecompiler.DataBlockToKv3(res, out var why)
+            var res = CompiledResource.Read(stockVdata);
+            var text = ResourceText.DataBlockToKv3(res, out var why)
                        ?? throw new InvalidOperationException("decompile refused: " + why);
-            return VerifyContainer(Kv3SourceCompiler.Compile(Encoding.UTF8.GetBytes(text), ".vdata"),
-                                   ResourceType.VData, "CompileVData");
+            return VerifyContainer(Kv3SourceCompiler.Compile(Encoding.UTF8.GetBytes(text), ".vdata"), "CompileVData");
         }, reps: 1);
 
         // A particle carries resource: refs, so this also proves the RERL is
@@ -96,16 +94,12 @@ internal static class SelfTest
         else
             Record("vpcf round-trip", "vpcf_c to text to vpcf_c, plus RERL", () =>
         {
-            using var stock = new Resource { FileName = "stock.vpcf_c" };
-            stock.Read(new MemoryStream(stockVpcf));
-            var stockRerl = stock.ExternalReferences?.ResourceRefInfoList.Count ?? 0;
-            var text = ResourceDecompiler.DataBlockToKv3(stock, out var why)
+            var stock = CompiledResource.Read(stockVpcf);
+            var stockRerl = stock.References.Count;
+            var text = ResourceText.DataBlockToKv3(stock, out var why)
                        ?? throw new InvalidOperationException("decompile refused: " + why);
-            var built = VerifyContainer(Kv3SourceCompiler.Compile(Encoding.UTF8.GetBytes(text), ".vpcf"),
-                                        ResourceType.Particle, "CompileParticle");
-            using var res = new Resource { FileName = "selftest.vpcf_c" };
-            res.Read(new MemoryStream(built));
-            var got = res.ExternalReferences?.ResourceRefInfoList.Count ?? 0;
+            var built = VerifyContainer(Kv3SourceCompiler.Compile(Encoding.UTF8.GetBytes(text), ".vpcf"), "CompileParticle");
+            var got = CompiledResource.Read(built).References.Count;
             if (got != stockRerl)
                 throw new InvalidOperationException($"RERL synthesis produced {got} entries, the stock compile has {stockRerl}");
             return built;
@@ -123,17 +117,17 @@ internal static class SelfTest
         {
             var png = NoisePng(size);
             Record("vtex (BC7)", $"{size}x{size} png to vtex_c", () =>
-                ResourceBuilder.BuildTexture(new ResourceBuilder.TextureDef
+                PackageResourceBuilder.BuildTexture(new PackageResourceBuilder.TextureDef
                 {
                     ImageBytes = png,
                     GenerateMipmaps = true,
-                    Compression = ResourceBuilder.TextureCompression.BC7,
+                    Compression = PackageResourceBuilder.TextureCompression.BC7,
                 }), reps: size >= 1024 ? 2 : 3);
         }
 
         // 4. Sound and vector graphic.
         var wav = SineWav(2);
-        Record("vsnd", "2s PCM16 wav to vsnd_c", () => ResourceBuilder.BuildSound(wav));
+        Record("vsnd", "2s PCM16 wav to vsnd_c", () => PackageResourceBuilder.BuildSound(wav));
 
         {
             var svg = Encoding.UTF8.GetBytes(
@@ -141,13 +135,14 @@ internal static class SelfTest
               + "<path fill=\"#ffffff\" d=\"M60 60 L340 200 L60 340 Z\"/></svg>");
             Record("vsvg", "svg to vsvg_c, then CRC re-read", () =>
             {
-                var built = ResourceBuilder.BuildPanoramaSvg(svg);
-                // Re-reading validates the CRC32 (Panorama.Read throws on a mismatch)
-                // and confirms the payload survived byte for byte.
-                using var res = new Resource();
-                res.Read(new MemoryStream(built));
-                var pan = (ValveResourceFormat.ResourceTypes.Panorama)res.DataBlock!;
-                if (!pan.Data.AsSpan().SequenceEqual(svg))
+                var built = PackageResourceBuilder.BuildPanoramaSvg(svg);
+                // DATA is u32 CRC32 of the payload, u16 image count (0 here), then the payload:
+                // check the CRC and that the payload survived byte for byte.
+                var data = CompiledResource.Read(built).Block("DATA")!.Data;
+                var payload = data.AsSpan(6);
+                if (BitConverter.ToUInt16(data, 4) != 0 || System.IO.Hashing.Crc32.HashToUInt32(payload) != BitConverter.ToUInt32(data, 0))
+                    throw new InvalidOperationException("SVG payload CRC does not match");
+                if (!payload.SequenceEqual(svg))
                     throw new InvalidOperationException("SVG payload did not round-trip");
                 return built;
             });
@@ -183,7 +178,7 @@ internal static class SelfTest
 
     /// <summary>Which BC7 encoder will actually run, read off the same tag the
     /// texture cache stamps on its output so the two can never disagree.</summary>
-    private static string EncoderTag => ResourceBuilder.Bc7CacheTag(ResourceBuilder.Bc7EncoderMode.Cpu);
+    private static string EncoderTag => PackageResourceBuilder.Bc7CacheTag(PackageResourceBuilder.Bc7EncoderMode.Cpu);
 
     private static bool HaveNativeBc7 => EncoderTag is "bc7cpunative" or "bc7gpu";
 
@@ -199,14 +194,10 @@ internal static class SelfTest
     /// <summary>Assert the built container is the type it claims and carries the
     /// right compiler identity, so a mis-branded container fails loudly rather
     /// than being reported as a fast compile.</summary>
-    private static byte[] VerifyContainer(byte[] compiled, ResourceType expected, string compilerIdentifier)
+    private static byte[] VerifyContainer(byte[] compiled, string compilerIdentifier)
     {
-        using var res = new Resource { FileName = "selftest_c" };
-        res.Read(new MemoryStream(compiled));
-        if (res.ResourceType != expected)
-            throw new InvalidOperationException($"expected a {expected} container, got {res.ResourceType}");
-        var deps = res.EditInfo?.SpecialDependencies;
-        if (deps is null || !deps.Any(d => d.CompilerIdentifier == compilerIdentifier))
+        var deps = CompiledResource.Read(compiled).Kv3("RED2")?.GetArray("m_SpecialDependencies");
+        if (deps is null || !deps.Any(d => d.GetStringProperty("m_CompilerIdentifier") == compilerIdentifier))
             throw new InvalidOperationException($"output is missing the {compilerIdentifier} special dependency");
         return compiled;
     }
@@ -225,10 +216,10 @@ internal static class SelfTest
                 byte[] bytes;
                 try { pak.ReadEntry(e, out bytes); }
                 catch { continue; }
-                using var res = new Resource();
-                try { res.Read(new MemoryStream(bytes)); }
-                catch { continue; }
-                foreach (var r in res.ExternalReferences?.ResourceRefInfoList ?? [])
+                ResourceFile res;
+                try { res = ResourceFile.Read(bytes); }
+                catch (InvalidDataException) { continue; }
+                foreach (var r in res["RERL"] is { } rerl ? ResourceRefs.Read(rerl.Data) : [])
                 {
                     if (r.Name is not { Length: > 0 } name)
                         continue;

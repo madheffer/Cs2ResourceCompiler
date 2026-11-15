@@ -1,6 +1,4 @@
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
 using Source2.Compiler.KeyValues;
 
 namespace Source2.Compiler.Cli;
@@ -24,10 +22,11 @@ internal static class Red2Survey
         {
             if (files++ >= limit) break;
             pak.ReadEntry(e, out var bytes);
-            using var res = new Resource { FileName = e.GetFileName() };
-            try { res.Read(new MemoryStream(bytes)); } catch { continue; }
-            var key = res.EditInfo is { } info
-                ? string.Join(" | ", info.SpecialDependencies.Select(d => $"{d.String} fp={d.Fingerprint} ud={d.UserData}"))
+            CompiledResource res;
+            try { res = CompiledResource.Read(bytes); } catch (InvalidDataException) { continue; }
+            var key = res.Kv3("RED2") is { } info
+                ? string.Join(" | ", (info.GetArray("m_SpecialDependencies") ?? []).Select(d =>
+                    $"{d.GetStringProperty("m_String")} fp={d.GetUInt32Property("m_nFingerprint")} ud={d.GetUInt32Property("m_nUserData")}"))
                 : "(no edit info)";
             tally[key] = tally.GetValueOrDefault(key) + 1;
         }

@@ -1,9 +1,7 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
 using ValveKeyValue.KeyValues3;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
 using VoxelVisibility = Source2.Compiler.Maps.VoxelVisibility;
 
 namespace Source2.Compiler;
@@ -129,13 +127,12 @@ public static class VisibilityAuthor
     /// (VisBuild does; the disabled build does not).</param>
     public static byte[] Container(VoxelVisibility vis, uint inputFingerprint = 0, bool published = true)
     {
-        var generic = KV3IDLookup.Get("generic");
-        using var resource = new Resource();
-        LegacyContainer.SetResourceVersion(resource, 7);
-        resource.Blocks.Add(AuthoredKv3.Block(Red2(inputFingerprint, published), generic, BlockType.RED2, resource));
-        resource.Blocks.Add(AuthoredKv3.Block(Data(vis), generic, BlockType.DATA, resource));
-        resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.VXVS, vis.WriteVxvs(), resource));
-        return ValveLayout.Serialize(resource);
+        var generic = Kv3Formats.Get("generic");
+        var file = new ResourceFile { Version = 7 };
+        file.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(Red2(inputFingerprint, published), generic)));
+        file.Blocks.Add(new ResourceBlock("DATA", Kv3Binary.Write(Data(vis), generic)));
+        file.Blocks.Add(new ResourceBlock("VXVS", vis.WriteVxvs()));
+        return file.Write();
     }
 
     private static KVObject U32(uint v) => new(v);

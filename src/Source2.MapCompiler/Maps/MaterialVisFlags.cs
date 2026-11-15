@@ -1,7 +1,5 @@
 using Source2.Compiler.Io;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 
 namespace Source2.Compiler.Maps;
 
@@ -25,9 +23,7 @@ public sealed record MaterialVisFlags(bool NoDraw, bool Occluder, bool VisBlocke
     /// <summary>The flags of a compiled <c>.vmat_c</c>.</summary>
     public static MaterialVisFlags FromCompiled(byte[] bytes)
     {
-        using var resource = new Resource();
-        resource.Read(new MemoryStream(bytes));
-        var ints = ((Material)resource.DataBlock!).IntAttributes;
+        var ints = Materials.CompiledMaterial.Read(bytes).IntAttributes;
         bool On(string key) => ints.TryGetValue(key, out var v) && v != 0;
         return new MaterialVisFlags(On("mapbuilder.nodraw"), On("mapbuilder.occluder"), On("mapbuilder.visblocker"),
                                     On("mapbuilder.acceptvis"), On("mapbuilder.sky"));

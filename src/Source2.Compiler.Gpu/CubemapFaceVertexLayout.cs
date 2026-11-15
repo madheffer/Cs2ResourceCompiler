@@ -1,5 +1,5 @@
+using Source2.Compiler.Shaders.Vfx;
 using Silk.NET.Vulkan;
-using ValveResourceFormat.CompiledShader;
 
 namespace Source2.Compiler.Gpu;
 

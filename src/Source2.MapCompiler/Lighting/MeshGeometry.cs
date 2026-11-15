@@ -1,5 +1,5 @@
+using Source2.Compiler.Meshes;
 using Source2.Compiler.Io;
-using ValveResourceFormat.Blocks;
 
 namespace Source2.Compiler.Lighting;
 
@@ -26,9 +26,9 @@ namespace Source2.Compiler.Lighting;
 internal static class MeshGeometry
 {
     /// <summary>An extra field: its name (the shader semantic) and component count.</summary>
-    public sealed record Extra(VBIB.RenderInputLayoutField Field, string Name, int Components);
+    public sealed record Extra(RenderInputLayoutField Field, string Name, int Components);
 
-    public sealed record Result(VBIB.RenderInputLayoutField Color, IReadOnlyList<Extra> Extras, bool FloatTexcoords, bool FloatTangents);
+    public sealed record Result(RenderInputLayoutField Color, IReadOnlyList<Extra> Extras, bool FloatTexcoords, bool FloatTangents);
 
     // 180174d50: shader semantic, standard name, index, and the index the name itself stands for (+0x14).
     private static readonly (string Name, string Standard, int Index, int NameIndex)[] Semantics =
@@ -57,7 +57,7 @@ internal static class MeshGeometry
         return null;
     }
 
-    public static Result Classify(VBIB.OnDiskBufferData vb, Func<string, int, string?>? materialAttribute = null)
+    public static Result Classify(OnDiskBufferData vb, Func<string, int, string?>? materialAttribute = null)
     {
         var fields = vb.InputLayoutFields;
         var consumed = new bool[fields.Length];
@@ -127,7 +127,7 @@ internal static class MeshGeometry
     }
 
     /// <summary>180029c10 for the formats measured: RGBA8 as unorm over 255, floats as they are.</summary>
-    public static void Unpack(VBIB.OnDiskBufferData vb, VBIB.RenderInputLayoutField f, int vertex, Span<float> into)
+    public static void Unpack(OnDiskBufferData vb, RenderInputLayoutField f, int vertex, Span<float> into)
     {
         var at = vertex * (int)vb.ElementSizeInBytes + (int)f.Offset;
         switch (f.Format.ToString())
@@ -146,7 +146,7 @@ internal static class MeshGeometry
     }
 
     // FUN_180036b70's component count.
-    internal static int Components(VBIB.RenderInputLayoutField f) => f.Format.ToString() switch
+    internal static int Components(RenderInputLayoutField f) => f.Format.ToString() switch
     {
         "R32_FLOAT" or "R32_UINT" or "R32_SINT" => 1,
         "R32G32_FLOAT" or "R16G16_FLOAT" or "R16G16_SNORM" or "R16G16_UNORM" or "R16G16_SINT" or "R16G16_UINT" or "R32G32_SINT" or "R32G32_UINT" => 2,

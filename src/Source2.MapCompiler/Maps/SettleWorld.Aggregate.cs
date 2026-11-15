@@ -1,8 +1,8 @@
+using Source2.Compiler.Rubikon;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Simulation;
 using ValveKeyValue;
-using ValveResourceFormat.Serialization.KeyValues;
-using ValveResourceFormat.ResourceTypes;
 
 namespace Source2.Compiler.Maps;
 

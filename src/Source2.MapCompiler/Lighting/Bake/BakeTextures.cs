@@ -1,5 +1,4 @@
 using System.Numerics;
-using ValveResourceFormat.ResourceTypes;
 
 namespace Source2.Compiler.Lighting.Bake;
 
@@ -11,11 +10,8 @@ public static class BakeTextures
     {
         if (bytes is null)
             return null;
-        using var res = new ValveResourceFormat.Resource();
-        res.Read(new MemoryStream(bytes));
-        if (res.DataBlock is not Texture tex)
-            return null;
-        using var bmp = tex.GenerateBitmap(0, (Texture.CubemapFace)face, 0, default);
+        var tex = Source2.Compiler.Textures.CompiledTexture.Read(bytes);
+        using var bmp = tex.GenerateBitmap(0, (Source2.Compiler.Textures.CubemapFace)face, 0, Source2.Compiler.Textures.TextureCodec.None);
         var w = bmp.Width;
         var h = bmp.Height;
         var texels = new Vector4[w * h];

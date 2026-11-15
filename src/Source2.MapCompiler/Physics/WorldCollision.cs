@@ -1,6 +1,7 @@
+using Source2.Compiler.Rubikon;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Io;
 using System.Numerics;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Physics;
 
@@ -309,7 +310,7 @@ public static class WorldCollision
     /// </summary>
     public static List<Piece> Pieces(DmxBinary.Document doc, Func<string, MaterialPhysics> materials, List<string>? notes = null,
                                      Func<string, MaterialSampler.Renderer?>? sampler = null,
-                                     Func<string, ValveResourceFormat.ResourceTypes.PhysAggregateData?>? propPhysics = null,
+                                     Func<string, PhysAggregateData?>? propPhysics = null,
                                      Func<string, ValveKeyValue.KVObject?>? smartProps = null,
                                      Func<string, Maps.SettleWorld.CollisionProperty?>? collisionProperty = null,
                                      FgdSchema? schema = null)
@@ -642,7 +643,7 @@ public static class WorldCollision
     /// mesh node (<see cref="StaticPropHulls.Meshes"/>). A prop inside an
     /// instance, and a prop's spheres and capsules, are not ported and are listed.
     /// </summary>
-    private static IEnumerable<Piece> PropPieces(Maps.MapMeshes.EntityNode entity, Func<string, ValveResourceFormat.ResourceTypes.PhysAggregateData?> propPhysics,
+    private static IEnumerable<Piece> PropPieces(Maps.MapMeshes.EntityNode entity, Func<string, PhysAggregateData?> propPhysics,
                                                  Func<string, ValveKeyValue.KVObject?>? smartProps,
                                                  Func<string, Maps.SettleWorld.CollisionProperty?>? collisionProperty, List<string>? notes)
     {
@@ -675,7 +676,7 @@ public static class WorldCollision
     /// One inside an instance starts from its node's matrix under the instance
     /// path; a scaled one is not ported and is listed.
     /// </summary>
-    private static IEnumerable<Piece> SmartPropPieces(Maps.MapMeshes.EntityNode entity, Func<string, ValveResourceFormat.ResourceTypes.PhysAggregateData?> propPhysics,
+    private static IEnumerable<Piece> SmartPropPieces(Maps.MapMeshes.EntityNode entity, Func<string, PhysAggregateData?> propPhysics,
                                                       Func<string, ValveKeyValue.KVObject?>? smartProps,
                                                       Func<string, Maps.SettleWorld.CollisionProperty?>? collisionProperty, List<string>? notes)
     {
@@ -694,7 +695,7 @@ public static class WorldCollision
         }
     }
 
-    private static IEnumerable<Piece> PropPieces(StaticPropHulls.Prop prop, Func<string, ValveResourceFormat.ResourceTypes.PhysAggregateData?> propPhysics,
+    private static IEnumerable<Piece> PropPieces(StaticPropHulls.Prop prop, Func<string, PhysAggregateData?> propPhysics,
                                                  Func<string, Maps.SettleWorld.CollisionProperty?>? collisionProperty, List<string>? notes)
     {
         var nodeId = prop.NodeId;

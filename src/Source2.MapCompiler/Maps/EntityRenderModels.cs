@@ -32,7 +32,7 @@ internal static class EntityRenderModels
         {
             if (!facts.TryGetValue(path, out var f))
                 facts[path] = f = content.Read(path + "_c") is { } bytes
-                    ? new WorldNodeModels.MaterialFacts(Source2.Compiler.MaterialAuthor.ExtractInputSignature(bytes), Source2.Compiler.MaterialAuthor.ExtractDepthSignature(bytes))
+                    ? new WorldNodeModels.MaterialFacts(PackageMaterialAuthor.ExtractInputSignature(bytes), PackageMaterialAuthor.ExtractDepthSignature(bytes))
                     : new WorldNodeModels.MaterialFacts([], []);
             return f;
         }

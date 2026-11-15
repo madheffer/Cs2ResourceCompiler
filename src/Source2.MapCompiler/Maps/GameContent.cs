@@ -1,9 +1,11 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Io;
 using System.Text.RegularExpressions;
+using Source2.Compiler.Materials;
+using Source2.Compiler.Meshes;
+using Source2.Compiler.Rubikon;
+using Source2.Compiler.Textures;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Maps;
 
@@ -19,9 +21,8 @@ public class GameContent : SettleWorld.IModels, IDisposable
     private readonly Package? _core;
     private readonly string[] _loose;
     private readonly Dictionary<string, PhysAggregateData?> _physics = new(Tier0Strings.IgnoreCase);
-    private readonly Dictionary<string, Model?> _models = new(Tier0Strings.IgnoreCase);
+    private readonly Dictionary<string, CompiledModel?> _models = new(Tier0Strings.IgnoreCase);
     private readonly Dictionary<string, SettleWorld.MaterialInfo?> _materials = new(Tier0Strings.IgnoreCase);
-    private readonly List<Resource> _keep = [];
     private ShaderLibrary? _shaders;
     private Dictionary<string, SettleWorld.CollisionProperty>? _collision;
     private Dictionary<uint, Simulation.ContactSolver.Material>? _surfaces;
@@ -78,9 +79,7 @@ public class GameContent : SettleWorld.IModels, IDisposable
             return found;
         if (Read(path + "_c") is not { } bytes)
             return _materials[path] = null;
-        using var res = new Resource();
-        res.Read(new MemoryStream(bytes));
-        var mat = (Material)res.DataBlock!;
+        var mat = CompiledMaterial.Read(bytes);
         MeshEntryFlags.IAttributes? store = null;
         SettleWorld.MaterialInfo? info = null;
         return _materials[path] = info = new SettleWorld.MaterialInfo(
@@ -132,10 +131,7 @@ public class GameContent : SettleWorld.IModels, IDisposable
     public ValveKeyValue.KVObject SurfaceProperties()
     {
         _pak.ReadEntry(_pak.FindEntry("surfaceproperties/surfaceproperties.vsurf_c")!, out var bytes);
-        var res = new Resource();
-        res.Read(new MemoryStream(bytes));
-        _keep.Add(res);
-        return ((BinaryKV3)res.DataBlock!).Data;
+        return CompiledResource.Read(bytes).Kv3("DATA") ?? throw new InvalidDataException("surfaceproperties.vsurf_c has no KV3 DATA block.");
     }
 
     private void ReadSurfaces()
@@ -143,10 +139,9 @@ public class GameContent : SettleWorld.IModels, IDisposable
         if (_surfaces != null)
             return;
         _pak.ReadEntry(_pak.FindEntry("surfaceproperties/surfaceproperties.vsurf_c")!, out var bytes);
-        using var res = new Resource();
-        res.Read(new MemoryStream(bytes));
-        _surfaces = SettleWorld.SurfaceMaterials(((BinaryKV3)res.DataBlock!).Data);
-        _surfaceNames = SettleWorld.SurfaceNames(((BinaryKV3)res.DataBlock!).Data);
+        var data = CompiledResource.Read(bytes).Kv3("DATA") ?? throw new InvalidDataException("surfaceproperties.vsurf_c has no KV3 DATA block.");
+        _surfaces = SettleWorld.SurfaceMaterials(data);
+        _surfaceNames = SettleWorld.SurfaceNames(data);
     }
 
     public ValveKeyValue.KVObject? ModelKeyValues(string model)
@@ -162,11 +157,9 @@ public class GameContent : SettleWorld.IModels, IDisposable
             return phys;
         if (Read(Path.ChangeExtension(model, ".vmdl_c")) is { } bytes)
         {
-            var res = new Resource();
-            res.Read(new MemoryStream(bytes));
-            _keep.Add(res);
-            _models[model] = res.DataBlock as Model;
-            phys = (res.DataBlock as Model)?.GetEmbeddedPhys();
+            var compiled = CompiledModel.Read(bytes);
+            _models[model] = compiled;
+            phys = compiled.EmbeddedPhysics;
         }
         return _physics[model] = phys;
     }
@@ -193,13 +186,13 @@ public class GameContent : SettleWorld.IModels, IDisposable
             var groupMasks = m.Data.ContainsKey("m_refMeshGroupMasks")
                 ? m.Data.GetIntegerArray("m_refMeshGroupMasks").Select(v => unchecked((ulong)v)).ToArray() : [];
             var defaultMask = m.Data.ContainsKey("m_nDefaultMeshGroupMask") ? m.Data.GetUnsignedIntegerProperty("m_nDefaultMeshGroupMask") : ulong.MaxValue;
-            foreach (var (mesh, index, _, lod) in m.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, index, _, lod) in m.EmbeddedMeshesAndLod())
             {
                 if (lod != 0 && (lod & 1) == 0)
                     continue;
                 if (index < groupMasks.Length && (groupMasks[index] & defaultMask) == 0)
                     continue;
-                var vbib = mesh.VBIB;
+                var vbib = mesh.Vbib;
                 var found = new List<(System.Numerics.Vector3, System.Numerics.Vector3, System.Numerics.Vector3, string)>();
                 meshes.Add(found);
                 foreach (var sceneObject in mesh.Data.GetArray("m_sceneObjects"))
@@ -207,7 +200,7 @@ public class GameContent : SettleWorld.IModels, IDisposable
                     {
                         var vb = vbib.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
                         var field = vb.InputLayoutFields.First(f => f.SemanticName == "POSITION");
-                        var positions = ValveResourceFormat.Blocks.VBIB.GetVector3AttributeArray(vb, field);
+                        var positions = Vbib.GetVector3AttributeArray(vb, field);
                         var ib = vbib.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                         int Index(int i) => ib.ElementSizeInBytes == 2
                             ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
@@ -229,13 +222,12 @@ public class GameContent : SettleWorld.IModels, IDisposable
     {
         if (Read(texture.EndsWith("_c", StringComparison.Ordinal) ? texture : texture + "_c") is not { } bytes)
             return null;
-        using var res = new Resource();
-        res.Read(new MemoryStream(bytes));
-        return res.DataBlock is ValveResourceFormat.ResourceTypes.Texture t ? (t.Width, t.Height) : null;
+        var t = CompiledTexture.Read(bytes);
+        return (t.Width, t.Height);
     }
 
     /// <summary>The loaded model resource (null when missing), for its render meshes.</summary>
-    public ValveResourceFormat.ResourceTypes.Model? LoadedModel(string model)
+    public CompiledModel? LoadedModel(string model)
     {
         Physics(model);
         return _models.GetValueOrDefault(model);
@@ -263,10 +255,7 @@ public class GameContent : SettleWorld.IModels, IDisposable
     {
         if (Read(Path.ChangeExtension(file, ".vsmart_c")) is not { } bytes)
             return null;
-        var res = new Resource();
-        res.Read(new MemoryStream(bytes));
-        _keep.Add(res);
-        return (res.DataBlock as BinaryKV3)?.Data;
+        return CompiledResource.Read(bytes).Kv3("DATA");
     }
 
     /// <summary>The game's compiled shaders (csgo's then core's shaders_pc_dir.vpk beside the paks), opened on first use.</summary>
@@ -277,8 +266,6 @@ public class GameContent : SettleWorld.IModels, IDisposable
     public void Dispose()
     {
         _shaders?.Dispose();
-        foreach (var r in _keep)
-            r.Dispose();
         _pak.Dispose();
         _core?.Dispose();
         foreach (var package in _addonPaks)

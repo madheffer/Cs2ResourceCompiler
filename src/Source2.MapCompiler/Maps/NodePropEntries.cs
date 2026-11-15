@@ -1,7 +1,7 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Io;
 using System.Numerics;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Maps;
 
@@ -107,7 +107,7 @@ internal static class NodePropEntries
     }
 
     // The model's key values (m_modelInfo.m_keyValueText): prop_data's bakelighting, true when absent.
-    private static bool ModelBakesLighting(ValveResourceFormat.ResourceTypes.Model model)
+    private static bool ModelBakesLighting(CompiledModel model)
     {
         var text = model.Data.GetSubCollection("m_modelInfo")?.GetStringProperty("m_keyValueText");
         if (string.IsNullOrWhiteSpace(text))
@@ -178,7 +178,7 @@ internal static class NodePropEntries
         // else 3. Shaders declare it per static combo: csgo_simple_liquid always,
         // csgo_foliage's vs with S_FOLIAGE_ANIMATION=1 (ShaderAttributeProbe, 1.41.9.6).
         var flags = PropTransform.Place | PropTransform.Texcoords;
-        foreach (var (mesh, _, _, lod) in model.GetEmbeddedMeshesAndLoD())
+        foreach (var (mesh, _, _, lod) in model.EmbeddedMeshesAndLod())
         {
             if ((lod & lodMask) == 0)
                 continue;
@@ -191,11 +191,11 @@ internal static class NodePropEntries
                         flags = PropTransform.LocalSpace;
                 }
         }
-        foreach (var (mesh, _, _, lod) in model.GetEmbeddedMeshesAndLoD())
+        foreach (var (mesh, _, _, lod) in model.EmbeddedMeshesAndLod())
         {
             if ((lod & lodMask) == 0)
                 continue;
-            var vbib = mesh.VBIB;
+            var vbib = mesh.Vbib;
             foreach (var sceneObject in mesh.Data.GetArray("m_sceneObjects"))
                 foreach (var call in sceneObject.GetArray("m_drawCalls"))
                 {
@@ -237,7 +237,7 @@ internal static class NodePropEntries
     /// geometry record has +0x66 set; that flag is a float texcoord in the model's buffer (R32G32_FLOAT), the rule
     /// the prop aggregates measured (NodePropAggregates.Calls). Mako's baked sofas: Valve's R32G32 texcoords.
     /// </summary>
-    internal static bool FloatTexcoords(ValveResourceFormat.Blocks.VBIB.OnDiskBufferData vb)
+    internal static bool FloatTexcoords(OnDiskBufferData vb)
         => vb.InputLayoutFields.Any(f => f.SemanticName == "TEXCOORD" && f.Format.ToString() == "R32G32_FLOAT");
 
     // The skin key, a group's name: each material of the first group becomes the
@@ -246,7 +246,7 @@ internal static class NodePropEntries
     // MurmurHash2 (1800c7c10, seed 0x31415926) and 18174e7d0 finds that hash among
     // the model's group hashes, so a skin is a name only: "1" names no group and
     // the model keeps its own materials (s2c_foliagels against Valve's compile).
-    internal static Dictionary<string, string> MaterialGroup(ValveResourceFormat.ResourceTypes.Model model, string? skin)
+    internal static Dictionary<string, string> MaterialGroup(CompiledModel model, string? skin)
     {
         var map = new Dictionary<string, string>(Tier0Strings.IgnoreCase);
         var groups = model.Data.GetArray("m_materialGroups");
@@ -320,7 +320,7 @@ internal static class NodePropEntries
     /// <paramref name="attribute"/> answers the draw call's own material's
     /// attribute (vf 0x98, before any skin or override).
     /// </summary>
-    internal static PropMesh Load(VBIB.OnDiskBufferData vb, int lo, int count, Func<string, int, string?>? attribute)
+    internal static PropMesh Load(OnDiskBufferData vb, int lo, int count, Func<string, int, string?>? attribute)
     {
         var geometry = Lighting.MeshGeometry.Classify(vb, attribute);
         var (standard, hasColor) = Vertices(vb, lo, count, geometry.Color);
@@ -372,7 +372,7 @@ internal static class NodePropEntries
         IReadOnlyList<Source2ContainerAuthor.MaterialAuthoring.InputSignatureElement> signature;
         try
         {
-            signature = MaterialAuthor.ExtractInputSignature(bytes);
+            signature = PackageMaterialAuthor.ExtractInputSignature(bytes);
         }
         catch (InvalidOperationException)
         {
@@ -390,7 +390,7 @@ internal static class NodePropEntries
             return null;
         try
         {
-            return MaterialStreams.Inputs(MaterialAuthor.ExtractInputSignature(bytes).Select(x => x.Semantic));
+            return MaterialStreams.Inputs(PackageMaterialAuthor.ExtractInputSignature(bytes).Select(x => x.Semantic));
         }
         catch (InvalidOperationException)
         {
@@ -399,19 +399,19 @@ internal static class NodePropEntries
     }
 
     // WRB_LoadPropMeshes' 18 floats a vertex from meshsystem's geometry.
-    internal static (float[] Vertices, bool Color) Vertices(VBIB.OnDiskBufferData vb, int lo, int count)
+    internal static (float[] Vertices, bool Color) Vertices(OnDiskBufferData vb, int lo, int count)
         => Vertices(vb, lo, count, vb.InputLayoutFields.FirstOrDefault(f => f.SemanticName == "COLOR"));
 
     /// <param name="cf">The geometry's vertex colour field (none: a zero colour).</param>
-    internal static (float[] Vertices, bool Color) Vertices(VBIB.OnDiskBufferData vb, int lo, int count, VBIB.RenderInputLayoutField cf)
+    internal static (float[] Vertices, bool Color) Vertices(OnDiskBufferData vb, int lo, int count, RenderInputLayoutField cf)
     {
-        var positions = VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
+        var positions = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
         var nf = vb.InputLayoutFields.First(f => f.SemanticName == "NORMAL");
         // Texcoord 0 is the two-component TEXCOORD of lowest semantic index, as MeshGeometry.Classify names
         // it (the loader table 183bb3dd0's texcoord 0), not the layout's first TEXCOORD: generic_tree_large_1
         // lays out a three-component TEXCOORD4 (PivotPaint) before its TEXCOORD0 (s2c_foliagels, ledger 291).
         var tf = vb.InputLayoutFields.Where(f => f.SemanticName == "TEXCOORD" && Lighting.MeshGeometry.Components(f) == 2)
-            .OrderBy(f => f.SemanticIndex).Cast<VBIB.RenderInputLayoutField?>().FirstOrDefault()
+            .OrderBy(f => f.SemanticIndex).Cast<RenderInputLayoutField?>().FirstOrDefault()
             ?? vb.InputLayoutFields.First(f => f.SemanticName == "TEXCOORD");
         var t1 = vb.InputLayoutFields.FirstOrDefault(f => f.SemanticName == "TEXCOORD" && f.SemanticIndex == 1);
         var hasColor = cf.SemanticName != null;
@@ -436,7 +436,7 @@ internal static class NodePropEntries
     }
 
     // SNORM16 as max(v / 32767, -1), halves as they are, otherwise floats.
-    internal static Vector2 Texcoord(VBIB.OnDiskBufferData vb, VBIB.RenderInputLayoutField f, int element)
+    internal static Vector2 Texcoord(OnDiskBufferData vb, RenderInputLayoutField f, int element)
     {
         var off = element + (int)f.Offset;
         return f.Format.ToString() switch

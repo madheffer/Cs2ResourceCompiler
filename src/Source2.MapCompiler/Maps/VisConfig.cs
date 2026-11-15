@@ -1,6 +1,5 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Io;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Maps;
 
@@ -124,11 +123,7 @@ public sealed record VisConfig(int PvsType, System.Numerics.Vector3? DirToSun = 
 
     public static VisConfig Read(string path)
     {
-        using var reader = new BinaryReader(File.OpenRead(path));
-        using var owner = new ValveResourceFormat.Resource();
-        var kv = new BinaryKV3 { Resource = owner };
-        kv.Read(reader);
-        var root = kv.Data.Root;
+        var root = Kv3Binary.Read(File.ReadAllBytes(path)).Root;
         System.Numerics.Vector3? sun = null;
         if (root.ContainsKey("vDirToSun"))
         {

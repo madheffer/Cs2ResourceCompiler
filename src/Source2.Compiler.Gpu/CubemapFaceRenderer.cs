@@ -1,11 +1,12 @@
+using Source2.Compiler.Textures;
+using Source2.Compiler.Materials;
+using Source2.Compiler.Shaders.Vfx;
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Runtime.InteropServices;
 using Silk.NET.Vulkan;
 using Source2.Compiler.Cubemaps;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.CompiledShader;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Gpu;
 
@@ -88,7 +89,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
     private readonly Dictionary<string, SceneDrawRunner.SceneImage> _textures = [];
     private readonly Dictionary<string, Sampler> _samplers = [];
     private readonly Dictionary<string, ValveProgram> _programs = [];
-    private readonly Dictionary<string, Material> _materials = [];
+    private readonly Dictionary<string, CompiledMaterial> _materials = [];
     private readonly Dictionary<string, byte[]> _globals = [];
     private readonly Dictionary<string, SceneDrawRunner.SceneImage> _live = [];
     private readonly List<ImageView> _views = [];
@@ -135,21 +136,18 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
                      .OrderBy(e => e.GetFullPath(), StringComparer.Ordinal))
         {
             package.ReadEntry(entry, out var nodeBytes);
-            using var nodeResource = new Resource();
-            nodeResource.Read(new MemoryStream(nodeBytes));
-            foreach (var o in ((WorldNode)nodeResource.DataBlock!).Data.GetArray("m_aggregateSceneObjects") ?? [])
+            var node = CompiledResource.Read(nodeBytes).Kv3("DATA") ?? throw new InvalidDataException($"{entry.GetFullPath()} has no KV3 DATA block.");
+            foreach (var o in node.GetArray("m_aggregateSceneObjects") ?? [])
             {
                 var name = Path.ChangeExtension(o.GetStringProperty("m_renderableModel") ?? "", ".vmdl_c");
                 package.ReadEntry(package.FindEntry(name) ?? throw new FileNotFoundException(name), out var bytes);
-                using var resource = new Resource();
-                resource.Read(new MemoryStream(bytes));
-                var (mesh, _, _, _) = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First();
-                var ib = mesh.VBIB.IndexBuffers[0];
+                var (mesh, _, _, _) = CompiledModel.Read(bytes).EmbeddedMeshesAndLod().First();
+                var ib = mesh.Vbib.IndexBuffers[0];
                 var calls = mesh.Data.GetArray("m_sceneObjects").SelectMany(so => so.GetArray("m_drawCalls"))
                     .Select(dc => new ModelDrawCall(dc.GetInt32Property("m_nStartIndex"), dc.GetInt32Property("m_nIndexCount"), dc.GetInt32Property("m_nBaseVertex"),
                         dc.GetStringProperty("m_material"), dc.ContainsKey("m_bUseCompressedNormalTangent") && dc.GetBooleanProperty("m_bUseCompressedNormalTangent"),
                         dc.ContainsKey("m_nDepthVertexBufferIndex") ? dc.GetInt32Property("m_nDepthVertexBufferIndex") : 0)).ToList();
-                var streams = mesh.VBIB.VertexBuffers.Select(vb => new VertexStream(vb.Data, vb.ElementSizeInBytes,
+                var streams = mesh.Vbib.VertexBuffers.Select(vb => new VertexStream(vb.Data, vb.ElementSizeInBytes,
                     [.. vb.InputLayoutFields.Select(x => new CubemapFaceVertexLayout.Field(x.SemanticName, x.SemanticIndex, CubemapFaceVertexLayout.FromDxgi(x.Format.ToString()), x.Offset))])).ToList();
                 // m_allFlags reads as the flag names where the writer kept them, else as the number.
                 var flags = o.Children.FirstOrDefault(c => c.Key == "m_allFlags").Value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "";
@@ -344,7 +342,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
         return p;
     }
 
-    private Material Material(string path)
+    private CompiledMaterial Material(string path)
     {
         if (_materials.TryGetValue(path, out var m))
             return m;
@@ -352,14 +350,12 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
             if (pak.FindEntry(path + "_c") is { } e)
             {
                 pak.ReadEntry(e, out var bytes);
-                using var resource = new Resource();
-                resource.Read(new MemoryStream(bytes));
-                return _materials[path] = (Material)resource.DataBlock!;
+                return _materials[path] = CompiledMaterial.Read(bytes);
             }
         throw new FileNotFoundException(path);
     }
 
-    private static Dictionary<string, int> Features(Material material) => material.IntParams.ToDictionary(kv => kv.Key, kv => (int)kv.Value);
+    private static Dictionary<string, int> Features(CompiledMaterial material) => material.IntParams.ToDictionary(kv => kv.Key, kv => (int)kv.Value);
 
     /// <summary>
     /// A world draw's programs for a material in a face pass, by the shader's own render modes (its features file's
@@ -463,8 +459,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
         var pak = Shaders(shader);
         var entry = pak.FindEntry($"shaders/vfx/{shader}_vulkan_50_features.vcs") ?? throw new FileNotFoundException($"{shader} features");
         pak.ReadEntry(entry, out var bytes);
-        using var file = new VfxProgramData();
-        file.Read($"{shader}_vulkan_50_features.vcs", new MemoryStream(bytes));
+        var file = VfxProgramData.Read($"{shader}_vulkan_50_features.vcs", bytes);
         return _modes[shader] = [.. file.FeaturesHeader!.Modes];
     }
 
@@ -472,7 +467,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
     /// A material's $Globals for a pixel program: <see cref="ProgramGlobals.Fill"/> with g_bRenderingToCubemaps = 1 and
     /// gameinfo's ShaderIDColors (ledger 120), the block the program's reflection declares.
     /// </summary>
-    private byte[] Globals(string key, ValveProgram program, Material material, Dictionary<string, VfxExpression.Value> attributes, VfxExpression.Value? shaderIdColor = null,
+    private byte[] Globals(string key, ValveProgram program, CompiledMaterial material, Dictionary<string, VfxExpression.Value> attributes, VfxExpression.Value? shaderIdColor = null,
         Func<string, VfxVariableDescription, int>? textureSlot = null, Func<string, int>? samplerSlot = null)
     {
         if (_globals.TryGetValue(key, out var made))
@@ -653,7 +648,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
     /// A texture index variable's slot (ProgramGlobals.Fill): the material's texture under the variable's name, in
     /// our next free index. A program with no bindless array of that dimension keeps -1, as it had before bindless.
     /// </summary>
-    private int BindlessTexture(ValveProgram program, string name, VfxVariableDescription v, Material material)
+    private int BindlessTexture(ValveProgram program, string name, VfxVariableDescription v, CompiledMaterial material)
     {
         if (IndexViewType(v.VfxType) is not { } viewType || !BindlessArrays(program).Any(r => r.Dim == Dim(viewType)))
             return -1;
@@ -674,7 +669,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
     /// material's (255) or absent, evaluated on the material (as GpuMaterialSampler takes g_sUserConfig). Each distinct
     /// state gets its own slot. The AllowGlobalMipBias variants take no bias: the global mip bias is 0 in the captures.
     /// </summary>
-    private int BindlessSampler(ValveProgram program, string name, Material material)
+    private int BindlessSampler(ValveProgram program, string name, CompiledMaterial material)
     {
         if (!program.Reflection.Resources.Any(r => r.Set == 4 && r.Binding == BindlessSamplerBinding && r.Kind == SpirvReflection.Kind.Sampler))
             return -1;
@@ -969,13 +964,13 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
 
     private static readonly byte[] BarnLightsNone = new byte[4096];
 
-    private VfxExpression.Value ShaderIdColor(Material material)
+    private VfxExpression.Value ShaderIdColor(CompiledMaterial material)
     {
         var (r, g, b) = _shaderIdColors.GetValueOrDefault(material.ShaderName, (0, 0, 0));
         return ProgramGlobals.ShaderIdColor(r, g, b);
     }
 
-    private Sampler MaterialSampler(ValveProgram program, Material material, int slot)
+    private Sampler MaterialSampler(ValveProgram program, CompiledMaterial material, int slot)
     {
         var states = CubemapFaceSamplers.Samplers(program, new ProgramGlobals.MaterialScope(material, program, new Dictionary<string, VfxExpression.Value>()));
         if (!states.TryGetValue(slot, out var info))
@@ -997,7 +992,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
     /// zeros for the light cookies and environment maps (no light or environment map is binned in the cubemap view,
     /// so no pixel reads them). The view's format is sRGB where the variable reads sRGB.
     /// </summary>
-    private SceneDrawRunner.SceneImage Texture(ValveProgram program, VfxVariableDescription v, SpirvReflection.Resource r, Material? material)
+    private SceneDrawRunner.SceneImage Texture(ValveProgram program, VfxVariableDescription v, SpirvReflection.Resource r, CompiledMaterial? material)
     {
         var viewType = r.Dim switch
         {
@@ -1053,9 +1048,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
             if (pak.FindEntry(path + "_c") is { } e)
             {
                 pak.ReadEntry(e, out var bytes);
-                using var resource = new Resource();
-                resource.Read(new MemoryStream(bytes));
-                var r = ((Texture)resource.DataBlock!).Reflectivity;
+                var r = CompiledTexture.Read(bytes).Reflectivity;
                 return _reflectivity[path] = [r.X, r.Y, r.Z, r.W];
             }
         return _reflectivity[path] = null;
@@ -1083,9 +1076,7 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
     {
         if (_textures.TryGetValue(key, out var made))
             return made;
-        using var resource = new Resource();
-        resource.Read(new MemoryStream(vtex));
-        var tex = (Texture)resource.DataBlock!;
+        var tex = CompiledTexture.Read(vtex);
         var format = GpuTextures.VulkanFormat(tex.Format, srgb) ?? throw new NotSupportedException($"{key}: {tex.Format}");
         // The game views every BC1 texture with alpha forced to one (the captures' view swizzles: ze_hold_em_p's BC1
         // material maps and lightmaps), which is Vulkan's BC1 RGB format; BC1 RGBA would read a punch-through block's
@@ -1093,23 +1084,20 @@ public sealed unsafe class CubemapFaceRenderer : IDisposable
         if (tex.Format == VTexFormat.DXT1)
             format = srgb ? Format.BC1RgbSrgbBlock : Format.BC1RgbUnormBlock;
         var layers = tex.Depth > 1 && viewType != ImageViewType.Type3D ? tex.Depth : (tex.Flags & VTexFlags.CUBE_TEXTURE) != 0 ? 6 : 1;
-        var metrics = tex.GetEveryMipLevelMetrics().ToList();
+        var mipCount = Math.Max(1, (int)tex.NumMipLevels);
         // Resident from the render system's preload level (GpuTextures.PreloadLevel, 512): the cube build renders
         // in the frame it is asked for, with nothing streamed in (ledger 195: ze_hold_em_p's 2048 maps are 512 on the
         // GPU in a build with and without RenderDoc). A one-mip texture (the lightmaps) is whole.
         // S2C_CUBE_MAXTEXTURE=<side> (diagnosis) sets another cap, 0 none.
         var cap = int.TryParse(Environment.GetEnvironmentVariable("S2C_CUBE_MAXTEXTURE"), out var side) ? side : GpuTextures.MaxPreloadResolution;
-        var first = cap > 0 ? GpuTextures.PreloadLevel(tex.Width, tex.Height, metrics.Count, cap) : 0;
+        var first = cap > 0 ? GpuTextures.PreloadLevel(tex.Width, tex.Height, mipCount, cap) : 0;
         if (Environment.GetEnvironmentVariable("S2C_CUBE_TRACE") == "1")
-            Console.Error.WriteLine($"cube upload {key}: {tex.Width} x {tex.Height} x {tex.Depth} {tex.Format}, {metrics.Count} mips");
+            Console.Error.WriteLine($"cube upload {key}: {tex.Width} x {tex.Height} x {tex.Depth} {tex.Format}, {mipCount} mips");
         var image = _runner.CreateImage(format, (uint)Math.Max(1, tex.Width >> first), (uint)Math.Max(1, tex.Height >> first), viewType == ImageViewType.Type3D ? (uint)tex.Depth : 1u,
-            (uint)(metrics.Count - first), (uint)layers, viewType, ImageUsageFlags.SampledBit);
-        foreach (var (level, _, _, _, size) in metrics)
+            (uint)(mipCount - first), (uint)layers, viewType, ImageUsageFlags.SampledBit);
+        for (var level = (uint)first; level < mipCount; level++)
         {
-            if (level < first)
-                continue;
-            var data = new byte[size];
-            tex.ReadTextureMipLevel(data, level);
+            var data = tex.ReadMip(level);
             var per = data.Length / layers;
             for (var l = 0; l < layers; l++)
                 _runner.Write(image, (uint)(level - first), (uint)l, data.AsSpan(l * per, per));

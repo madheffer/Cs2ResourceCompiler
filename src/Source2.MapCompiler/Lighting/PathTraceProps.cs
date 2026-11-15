@@ -1,9 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Lighting;
 
@@ -94,7 +93,7 @@ internal static class PathTraceProps
     /// appended to <paramref name="meshes"/> and the instances name them by
     /// their index there.
     /// </summary>
-    public static void Add(List<PathTraceScene.Mesh> meshes, List<KVObject> instances, IEnumerable<Prop> props, Func<string, Model?> loadModel,
+    public static void Add(List<PathTraceScene.Mesh> meshes, List<KVObject> instances, IEnumerable<Prop> props, Func<string, CompiledModel?> loadModel,
                            Func<string, byte[]?>? readMaterial = null)
     {
         foreach (var group in props.GroupBy(p => p.Model, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal))
@@ -128,9 +127,9 @@ internal static class PathTraceProps
 
     // 18174c9c0: over the meshes' LOD mask bytes, -1 when every one is 0xff or the largest is 0, else the
     // largest's highest set bit.
-    private static int HighestLod(Model model)
+    private static int HighestLod(CompiledModel model)
     {
-        var masks = model.GetEmbeddedMeshesAndLoD().Select(m => (byte)m.LoDMask).ToList();
+        var masks = model.EmbeddedMeshesAndLod().Select(m => (byte)m.LodMask).ToList();
         var largest = masks.Count == 0 ? (byte)0 : masks.Max();
         if (masks.All(b => b == 0xff) || largest == 0)
             return -1;
@@ -165,9 +164,9 @@ internal static class PathTraceProps
     /// whose mesh group mask meets the default one), as CMeshes, with the
     /// draw call's own material.
     /// </summary>
-    public static IEnumerable<(PathTraceScene.Mesh Mesh, string Material)> Draws(Model model, int lod, Func<string, byte[]?>? readMaterial = null)
+    public static IEnumerable<(PathTraceScene.Mesh Mesh, string Material)> Draws(CompiledModel model, int lod, Func<string, byte[]?>? readMaterial = null)
     {
-        var all = model.GetEmbeddedMeshesAndLoD().ToList();
+        var all = model.EmbeddedMeshesAndLod().ToList();
         var groupMasks = model.Data.GetArray<ulong>("m_refMeshGroupMasks");
         var defaultMask = model.Data.GetUnsignedIntegerProperty("m_nDefaultMeshGroupMask");
         for (var i = 0; i < all.Count; i++)
@@ -186,7 +185,7 @@ internal static class PathTraceProps
                 foreach (var call in sceneObject.GetArray("m_drawCalls"))
                 {
                     var material = call.GetStringProperty("m_material") ?? "";
-                    yield return (DrawMesh(mesh.VBIB, call, material, readMaterial), material);
+                    yield return (DrawMesh(mesh.Vbib, call, material, readMaterial), material);
                 }
         }
     }
@@ -197,7 +196,7 @@ internal static class PathTraceProps
     /// WRB_LoadPropMeshes appends as streams of their own after the six
     /// standard ones, named by their shader semantic, in field order.
     /// </summary>
-    public static PathTraceScene.Mesh DrawMesh(VBIB vbib, KVObject call, string material, Func<string, byte[]?>? readMaterial = null)
+    public static PathTraceScene.Mesh DrawMesh(Vbib vbib, KVObject call, string material, Func<string, byte[]?>? readMaterial = null)
     {
         var vb = vbib.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
         var ib = vbib.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];

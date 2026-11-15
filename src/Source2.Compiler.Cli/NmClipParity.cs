@@ -1,5 +1,4 @@
 using ValvePak;
-using ValveResourceFormat;
 using Source2.Compiler.Anim;
 using Source2.Compiler.Kv3;
 using Source2.Compiler.KeyValues;
@@ -31,10 +30,7 @@ internal static class NmClipParity
         {
             if (clips >= limit) break;
             pak.ReadEntry(e, out var bytes);
-            using var res = new Resource();
-            res.Read(new MemoryStream(bytes));
-            var data = res.GetBlockByType(BlockType.DATA)!;
-            var raw = bytes.AsSpan((int)data.Offset, (int)data.Size).ToArray();
+            var raw = ResourceFile.Read(bytes)["DATA"]!.Data;
             var orig = Kv3Tree.Read(raw);
             var work = Kv3Tree.Read(raw);
             clips++;

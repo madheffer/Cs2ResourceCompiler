@@ -1,6 +1,7 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Io;
 using System.Numerics;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Maps;
 
@@ -610,15 +611,15 @@ internal static class NodePropAggregates
 
     // A model's draw calls, every LOD: material, unpacked vertices (model space) from the lowest referenced vertex, rebased indices, bounds, LOD mask.
     private static IEnumerable<(string Material, float[] Vertices, int Stride, IReadOnlyList<Physics.MeshWeld.Stream> Streams, int[] Indices, Vector3 Lo, Vector3 Hi, int Lod, bool FloatTexcoords)> Calls(
-        ValveResourceFormat.ResourceTypes.Model model, GameContent content)
+        CompiledModel model, GameContent content)
     {
-        foreach (var (mesh, _, _, lod) in model.GetEmbeddedMeshesAndLoD())
+        foreach (var (mesh, _, _, lod) in model.EmbeddedMeshesAndLod())
         {
             foreach (var sceneObject in mesh.Data.GetArray("m_sceneObjects"))
                 foreach (var call in sceneObject.GetArray("m_drawCalls"))
                 {
-                    var vb = mesh.VBIB.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                    var ib = mesh.VBIB.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                    var vb = mesh.Vbib.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                    var ib = mesh.Vbib.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                     int Index(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
                     var start = call.GetInt32Property("m_nStartIndex");
                     var count = call.GetInt32Property("m_nIndexCount");

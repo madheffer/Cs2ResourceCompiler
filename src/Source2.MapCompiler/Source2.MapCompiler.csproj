@@ -31,15 +31,8 @@
     <Using Include="Microsoft.Extensions.Logging" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <!-- ValveResourceFormat, until the map compiler is moved onto the resource library's own readers
-         (docs/MAP_SPLIT.md, "No VRF in either repo"). Legacy/ holds the VRF-based container layer. -->
-    <Source2CompilerVrfProject Condition="'$(Source2CompilerVrfProject)' == ''">$(MSBuildThisFileDirectory)..\..\third_party\ValveResourceFormat\ValveResourceFormat\ValveResourceFormat.csproj</Source2CompilerVrfProject>
-  </PropertyGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\Source2.Compiler\Source2.Compiler.csproj" />
-    <ProjectReference Include="$(Source2CompilerVrfProject)" />
   </ItemGroup>
 
   <ItemGroup>

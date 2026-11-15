@@ -1,10 +1,10 @@
+using Source2.Compiler.Textures;
+using Source2.Compiler.Materials;
+using Source2.Compiler.Shaders.Vfx;
 using System.Runtime.InteropServices;
 using Silk.NET.Vulkan;
 using Source2.Compiler.Physics;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.CompiledShader;
-using ValveResourceFormat.ResourceTypes;
 using Value = Source2.Compiler.Gpu.VfxExpression.Value;
 
 namespace Source2.Compiler.Gpu;
@@ -56,16 +56,13 @@ public sealed unsafe class GpuMaterialSampler : IDisposable
         MaterialSampler.Renderer? renderer = null;
         if (_files(path) is { } bytes)
         {
-            using var resource = new Resource();
-            resource.Read(new MemoryStream(bytes));
-            if (resource.DataBlock is Material mat)
-                renderer = Build(mat);
+            renderer = Build(CompiledMaterial.Read(bytes));
         }
         _renderers[path] = renderer;
         return renderer;
     }
 
-    private MaterialSampler.Renderer? Build(Material mat)
+    private MaterialSampler.Renderer? Build(CompiledMaterial mat)
     {
         var features = mat.IntParams.Where(p => p.Key.StartsWith("F_", StringComparison.Ordinal)).ToDictionary(p => p.Key, p => (int)p.Value);
         var shader = Path.GetFileNameWithoutExtension(mat.ShaderName);
@@ -109,12 +106,9 @@ public sealed unsafe class GpuMaterialSampler : IDisposable
                 if (!_textures.TryGetValue(key, out var image))
                 {
                     var bytes = _files(path.EndsWith("_c", StringComparison.Ordinal) ? path : path + "_c");
-                    using var resource = new Resource();
                     if (bytes == null)
                         return 0;
-                    resource.Read(new MemoryStream(bytes));
-                    if (resource.DataBlock is not Texture tex)
-                        return 0;
+                    var tex = CompiledTexture.Read(bytes);
                     _textures[key] = image = GpuTextures.Upload(_gpu, tex, v.SrgbRead);
                 }
                 slot = (uint)textureSlots.Count + 1;
@@ -186,7 +180,7 @@ public sealed unsafe class GpuMaterialSampler : IDisposable
 
     // The engine's samplers by name (the same states VRF names them from), and
     // g_sUserConfig, whose address modes the ps evaluates from the material.
-    private Dictionary<string, int> BindSamplers(ProgramRunner runner, ValveProgram ps, Material mat)
+    private Dictionary<string, int> BindSamplers(ProgramRunner runner, ValveProgram ps, CompiledMaterial mat)
     {
         Sampler Make(Filter filter, SamplerMipmapMode mip, SamplerAddressMode u, SamplerAddressMode v)
         {
