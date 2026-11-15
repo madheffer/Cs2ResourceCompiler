@@ -56,9 +56,8 @@ uint32 blockInfoOffset (=8); uint32 blockCount;
 16-aligned block payloads
 ```
 
-Getting the framing right is the easy part, and
-[ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat)
-(MIT) already does it. The hard parts, which are what this repository is, are:
+Getting the framing right is the easy part (this library reads and writes it itself, with no
+ValveResourceFormat). The hard parts, which are what this repository is, are:
 
 **1. The RERL ids.** Every external reference a resource makes is stated twice:
 as a `resource:`-flagged string inside the data tree, and as a RERL entry
@@ -145,20 +144,16 @@ measurements behind that - is in [docs/CONTAINERS.md](docs/CONTAINERS.md).
 
 ## What it is not
 
-It is not yet a general replacement for `resourcecompiler.exe`. A port of the
-map compile is in progress on the `research/map-authoring` branch: entity
-lumps, world and entity collision, and visibility match Valve's output, while
-render geometry and the baked halves (lightmaps, cubemaps) are still open.
-[docs/HANDOFF.md](docs/HANDOFF.md) is the entry point. It does not compile shaders (`.vfx`), or meshes from DCC formats. It does not
+It is not yet a general replacement for `resourcecompiler.exe`. It does not compile shaders (`.vfx`), or meshes from DCC formats. It does not
 implement Valve's asset-processing options. Where the output differs from a
 stock compile, the differences are measured and written down in
 [docs/RESOURCES.md](docs/RESOURCES.md) rather than assumed away.
 
-It does not decompile maps or port Source 1 maps: those are their own repositories, each with this one as
-its `compiler/` submodule. The map decompiler (compiled map package back to Hammer `.vmap`) is
-**cs2-map-decompiler** (`dev@192.168.20.32:repos/cs2-map-decompiler.git`, docs/DECOMPILE.md there), split
-out on 2026-11-15; the CS:GO map porter is **s2port** (`repos/s2port.git`). [docs/DECOMPILE.md](docs/DECOMPILE.md)
-here says where each piece of the decompiler went.
+It does not compile, decompile or port maps. The map compile (Hammer's build steps) and the map decompiler are
+**cs2-map-compiler** (`dev@192.168.20.32:repos/cs2-map-compiler.git`), split out on 2026-11-15 with their history;
+it takes this library as the `Source2.Compiler` package from the s2c feed, and nothing here references it. The
+CS:GO map porter is **s2port** (`repos/s2port.git`). The reverse-engineering tooling is **source2-re-tools**
+(`repos/source2-re-tools.git`); `tools/re` here is a copy the oracle tests call by path.
 
 The contract this project holds itself to is **decoded-tree identity**, not byte
 identity. The KV3 wire format matches: this writes binary v5, the two-buffer
@@ -174,34 +169,12 @@ Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download) and `git`.
 
 ```bash
 git clone <this repo> && cd source2-compiler
-dotnet run tools/vendor.cs     # fetch + patch ValveResourceFormat
 dotnet build
 ```
 
-### Embedding it in a project that already vendors VRF
-
-Point `Source2CompilerVrfProject` at that copy instead, so you do not end up with
-two assemblies named ValveResourceFormat in one output. It has to carry the
-patches in `VrfRequirements.RequiredPatchIds`; carrying more is expected.
-
-Extra patches are safe as long as they land outside the code this library can
-reach, and `VrfRequirements` states what it imports, but the check that matters is by TYPE - both
-lists are pinned against the repository by `VrfRequirementsTests`, so they
-describe the library rather than an intention about it. That gives a host
-something to check mechanically: every patch it holds beyond the required set
-should target VRF code outside those namespaces, and the day one does not, it
-should fail loudly rather than silently change what the compiler emits.
-
-The vendor step clones ValveResourceFormat at the commit pinned in
-[`third_party/VENDORED.json`](third_party/VENDORED.json) and applies the ten
-patches in [`third_party/patches/`](third_party/patches/). Those patches make VRF
-*write* rather than only read (a settable resource version, a writable Panorama
-payload, a VBIB serialize passthrough), make it read community content the engine
-accepts (all-bits mesh-group masks, trailing texture padding, empty LoD masks),
-and guard recursion and dimensions for untrusted input. Each is a literal
-find-and-replace that
-**aborts on conflict**, so an upstream change surfaces as a review rather than a
-silently dropped patch. See [third_party/PATCHES.md](third_party/PATCHES.md).
+Every reader and writer is this project's own: the container, KV3 (read and write), textures, models and
+meshes, materials, compiled shaders (VCS 72), physics. Where code was ported from ValveResourceFormat (MIT) the
+file says so; nothing references it.
 
 ## Running the tests
 
@@ -270,28 +243,26 @@ cmake --build src/Source2.Compiler/Native/bc7enc/build --config Release
 ```
 src/Source2.Compiler/
   Containers/   container authoring from scratch, and the RERL id function
-  Kv3/          KV3 text to compiled, and the decompile direction
+  Kv3/          KV3 text to compiled, binary KV3 read and write
   Building/     material / texture / model / sound / SVG builders
-  Texture/      BC7 encoders (native P/Invoke + the managed seam)
+  Texture/      BC7 encoders (native P/Invoke + the managed seam), texture decode
+  Shaders/      compiled shader programs (Vfx/: VCS 72), dynamic expressions
+  Rubikon/      the physics aggregate reader
+  Models/       ModelDoc and the world-node model builder ModelDoc shares with maps
   Imaging/      bounded image decode
   Io/           VPK reading and writing, path safety, tier0 string and path rules
-  Dmx/          the .vmap reader (binary and keyvalues2 DMX)
-  Maps/         the map compile: meshes, trace scene, visibility, entity lump, settle world
-  Physics/      hulls, region SVM, triangle meshes, world and entity collision
-  Simulation/   the Rubikon physics step the settle runs
+  Dmx/          the DMX reader and writer (binary and keyvalues2)
 src/Source2.Compiler.Cli/    the s2c command
-src/Source2.Compiler.Gpu/    the Vulkan material sampler
 tests/                       parity gates, Valve oracles and replays
-third_party/                 the pinned upstream sha and the patches applied to it
-tools/                       the vendor step, the oracles, capture and reverse-engineering scripts
-docs/                        HANDOFF.md first, then one doc per module
+tools/                       release and pack scripts, the oracles, capture and reverse-engineering scripts
+docs/                        one doc per module; GROUND_TRUTH.md is the evidence ledger
 ```
 
 ## Credits
 
-Built on [ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat),
-[ValvePak](https://github.com/ValveResourceFormat/ValvePak) and
-[ValveKeyValue](https://github.com/ValveResourceFormat/ValveKeyValue), all MIT.
+Built on [ValvePak](https://github.com/ValveResourceFormat/ValvePak) and
+[ValveKeyValue](https://github.com/ValveResourceFormat/ValveKeyValue), MIT; readers ported from
+[ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat) (MIT) say so in their files.
 This project reads and writes formats they made legible; the compiler layer,
 the reverse-engineered id function and the container ground truth are its own.
 

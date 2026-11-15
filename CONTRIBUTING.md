@@ -10,7 +10,7 @@ codebase you already know it and there is nothing here to learn.
 It lives in [`.editorconfig`](.editorconfig) and is applied by the formatter:
 
 ```bash
-dotnet format Source2Compiler.slnx --exclude third_party
+dotnet format Source2Compiler.slnx
 ```
 
 CI runs the same command with `--verify-no-changes`. **Formatting is not a code
@@ -95,24 +95,20 @@ outlived the thing they described by months.
 ## Before you open a pull request
 
 ```bash
-dotnet run tools/vendor.cs                 # fetch pinned VRF, apply patches
 dotnet build -c Release                    # must be warning-free
 dotnet test -c Release --no-build
 dotnet run -c Release --no-build --project src/Source2.Compiler.Cli -- selftest
-dotnet format Source2Compiler.slnx --verify-no-changes --exclude third_party
+dotnet format Source2Compiler.slnx --verify-no-changes
 ```
 
 The build is warning-free today; please keep it that way. Tests that need real
 game bytes skip when CS2 is not installed, so a green run on a machine without
 it is expected and the self-test still compiles every supported type.
 
-## Changing a VRF patch
+## Ported code
 
-Patches under `third_party/patches/` are literal find/replace pairs against the
-pinned upstream commit, and applying one aborts if the snippet is missing or
-matches more than once. If you add a patch the compiler's behaviour depends on,
-add its id to `VrfRequirements.RequiredPatchIds` too; `VrfRequirementsTests`
-checks the two agree.
+Readers ported from ValveResourceFormat (MIT) say so at the top of the file. They are ours to maintain:
+check a change against CS2 itself (Valve's bytes, a DLL oracle, a decompile), not against VRF.
 
 [runtime-style]: https://github.com/dotnet/runtime/blob/main/docs/coding-guidelines/coding-style.md
 [ms-conventions]: https://learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/coding-conventions

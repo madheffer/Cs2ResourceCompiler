@@ -3,6 +3,29 @@
 The `Source2.Compiler` package. Versions are `0.1.<commit count of main>`; one entry per published
 version that changes something a host sees.
 
+## Unreleased (no VRF; the map compiler leaves)
+
+The package references no ValveResourceFormat and contains no map compiler. Map types (Maps, Lighting,
+Cubemaps, Steam Audio, Physics, the settle) moved to cs2-map-compiler, which consumes this package; vpkstuff
+used none of them. Releases carry the package and release.json only: the VRF adapter tar (src/Source2.Compiler.Vrf)
+is no longer built here, so a host that vendors an adapter keeps its own copy.
+
+### Added
+- `Source2.Compiler.Shaders.Vfx`: compiled shader programs (VCS 72), their static combos, render states, write
+  sequences and Vulkan / DXBC bytecode, the static combo selection over a material's features (`VfxCombos`).
+- `Source2.Compiler.Rubikon`: a model's physics (`PhysAggregateData`, parts, hulls, meshes, spheres, capsules);
+  `CompiledModel.EmbeddedPhysics`, `EmbeddedMeshesAndLod`, `KeyValues`.
+- `ResourceRefs.Block` (RERL sorted as resourcecompiler sorts it), `Kv3Binary.ReadEmbedded`, `ResourceText`.
+
+### Changed
+- KV3 v5: arrays of int16 or uint16 values are written as natively typed arrays (element types 0x14 / 0x15 in
+  the auxiliary buffer), as tier0 writes them; they were widened to int32.
+- Public: `Bc7e.Observer`, `DmxBinary.NewElement`, `WorldNodeModels.ObserveTangentFrame` and `ObservedDraw`,
+  `WorldNodeModels.ToolsStream`.
+
+### Removed
+- Every map type (see above).
+
 ## Unreleased (resourcecompiler 1.41.9.5 byte parity)
 
 Every resource this compiler writes now matches the resourcecompiler of the 2026-11-03 CS2 update
