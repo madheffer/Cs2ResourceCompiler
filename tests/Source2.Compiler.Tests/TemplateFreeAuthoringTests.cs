@@ -147,7 +147,7 @@ public class TemplateFreeAuthoringTests
 
         // The parameters landed, and the texture refs are Resource-flagged with
         // matching RERL ids - the invariant a flagless ref breaks.
-        var root = (res.DataBlock as TestKv3Typed)!.Data!;
+        var root = ((TestKv3Typed)res.GetBlockByType("DATA")!).Data;
         Assert.Equal("csgo_complex.vfx", root.GetStringProperty("m_shaderName"));
 
         var texParams = root["m_textureParams"]!.Values.ToList();

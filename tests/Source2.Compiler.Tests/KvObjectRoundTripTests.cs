@@ -41,7 +41,7 @@ public class KvObjectRoundTripTests
         using var ms = new MemoryStream(bytes, writable: false);
         resource.Read(ms);
 
-        var data = Assert.IsType<TestKv3Block>(resource.DataBlock);
+        var data = Assert.IsAssignableFrom<TestKv3Block>(resource.DataBlock);
         Assert.NotNull(data.Data);
         var root = data.Data.Root;
         Assert.NotNull(root);
