@@ -3,11 +3,9 @@
   <!--
     Source2.Compiler - authors compiled Source 2 resources in pure managed code.
 
-    The only project reference is the vendored, patched ValveResourceFormat
-    (see third_party/README.md). VRF supplies the container framing, the KV3
-    binary reader/writer and the block model; everything in src/ is the
-    compiler layer on top: container identity, RED2 authoring, RERL ids,
-    texture/mip/BC encoding, and the KV3 text -> _c path.
+    No project references: the container, KV3 reader and writer, and every resource
+    reader are this project's own (docs/INDEPENDENCE.md). It does not use
+    ValveResourceFormat.
   -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -36,30 +34,13 @@
     <Using Include="Microsoft.Extensions.Logging" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <!--
-      Which ValveResourceFormat to build against. Defaults to the copy this
-      repository vendors and patches (tools/vendor.cs). A host that already
-      vendors its own patched VRF - and so must not end up with two assemblies
-      of the same name - overrides this to point at that one:
-
-        <PropertyGroup>
-          <Source2CompilerVrfProject>...\ValveResourceFormat.csproj</Source2CompilerVrfProject>
-        </PropertyGroup>
-        <ProjectReference Include="...\Source2.Compiler.csproj" />
-
-      The host's copy must be pinned to the sha in third_party/VENDORED.json and
-      carry at least the patches in third_party/patches. A superset is fine.
-    -->
-    <Source2CompilerVrfProject Condition="'$(Source2CompilerVrfProject)' == ''">$(MSBuildThisFileDirectory)..\..\third_party\ValveResourceFormat\ValveResourceFormat\ValveResourceFormat.csproj</Source2CompilerVrfProject>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="$(Source2CompilerVrfProject)" />
-  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
+    <!-- The KV tree (KVObject) and KV3 text (SteamDatabase's ValveKeyValue, not VRF; unpatched). The version
+         is the one VRF 661a5f58 brought in before, so nothing reads differently; docs/INDEPENDENCE.md plans
+         its replacement too. -->
+    <PackageReference Include="ValveKeyValue" Version="0.70.0.499" />
     <!-- main's own KV3 / container stack (Kv3/, Compression/): KV3 Zstd blocks, RED2 CRCs, a VPK
          reader for template lookup. -->
     <PackageReference Include="ValvePak" Version="6.0.0.182" />

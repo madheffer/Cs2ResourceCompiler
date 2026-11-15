@@ -51,23 +51,37 @@ public class VrfRequirementsTests
                      pin.RootElement.GetProperty("vrf").GetProperty("sha").GetString());
     }
 
-    [Fact]
-    public void ImportedNamespaces_MatchTheUsingDirectives()
+    private static SortedSet<string> VrfImports(string project)
     {
-        var src = Path.Combine(RepoRoot(), "src", "Source2.Compiler");
+        var src = Path.Combine(RepoRoot(), "src", project);
         var imported = new SortedSet<string>(StringComparer.Ordinal);
-
         foreach (var file in Directory.EnumerateFiles(src, "*.cs", SearchOption.AllDirectories))
         {
             if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") ||
                 file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
                 continue;
-
             foreach (Match m in Regex.Matches(File.ReadAllText(file),
                          @"^\s*using\s+(?:static\s+)?(ValveResourceFormat(?:\.[\w.]+)?)\s*;", RegexOptions.Multiline))
                 imported.Add(m.Groups[1].Value);
         }
+        return imported;
+    }
 
+    /// <summary>The resource library owns every reader and writer it uses: no VRF import, no VRF project.</summary>
+    [Fact]
+    public void ResourceLibrary_DoesNotDependOnVrf()
+    {
+        Assert.Empty(VrfImports("Source2.Compiler"));
+        var csproj = File.ReadAllText(Path.Combine(RepoRoot(), "src", "Source2.Compiler", "Source2.Compiler.csproj"));
+        Assert.DoesNotContain("ValveResourceFormat.csproj", csproj, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Source2CompilerVrfProject", csproj, StringComparison.Ordinal);
+    }
+
+    /// <summary>Until the map compiler is off VRF too (docs/MAP_SPLIT.md), its imports stay documented.</summary>
+    [Fact]
+    public void ImportedNamespaces_MatchTheUsingDirectives()
+    {
+        var imported = VrfImports("Source2.MapCompiler");
         Assert.NotEmpty(imported);
 
         // The list is documentation, so it should stay true. Declaring a namespace

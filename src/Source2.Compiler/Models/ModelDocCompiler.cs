@@ -55,7 +55,7 @@ public sealed class ModelDocCompiler : IResourceCompiler
         {
             if (!facts.TryGetValue(path, out var f))
                 facts[path] = f = settings.CompiledMaterial?.Invoke(path) is { } m
-                    ? new WorldNodeModels.MaterialFacts(MaterialAuthor.ExtractInputSignature(m), MaterialAuthor.ExtractDepthSignature(m))
+                    ? new WorldNodeModels.MaterialFacts(PackageMaterialAuthor.ExtractInputSignature(m), PackageMaterialAuthor.ExtractDepthSignature(m))
                     : new WorldNodeModels.MaterialFacts([], []);
             return f;
         }

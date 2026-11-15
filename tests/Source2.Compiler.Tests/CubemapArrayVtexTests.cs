@@ -46,7 +46,7 @@ public sealed class CubemapArrayVtexTests(ITestOutputHelper output)
         OldZeros(ours);
 
         using var resource = new Resource();
-        Source2ContainerAuthor.SetResourceVersion(resource, 1);
+        LegacyContainer.SetResourceVersion(resource, 1);
         resource.Blocks.Add(AuthoredKv3.Block(ours, KV3IDLookup.Get("generic"), BlockType.RED2, resource));
         resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.DATA, Data(valve), resource));
         var container = ValveLayout.Serialize(resource);
