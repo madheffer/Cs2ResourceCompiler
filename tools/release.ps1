@@ -14,8 +14,7 @@
        -AllowBreaking, which records the diagnostics in release.json;
     4. writes release.json: the files and their SHA-256, the package's dependency floors, the API
        verdict and the release notes (the lines CHANGELOG.md gained since the previous release);
-    5. uploads the package, the VRF adapter (src/Source2.Compiler.Vrf at this commit, as a tar)
-       and release.json, then publishes them with tools/feed_index.py on the box, which checks the
+    5. uploads the package and release.json, then publishes them with tools/feed_index.py on the box, which checks the
        hashes and rebuilds index.json atomically;
     6. tags the commit v<version> and pushes the tag to the box.
 
@@ -121,7 +120,6 @@ if ($Import) {
 }
 
 # 4. release.json
-& git -C $root archive --format=tar -o (Join-Path $work "adapter.tar") $sha src/Source2.Compiler.Vrf; Invoke-Native "git archive"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $work "Source2.Compiler.$version.nupkg"))
 try {
@@ -153,7 +151,6 @@ $release = [ordered]@{
   date = $date
   files = $files
   nupkg = "Source2.Compiler.$version.nupkg"
-  adapter = [ordered]@{ tar = "adapter.tar"; path = "src/Source2.Compiler.Vrf" }
   dependencies = $deps
   api = [ordered]@{ baseline = $(if ($previous) { $previous.version } else { $null }); validated = [bool]($baseline); breaking = $breaking; diagnostics = $diagnostics }
   notes = $notes

@@ -26,15 +26,7 @@ try
         "sound" => Commands.Sound(args[1..]),
         "id" => Commands.ResourceId(args[1..]),
         "inspect" => Commands.Inspect(args[1..]),
-        "entities" => Commands.Entities(args[1..]),
-        "vis-diff" => Commands.VisDiff(args[1..]),
-        "map-diff" => Commands.MapDiff(args[1..]),
-        "map-physics" => Commands.MapPhysics(args[1..]),
-        "compile-map" => Commands.CompileMap(args[1..]),
         "compile-addon" => CompileAddonCommand.Run(args[1..]),
-        "build-cubemaps" => Commands.BuildCubemaps(args[1..]),
-        "map-validate" => Commands.MapValidate(args[1..]),
-        "entitylump" => Commands.Entitylump(args[1..]),
         "reauthor" => Commands.Reauthor(args[1..]),
         "selftest" => SelfTest.Run(args[1..]),
         // main's resource parity tools (merged 2026-11-05).
@@ -98,46 +90,12 @@ static void Usage()
                     Uncompressed PCM WAV -> compiled sound container. Needs no
                     template.
 
-      s2c map-physics <addon> <map> (--into <map.vpk> -o <out.vpk> | -o <dir>)
-                    [--cs2 <CS2 install dir>] [--gpu]
-                    The map's world collision from its .vmap: world_physics.vmdl_c
-                    and its manifest, into a folder or a copy of a compiled map
-                    package. --gpu samples new-blending materials on the GPU.
-
-      s2c compile-map -i <content/csgo_addons/<addon>/maps/<map>.vmap> [-outroot <dir>]
-                    [resourcecompiler switches...] [--gpu] [--accept-gaps] [--skip-unported]
-                    Hammer's build command line, read as resourcecompiler reads it:
-                    -world builds the world step without a lighting bake (render
-                    nodes, entity lumps and models; visibility with -vis), as
-                    Hammer's Fast Compile does; -entities rebuilds only the
-                    entity lumps (settled unless -nosettle); -phys world_physics.
-                    They replace their files in the compiled map package already
-                    at <outroot or game>/csgo_addons/<addon>/maps, as -fshallow
-                    does; a full build (no builder named) with -f or -fshallow2,
-                    or with no package there yet, starts from an empty one.
-                    -s2cbake <folder> bakes the lighting on the GPU with no vrad3.
-                    Steam Audio at worldspawn's Cleanup or Manual rebake option
-                    bakes nothing, as resourcecompiler does; at Auto the reverb
-                    and pathing bake (custom data is refused by name, as is the
-                    lighting bake with neither -s2cbake nor -vrad3output). --skip-unported runs the rest and
-                    leaves those as the package has them.
-
       s2c compile-addon <addon> [--cs2 <dir>] [--only <content path>]... [--bc7 amd|intel] [-n]
                     The addon's own .vmat and .vtex sources -> game/csgo_addons/<addon>,
                     with their child textures, as resourcecompiler writes them when run
                     on each asset. A map compile never compiles the materials it uses
                     (GROUND_TRUTH 255): run this before compile-map. Files whose bytes
                     are already right are left alone; -n compiles and writes nothing.
-
-      s2c build-cubemaps <game/csgo_addons/<addon>/maps/<map>.vpk>
-                    [--no-scripted-camera] [--intermediates <dir>] [--game <dir>]
-                    Hammer's build cubemaps step on a compiled map, with no game:
-                    every cube rendered on our own Vulkan device, then the array
-                    compiled into maps/<map>/cubemaps/env_cubemap_array.vtex_c in
-                    the package. --intermediates also writes the step's EXRs and
-                    .vtex, which the game keeps under _buildcubemaps only while it
-                    builds. --game names the install's game folder for a package
-                    copied outside it. A map the renderer does not port yet is refused.
 
       s2c id        <resource/path.vtex>
                     Print the 64-bit RERL id the engine looks that path up by.
@@ -151,6 +109,9 @@ static void Usage()
                     Every row runs with no game install; --cs2 (or $CS2_DIR)
                     additionally enables the rows that read stock files to
                     compare against, such as the RERL id check.
+
+    Maps (compile-map, map-physics, build-cubemaps, vis, nav and the decompiler)
+    are cs2-map-compiler's, a repository of its own built on this one's package.
 
     Templates: optional everywhere. Every type here is authored outright, so a
     donor file is only ever a way to carry a detail this compiler does not infer

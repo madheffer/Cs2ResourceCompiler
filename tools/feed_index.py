@@ -5,7 +5,7 @@ The feed is a directory of immutable releases plus an index:
 
     <feed>/releases/<version>/release.json      what tools/release.ps1 wrote (schema 1)
     <feed>/releases/<version>/<nupkg>           the package
-    <feed>/releases/<version>/adapter.tar       src/Source2.Compiler.Vrf at the release commit
+    <feed>/releases/<version>/adapter.tar       (releases up to 0.1.153 only) src/Source2.Compiler.Vrf
     <feed>/index.json                           every release, newest first
 
 --add moves an uploaded <incoming> directory into releases/<version> after checking every file's
