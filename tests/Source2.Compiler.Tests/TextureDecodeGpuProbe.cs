@@ -131,6 +131,40 @@ public sealed unsafe class TextureDecodeGpuProbe(ITestOutputHelper output)
             foreach (var ex in examples)
                 output.WriteLine(ex);
         }
+        SrgbPass(gpu, byFormat, maxSide);
+    }
+
+    // The sRGB forms: DecodeTexels(srgb: true) against the GPU's sRGB formats, all four channels bit for bit.
+    private void SrgbPass(GpuDevice gpu, Dictionary<TF, List<(string Path, CT Tex)>> byFormat, int maxSide)
+    {
+        (TF Format, Format Vk)[] srgb = [(TF.DXT1, Format.BC1RgbaSrgbBlock), (TF.DXT5, Format.BC3SrgbBlock), (TF.BC7, Format.BC7SrgbBlock),
+                                        (TF.RGBA8888, Format.R8G8B8A8Srgb), (TF.BGRA8888, Format.B8G8R8A8Srgb)];
+        foreach (var (format, vk) in srgb)
+        {
+            if (!byFormat.TryGetValue(format, out var list))
+                continue;
+            long texels = 0, exact = 0;
+            foreach (var (_, tex) in list)
+            {
+                var mip = 0u;
+                while (mip + 1 < tex.NumMipLevels && Math.Max(tex.Width >> (int)mip, tex.Height >> (int)mip) > maxSide)
+                    mip++;
+                var w = Math.Max(1, tex.Width >> (int)mip);
+                var g = GpuDecode(gpu, vk, tex.ReadMip(mip), w, Math.Max(1, tex.Height >> (int)mip));
+                var o = tex.DecodeTexels(0, 0, mip, srgb: true);
+                var ow = Math.Max(1, tex.ActualWidth >> (int)mip);   // the display rect, as DecodeTexels lays it out
+                for (var y = 0; y < o.Length / 4 / ow; y++)
+                    for (var x = 0; x < ow; x++)
+                    {
+                        texels++;
+                        var all = true;
+                        for (var k = 0; k < 4; k++)
+                            all &= BitConverter.SingleToInt32Bits(o[(y * ow + x) * 4 + k]) == BitConverter.SingleToInt32Bits(g[(y * w + x) * 4 + k]);
+                        if (all) exact++;
+                    }
+            }
+            output.WriteLine($"{format + " sRGB",-16} {list.Count,8} {texels,10} {"",10} {"",9} {"",7} {"",10} {exact,13}");
+        }
     }
 
     // Which RGBA channels the format stores; the rest are the decoder's constants (BC4 G/B, BC5 B, ...).

@@ -535,9 +535,26 @@ public sealed class CompiledTexture
     /// One face of a mip as RGBA floats in row order, the values the GPU samples (no codec applied): BC1-BC5
     /// exact as the measured GPU decodes them (<see cref="Decoding.BcGpuDecode"/>, <paramref name="vendor"/> or
     /// the default), every other format through <see cref="GenerateBitmap"/> (HDR formats as floats, the rest as
-    /// bytes / 255).
+    /// bytes / 255). <paramref name="srgb"/>: sampled through the sRGB format (as a colour texture is), the colour
+    /// channels go through the GPU's measured sRGB table (<see cref="Decoding.BcGpuDecode.SrgbToLinear"/>); only an
+    /// 8-bit colour format (BC1, BC3, BC7, RGBA8, BGRA8) has an sRGB form.
     /// </summary>
-    public float[] DecodeTexels(uint depth = 0, CubemapFace face = 0, uint mipLevel = 0, Decoding.GpuVendor? vendor = null)
+    public float[] DecodeTexels(uint depth = 0, CubemapFace face = 0, uint mipLevel = 0, Decoding.GpuVendor? vendor = null, bool srgb = false)
+    {
+        var texels = DecodeUnorm(depth, face, mipLevel, vendor);
+        if (srgb)
+        {
+            if (Format is not (VTexFormat.DXT1 or VTexFormat.DXT5 or VTexFormat.BC7 or VTexFormat.RGBA8888 or VTexFormat.BGRA8888))
+                throw new NotSupportedException($"{Format} has no sRGB form.");
+            var v = vendor ?? Decoding.BcGpuDecode.Default;
+            for (var i = 0; i < texels.Length; i++)
+                if (i % 4 != 3)
+                    texels[i] = Decoding.BcGpuDecode.SrgbToLinear((int)Math.Round(texels[i] * 255.0), v);
+        }
+        return texels;
+    }
+
+    private float[] DecodeUnorm(uint depth, CubemapFace face, uint mipLevel, Decoding.GpuVendor? vendor)
     {
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(mipLevel, (uint)NumMipLevels);
         if (!Decoding.BcGpuDecode.Handles(Format))

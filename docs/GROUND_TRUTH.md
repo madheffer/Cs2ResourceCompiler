@@ -7561,4 +7561,13 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Now: `Textures.Decoding.BcGpuDecode` with the packed tables (Texture/Decoding/Gpu, tools/re/bc_gpu_tables.py);
        `CompiledTexture.DecodeTexels` gives the exact floats, `GenerateBitmap` the same rounded to bytes. On 200
        pak01 textures a format (235 million texels) every format's floats equal the GPU's bit for bit.
-     - Not measured: AMD (needs an AMD GPU), the D3D11 path itself (same hardware, other API), sRGB formats.
+     - sRGB (BcSrgbDecodeProbe, 4,194,304 random texels each of BC1, BC3, BC7, RGBA8): the colour decodes as
+       UNORM, then each colour channel goes through one 256-entry table by its UNORM byte, alpha unchanged. The
+       table is the GPU's, not the sRGB curve (2 of 256 entries equal float(curve in double); byte 1 is
+       0.00030517578, 10/32768): `BcGpuDecode.SrgbToLinear`, `DecodeTexels(srgb: true)`.
+     - D3D11 (BcD3D11DecodeProbe, compute Texture2D.Load, 1,048,576 random texels a format): BC1, BC3, BC4, BC5,
+       BC6H, BC7 and the sRGB BC1, BC3, BC7, RGBA8 decode through D3D11 bit for bit as through Vulkan on the
+       same GPU, so the Vulkan-measured tables are CS2's default renderer's.
+     - On 200 pak01 textures a format, the sRGB forms of DXT1, DXT5, BC7, RGBA8888 and BGRA8888 equal the GPU's
+       bit for bit too.
+     - Not measured: AMD (needs an AMD GPU).
