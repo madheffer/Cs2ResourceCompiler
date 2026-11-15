@@ -142,7 +142,7 @@ public sealed record NodeEntryHeader
     /// </summary>
     public static NodeEntryHeader Prop(DmxBinary.Element keys, int nodeId, string model, MeshEntryFlags.Record record,
                                        MeshEntryFlags.IAttributes material, int placementFlags = PropTransform.Place | PropTransform.Texcoords,
-                                       bool baked = false, FgdSchema? schema = null)
+                                       bool baked = false, FgdSchema? schema = null, bool? lodSwitch = null)
     {
         // A key the .vmap leaves out reads as the class's FGD default, as the record does: a
         // prop_static with no rendertocubemaps key compiles with flag 0x400 (default 1;
@@ -165,6 +165,23 @@ public sealed record NodeEntryHeader
         var flags = MeshEntryFlags.Compute(material, baked ? record with { Baked = true } : record);
         var objectFlags = (model.ContainsAscii(".vmdl") ? 8u : 0u) | (On("disableinlowquality") ? 0x80u : 0u)
             | ((Key("rendertocubemaps") is null || On("rendertocubemaps")) ? 0x400u : 0u) | ((placementFlags & 2) != 0 ? 0x20000u : 0u);
+        // AddStaticProps (180255b90, after WRB_MeshEntryFlags): a mesh whose placement
+        // flags lack bit 0 (a local-space prop, flags 8) gains attribute bit 1 (no
+        // merge), so it joins the instanced list and compiles as its own "nomerge"
+        // object (s2c_foliagels against Valve's compile).
+        var attributes = flags.Flags | ((placementFlags & PropTransform.Place) == 0 ? 2UL : 0UL);
+        if (lodSwitch is { } lods)
+        {
+            // Its baked entries only: renderwithdynamic (record +0x171) adds 2 and 4; placement bit 0x10 adds
+            // 2 and 4 too (a lit build's clutter, not made here). Once every prop is in, each entry with +0x1a0
+            // set, no placement bit 0x10, no attribute 2 and a CMesh with LOD switch distances (+0x40, its
+            // model's m_lodGroupSwitchDistances under LOD -1) gains 0x2002: CompileNode's agg_prop list
+            // (Mako's cage lights, two LODs, against Valve's -world package).
+            if (On("renderwithdynamic"))
+                attributes |= 6;
+            if (lods && (placementFlags & 0x10) == 0 && (attributes & 2) == 0)
+                attributes |= 0x2002;
+        }
         return new NodeEntryHeader
         {
             Tint = tint,
@@ -181,11 +198,7 @@ public sealed record NodeEntryHeader
             Byte1a0 = 1,
             Byte1a2 = 0,
             Byte1a3 = (byte)(Key("emissive") is null || On("emissive") ? 1 : 0),
-            // AddStaticProps (180255b90, after WRB_MeshEntryFlags): a mesh whose placement
-            // flags lack bit 0 (a local-space prop, flags 8) gains attribute bit 1 (no
-            // merge), so it joins the instanced list and compiles as its own "nomerge"
-            // object (s2c_foliagels against Valve's compile).
-            Attributes = flags.Flags | ((placementFlags & PropTransform.Place) == 0 ? 2UL : 0UL),
+            Attributes = attributes,
             TextureWidth = flags.Width,
             TextureHeight = flags.Height,
             SkyboxSlot = flags.SkyboxSlot,

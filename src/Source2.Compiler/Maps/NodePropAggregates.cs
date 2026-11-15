@@ -326,16 +326,74 @@ internal static class NodePropAggregates
         => SmartPropChildren(entity, entity.Element.Get<DmxBinary.Element>("entity_properties"), entity.Element.GetValue<int>("nodeID") ?? -1, content, notes)
             .Select(p => (p.Model, p.Keys, p.Matrix, p.Skin));
 
-    // A smart prop's models (CMapSmartProp, evaluated as the collision does),
-    // each a prop_static with the node's keys and the element's material
-    // group as its skin; non-uniformly scaled ones are baked instead (not
-    // measured on a smart prop).
-    private static IEnumerable<Placed> SmartPropChildren(MapMeshes.EntityNode entity, DmxBinary.Element? keys, int id, GameContent content, List<string>? notes)
+    /// <summary>
+    /// The keys a smart prop's part carries as a prop_static (rc 18122d020, for a part whose class has
+    /// static_prop metadata): model; rendercolor "%i %i %i" of the part's tint and renderamt its alpha times
+    /// the node's alpha (+0x658) / 255; fademindist (fadeStartDistance +0x660) and fademaxdist (cullDistance
+    /// +0x65c) only when the cull distance is above 0; lightingorigin; disableshadows the node's (+0x670,
+    /// the part's castShadows defaults to 1); bakelighting (bakedLigthtingMode +0x674), lightmapscalebias,
+    /// bakelightdoublesided, emissive, emissive_lighting_boost, emissive_mode (+0x684, no .vmap attribute:
+    /// 0); solid when collisionMode (+0x688) is 0 or more; collision_override when set; visoccluder,
+    /// rendertocubemaps, disableinlowquality, baketoworld (bakeToWorld +0x69b), disablemerging,
+    /// renderwithdynamic; lodlevel the part's (-1). An attribute the node lacks takes CMapSmartProp's
+    /// constructor default (1810994f0).
+    /// </summary>
+    internal static DmxBinary.Element SmartPropKeys(DmxBinary.Element node, string model, uint tint)
+    {
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        int Int(string name, int fallback) => node.Attributes.GetValueOrDefault(name) is { } v and not string ? Convert.ToInt32(v, ci) : fallback;
+        float Float(string name, float fallback) => node.Attributes.GetValueOrDefault(name) is { } v and not string ? Convert.ToSingle(v, ci) : fallback;
+        string Bool(string name, bool fallback) => (node.Attributes.GetValueOrDefault(name) is bool b ? b : fallback) ? "1" : "0";
+        var keys = new DmxBinary.Element("EntityProperties", "", Guid.Empty);
+        void Set(string key, string value) => keys.Attributes[key] = value;
+        Set("model", model);
+        Set("rendercolor", $"{tint & 0xff} {(tint >> 8) & 0xff} {(tint >> 16) & 0xff}");
+        Set("renderamt", ((int)(tint >> 24) * Int("alpha", 0xff) / 0xff).ToString(ci));
+        var cull = Float("cullDistance", 0f);
+        if (0f < cull)
+        {
+            Set("fademindist", Float("fadeStartDistance", -1f).ToString("R", ci));
+            Set("fademaxdist", cull.ToString("R", ci));
+        }
+        Set("lightingorigin", node.Get<string>("lightingOriginName") ?? "");
+        Set("disableshadows", Int("disableShadows", 0).ToString(ci));
+        Set("bakelighting", Int("bakedLigthtingMode", -1).ToString(ci));
+        Set("lightmapscalebias", Int("lightmapScaleBias", 0).ToString(ci));
+        Set("bakelightdoublesided", Bool("bakeLightingDoubleSided", false));
+        Set("emissive", Bool("emissiveLightingEnabled", true));
+        Set("emissive_lighting_boost", Float("emissiveLightingBoost", 1f).ToString("R", ci));
+        Set("emissive_mode", "0");
+        if (Int("collisionMode", -1) is var solid and >= 0)
+            Set("solid", solid.ToString(ci));
+        if (node.Get<string>("collisionPropertyOverride") is { Length: > 0 } collision)
+            Set("collision_override", collision);
+        Set("visoccluder", Bool("isVisOccluder", false));
+        Set("rendertocubemaps", Bool("renderToCubeMaps", true));
+        Set("disableinlowquality", Bool("disabledInLowQuality", false));
+        Set("baketoworld", Bool("bakeToWorld", false));
+        Set("disablemerging", Bool("disableMerging", false));
+        Set("renderwithdynamic", Bool("renderWithDynamic", false));
+        Set("lodlevel", "-1");
+        Set("clutterinstance", "0");
+        return keys;
+    }
+
+    /// <summary>A smart prop node's tint as the evaluation receives it: tintColor packed r, g, b, a from the low byte.</summary>
+    internal static uint SmartPropTint(DmxBinary.Element node)
+        => node.Attributes.GetValueOrDefault("tintColor") is byte[] { Length: 4 } c ? c[0] | ((uint)c[1] << 8) | ((uint)c[2] << 16) | ((uint)c[3] << 24) : 0xffffffff;
+
+    /// <summary>
+    /// A smart prop's parts (CMapSmartProp, evaluated as the collision does) as the prop_statics the map
+    /// export makes of them (<see cref="SmartPropKeys"/>): placement, keys, the element's material group as
+    /// the skin, and whether AddStaticProps bakes it (baketoworld or a non-uniform scale,
+    /// <see cref="NodePropEntries.Baked"/>).
+    /// </summary>
+    internal static IEnumerable<(string Model, DmxBinary.Element Keys, float[] Matrix, Vector3 Scales, string? Skin, bool Baked)> SmartPropParts(
+        MapMeshes.EntityNode entity, GameContent content, List<string>? notes)
     {
         var e = entity.Element;
+        var id = e.GetValue<int>("nodeID") ?? -1;
         var file = e.Get<string>("smartPropFilename") ?? "";
-        // A smart prop node has no entity_properties: its own keys stand in.
-        keys ??= e;
         if (content.SmartProp(file) is not { } definition)
         {
             notes?.Add($"smart prop {id} ({file}): no definition");
@@ -349,7 +407,7 @@ internal static class NodePropAggregates
         List<SmartPropEvaluator.Placement> placements;
         try
         {
-            placements = SmartPropEvaluator.Evaluate(definition, configuration, parameters, node);
+            placements = SmartPropEvaluator.Evaluate(definition, configuration, parameters, node, SmartPropTint(e));
         }
         catch (NotSupportedException ex)
         {
@@ -359,11 +417,21 @@ internal static class NodePropAggregates
         foreach (var placement in placements)
         {
             var (origin, angles, scales) = SmartPropEvaluator.PropPlacement(node, placement);
+            var keys = SmartPropKeys(e, placement.Model, placement.Tint);
+            if (placement.MaterialGroup is { } group)
+                keys.Attributes["skin"] = group;
             var magnitudes = new[] { MathF.Abs(scales.X), MathF.Abs(scales.Y), MathF.Abs(scales.Z) };
-            if (magnitudes.Max() - magnitudes.Min() > 0.0001f)
-                continue;
-            yield return new Placed(placement.Model, keys, PropTransform.Matrix(origin, angles, scales), id, placement.MaterialGroup);
+            var baked = NodePropEntries.Flag(keys.Get<string>("baketoworld")) || magnitudes.Max() - magnitudes.Min() > 0.0001f;
+            yield return (placement.Model, keys, PropTransform.Matrix(origin, angles, scales), scales, placement.MaterialGroup, baked);
         }
+    }
+
+    // The parts AddStaticProps leaves to the aggregates: those it does not bake.
+    private static IEnumerable<Placed> SmartPropChildren(MapMeshes.EntityNode entity, DmxBinary.Element? keys, int id, GameContent content, List<string>? notes)
+    {
+        foreach (var part in SmartPropParts(entity, content, notes))
+            if (!part.Baked)
+                yield return new Placed(part.Model, part.Keys, part.Matrix, id, part.Skin);
     }
 
     /// <summary>18026d7a0's per-prop test, the keys it reads (UseStaticEnvMapForObjectsWithLightingOrigin on).</summary>

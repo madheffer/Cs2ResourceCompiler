@@ -27,6 +27,12 @@ internal static class SmartPropEvaluator
     {
         /// <summary>The model element's material group (m_MaterialGroupName, a variable's value), or null.</summary>
         public string? MaterialGroup { get; init; }
+
+        /// <summary>
+        /// The part's tint (+0x6c, r in the low byte): the context's current tint when the model element
+        /// evaluates (18000bd70 copies context +0x120), the node's tint unless a SetTintColor changed it.
+        /// </summary>
+        public uint Tint { get; init; } = 0xffffffff;
     }
 
     /// <summary>A node's stored configuration entry: the element's random seed and its locators' deltas.</summary>
@@ -90,6 +96,15 @@ internal static class SmartPropEvaluator
             while (n > max);
             return low + (int)(n % x);
         }
+
+        /// <summary>tier0's RandomFloat: AM times the next number, capped at RNMX, scaled into [low, high).</summary>
+        public float RandomFloat(float low, float high)
+        {
+            var f = (1f / 2147483647f) * GenerateRandomNumber();
+            if (f > 1f - 1.2e-7f)
+                f = 1f - 1.2e-7f;
+            return (f * (high - low)) + low;
+        }
     }
 
     /// <summary>
@@ -139,6 +154,10 @@ internal static class SmartPropEvaluator
     private sealed class Context
     {
         public CTransform Transform;
+        // +0x120 the current tint (in the state block saved with the transform), +0x190 the object's:
+        // 18000eb00 sets both to the node's tint.
+        public uint Tint = 0xffffffff;
+        public uint ObjectTint = 0xffffffff;
         public readonly List<int> Path = [];
         public readonly Dictionary<string, object> Variables = new(Tier0Strings.IgnoreCase);
         public required IReadOnlyDictionary<string, Entry> Configuration { get; init; }
@@ -172,9 +191,10 @@ internal static class SmartPropEvaluator
     /// the element transform to it). The compile starts from the node's world
     /// transform (<see cref="NodeTransform"/>), so placements come out in the world.
     /// </summary>
-    public static List<Placement> Evaluate(KVObject root, IReadOnlyDictionary<string, Entry> configuration, IReadOnlyDictionary<string, object> parameters, CTransform start)
+    public static List<Placement> Evaluate(KVObject root, IReadOnlyDictionary<string, Entry> configuration, IReadOnlyDictionary<string, object> parameters, CTransform start,
+                                           uint tint = 0xffffffff)
     {
-        var context = new Context { Configuration = configuration, Transform = start };
+        var context = new Context { Configuration = configuration, Transform = start, Tint = tint, ObjectTint = tint };
         foreach (var v in root.GetArray("m_Variables") ?? [])
         {
             var name = v.GetStringProperty("m_VariableName");
@@ -195,6 +215,7 @@ internal static class SmartPropEvaluator
         if (element.ContainsKey("m_bEnabled") && !Bool(element["m_bEnabled"], context))
             return;
         var saved = context.Transform;
+        var savedTint = context.Tint;
         context.Path.Add(element.GetInt32Property("m_nElementID"));
         context.Stream = null;
         if (ApplyModifiers(element, context))
@@ -202,8 +223,9 @@ internal static class SmartPropEvaluator
         context.Path.RemoveAt(context.Path.Count - 1);
         // A ModifyState answers no to slot 0x68: its modifiers change the
         // state its later siblings see, so its transform is not restored.
+        // The tint (+0x120) is in the same saved block (18000f320, 18000d400).
         if (element.GetStringProperty("_class") != "CSmartPropElement_ModifyState")
-            context.Transform = saved;
+            (context.Transform, context.Tint) = (saved, savedTint);
     }
 
     private static void Evaluate(KVObject element, Context context)
@@ -224,6 +246,7 @@ internal static class SmartPropEvaluator
                     element.ContainsKey("m_vModelScale") ? Vector(element["m_vModelScale"], context) : Vector3.One)
                 {
                     MaterialGroup = element.ContainsKey("m_MaterialGroupName") ? Value(element["m_MaterialGroupName"], context) as string : null,
+                    Tint = context.Tint,
                 });
                 break;
             case "CSmartPropElement_FitOnLine":
@@ -250,6 +273,8 @@ internal static class SmartPropEvaluator
             switch (m.GetStringProperty("_class"))
             {
                 case "CSmartPropOperation_SetTintColor":
+                    SetTintColor(m, context);
+                    break;
                 case "CSmartPropOperation_MaterialTint":
                     break;
                 case "CSmartPropFilter_VariableValue":
@@ -565,6 +590,61 @@ internal static class SmartPropEvaluator
             return new Vector3(r * v.X, r * v.Y, r * v.Z);
         }
         return l == 0f ? Vector3.Zero : throw new NotSupportedException("normalising a denormal vector");
+    }
+
+    // CSmartPropOperation_SetTintColor's apply (smartprops 18001aae0; defaults from its constructor
+    // 18005dcf2: m_SelectionMode and m_Mode literal 0). The choice: RANDOM (0) draws RandomFloat(0, the
+    // weights' sum) on the element's stream, seeded first from the stored seed; FIRST (1) the first;
+    // SPECIFIC (2) m_ColorSelection clamped to the choices. Its colour then multiplies the object tint
+    // (MULTIPLY_OBJECT 0, +0x190) or the current one (MULTIPLY_CURRENT 1, +0x120) per channel as
+    // (a * b + 0x7f) / 0xff, or replaces it (REPLACE 2); the result is the current tint.
+    private static void SetTintColor(KVObject m, Context context)
+    {
+        static int Enum(object v, params string[] names) => v switch
+        {
+            string s when Array.IndexOf(names, s) is var i and >= 0 => i,
+            string s => throw new NotSupportedException($"SetTintColor value {s}"),
+            float f => (int)f,
+            bool b => b ? 1 : 0,
+            _ => 0,
+        };
+        var choices = m.GetArray("m_ColorChoices") ?? [];
+        if (choices.Count == 0)
+            return;
+        var selection = m.ContainsKey("m_SelectionMode") ? Enum(Value(m["m_SelectionMode"], context), "RANDOM", "FIRST", "SPECIFIC") : 0;
+        int index;
+        switch (selection)
+        {
+            case 0:
+                // The weights (18000f... per choice +0x40) are not read: with one choice the draw cannot change it.
+                if (choices.Count > 1)
+                    throw new NotSupportedException("SetTintColor random selection among several colours is not ported");
+                // Without a stored seed the element seeds from the unseeded master stream; one choice
+                // needs no number, and any later draw of that element refuses the same way.
+                if (context.Configuration.TryGetValue(context.PathKey, out var stored) && stored.Seed != int.MinValue)
+                    context.ElementStream().RandomFloat(0f, 1f);
+                index = 0;
+                break;
+            case 1:
+                index = 0;
+                break;
+            case 2:
+                index = Math.Min(Math.Max((int)Float(m["m_ColorSelection"], context), 0), choices.Count - 1);
+                break;
+            default:
+                return;
+        }
+        var color = Value(choices[index]["m_Color"], context) is float[] { Length: >= 3 } c ? c : throw new NotSupportedException("SetTintColor colour without three components");
+        // A three-component colour's alpha is 255 (the parts' alpha; checked against Valve's compile).
+        uint packed = (uint)(byte)color[0] | ((uint)(byte)color[1] << 8) | ((uint)(byte)color[2] << 16) | ((uint)(color.Length > 3 ? (byte)color[3] : 255) << 24);
+        var mode = m.ContainsKey("m_Mode") ? Enum(Value(m["m_Mode"], context), "MULTIPLY_OBJECT", "MULTIPLY_CURRENT", "REPLACE") : 0;
+        if (mode != 2)
+        {
+            var b = mode == 0 ? context.ObjectTint : context.Tint;
+            uint Channel(int shift) => ((((packed >> shift) & 0xff) * ((b >> shift) & 0xff)) + 0x7f) / 0xff & 0xff;
+            packed = Channel(0) | (Channel(8) << 8) | (Channel(16) << 16) | (Channel(24) << 24);
+        }
+        context.Tint = packed;
     }
 
     // An attribute value: a literal, or { m_SourceName } naming a variable.

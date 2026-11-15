@@ -38,6 +38,8 @@ internal static class NodeMeshEntries
 
         /// <summary>A baked prop's placement flags (+0x168, <see cref="PropTransform"/>): 3, or 8 in local space.</summary>
         public int Placement { get; init; } = PropTransform.Place | PropTransform.Texcoords;
+        /// <summary>A baked prop mesh loaded with every LOD whose model has LOD switch distances (its CMesh +0x40 count).</summary>
+        public bool LodSwitch { get; init; }
 
         /// <summary>
         /// The entry's +0x1c8 (3x4, row major): WRBNode_BakePropMeshes (1802b3060) records the prop's own

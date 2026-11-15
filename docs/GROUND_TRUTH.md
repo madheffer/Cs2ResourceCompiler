@@ -6800,3 +6800,36 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        alignment.
      - Result: Mako -world 1,131 of 1,782 files Valve's (was 967). probe01, cardtest, ze_hold_em_p, atixref,
        ze_obj_christmas_factory, ze_doom_p2, ze_obj_elf_penis_factory_mat and ze_shaurma unchanged.
+
+306. **Smart prop parts are prop_static records; baked LOD props go to the agg_prop list** (2026-11-15, CS2
+     closed: rc 0923 decompiles of 18122d020 (a smart prop part's keys), CMapSmartProp's property table
+     1810a3e00 with its getters and constructor 1810994f0, WRBNode_AddStaticProps 180255b90 (its tail, past
+     Ghidra's first 400 lines), WRB_LoadPropMeshes 1801d30d0, CMesh_WriteKV3 1812e4550, CMeshList::Accepts
+     180270720; smartprops 0923 decompiles of SetTintColor's apply 18001aae0, its constructor 18005dcf2,
+     18000eb00, 18000f320 / 18000d400, the model element 18000bd70; specimen Mako against Valve's -world package
+     of 11-15). READ, then MEASURED on Mako (the three-component colour's alpha 255). Closes most of A.17.
+     - The map export makes each smart prop part a prop_static (for a class with static_prop metadata) whose key
+       table holds exactly what 18122d020 writes from the node: rendercolor/renderamt from the part's tint and the
+       node's alpha, fades only with a cull distance above 0, disableshadows (the part's castShadows, default 1,
+       keeps the node's), bakelighting from bakedLigthtingMode, emissive*, emissive_mode 0 (+0x684, no .vmap
+       attribute), solid from collisionMode >= 0, visoccluder, rendertocubemaps, disableinlowquality,
+       baketoworld (bakeToWorld +0x69b), disablemerging, renderwithdynamic, lodlevel -1. No FGD defaults: the
+       table is only these keys. So a bakeToWorld smart prop is baked by AddStaticProps like a baketoworld prop.
+       Mako's 36 smart props all have bakeToWorld true (floodlight, ac_unit, ladders, lamp): Valve's agg_merge,
+       our agg_prop before. atixref's radiator (bakeToWorld false) still aggregates. Ported as
+       NodePropAggregates.SmartPropKeys / SmartPropParts and NodePropEntries.FromWorld (parts' order within one
+       node not measured).
+     - SetTintColor: selection RANDOM 0 (RandomFloat over the weights' sum on the element stream; weights not
+       ported, one choice only), FIRST 1, SPECIFIC 2 (m_ColorSelection clamped); mode MULTIPLY_OBJECT 0 (the
+       node's tint, context +0x190), MULTIPLY_CURRENT 1 (+0x120), REPLACE 2; per channel (a * b + 0x7f) / 0xff;
+       both default 0. The current tint is in the state block saved with the transform; 18000eb00 sets both tints
+       to the node's tint; a model part takes the current tint (+0x6c). SmartPropEvaluator.SetTintColor.
+     - AddStaticProps, after all props: an entry with +0x1a0 set, no placement bit 0x10, no attribute 2 and a CMesh
+       whose +0x40 (lod_group_switch_distances count) is non-zero gains attributes 0x2002; CompileNode's agg_prop
+       list wants 0x2000. WRB_LoadPropMeshes fills +0x40 from the model's switch distances (+0xb8) only when the
+       group's LOD is -1. renderwithdynamic (+0x171) adds 2 and 4 to a baked entry. Mako's cage lights (baketoworld
+       1, lodlevel -1, two LODs) are Valve's agg_prop_industrial_lights_*. NodeEntryHeader.Prop lodSwitch.
+     - Result: Mako -world 1,211 of 1,782 (was 1,131). Left on the baked props: n0_lr1_agg_merge_floodlighton_0's
+       texcoord stream is R32G32 in Valve's (format 16), R16G16 in ours: WRB_LoadPropMeshes marks the texcoord
+       stream high precision when the geometry info's draw record +0x66 is set (+0x67 for tangent), not traced;
+       the two walkway aggregates differ in MIDX only.

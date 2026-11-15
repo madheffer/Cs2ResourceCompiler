@@ -40,7 +40,7 @@ internal static class NodePropEntries
     {
         var (_, entities) = MapMeshes.ReadWithEntities(doc);
         var copyIds = CopyIds(doc, content);
-        var baked = new List<(MapMeshes.EntityNode Node, int Id, string Model, int Walk, string List)>();
+        var baked = new List<(Func<IEnumerable<NodeMeshEntries.Entry>> Make, int Walk, int Part, string List)>();
         // EntityLump_StaticModelRecord (180245770) files each record in the node's
         // CUtlRBTree at +0x190 (strcmp, 180291a00) under its model path, or under
         // "%s_%d" of a process-wide counter from 0 (183bb375c) when the record has
@@ -51,6 +51,24 @@ internal static class NodePropEntries
         {
             var ent = entities[walk];
             var keys = ent.Element.Get<DmxBinary.Element>("entity_properties");
+            if (!ent.Hidden && ent.Element.Type == "CMapSmartProp")
+            {
+                // A smart prop's parts are prop_static records of their own (rc 18122d020's keys); the
+                // ones it bakes join here, in the node's walk place, later parts first like later props.
+                // Valve's order between parts of one node is not measured.
+                var nodeId = ent.Through.Count == 0 ? ent.Element.GetValue<int>("nodeID") ?? -1 : copyIds.GetValueOrDefault(Key(ent.Element, ent.Through), -1);
+                var part = 0;
+                foreach (var p in NodePropAggregates.SmartPropParts(ent, content, notes))
+                {
+                    if (p.Baked && RecordModel(p.Model) is { } partModel)
+                    {
+                        var (partKeys, matrix) = (p.Keys, p.Matrix);
+                        baked.Add((() => Entries(partKeys, matrix, null, nodeId, partModel, content, notes, shaders, schema), walk, part, partModel));
+                    }
+                    part++;
+                }
+                continue;
+            }
             if (ent.Hidden || keys?.Get<string>("classname") != "prop_static")
                 continue;
             if (RecordModel(keys.Get<string>("model")) is not { } model)
@@ -61,12 +79,13 @@ internal static class NodePropEntries
             if (!Baked(ent.Element, keys) && !deformed)
                 continue;
             var id = ent.Through.Count == 0 ? ent.Element.GetValue<int>("nodeID") ?? -1 : copyIds.GetValueOrDefault(Key(ent.Element, ent.Through), -1);
-            baked.Add((ent, id, model, walk, list));
+            var node = ent;
+            baked.Add((() => Entries(node, id, model, content, notes, shaders, schema), walk, 0, list));
         }
         var entries = new List<NodeMeshEntries.Entry>();
         foreach (var group in baked.GroupBy(b => b.List, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal))
-            foreach (var (node, id, model, _, _) in group.OrderByDescending(b => b.Walk))
-                entries.AddRange(Entries(node, id, model, content, notes, shaders, schema));
+            foreach (var b in group.OrderByDescending(b => b.Walk).ThenByDescending(b => b.Part))
+                entries.AddRange(b.Make());
         return entries;
     }
 
@@ -122,7 +141,16 @@ internal static class NodePropEntries
     private static IEnumerable<NodeMeshEntries.Entry> Entries(MapMeshes.EntityNode node, int id, string modelName, GameContent content, List<string>? notes, ShaderLibrary? shaders,
                                                                FgdSchema? schema)
     {
-        var keys = node.Element.Get<DmxBinary.Element>("entity_properties")!;
+        var prop = Physics.WorldCollision.PropOf(node);
+        var scales = node.Element.GetValue<Vector3>("scales") ?? Vector3.One;
+        return Entries(node.Element.Get<DmxBinary.Element>("entity_properties")!, PropTransform.Matrix(prop.Origin, prop.Angles, scales), prop.Deformer,
+                       id, modelName, content, notes, shaders, schema);
+    }
+
+    // A prop record's entries from its keys and placement (a smart prop's part has no entity node).
+    private static IEnumerable<NodeMeshEntries.Entry> Entries(DmxBinary.Element keys, float[] matrix, LatticeDeformer? deformer, int id, string modelName,
+                                                               GameContent content, List<string>? notes, ShaderLibrary? shaders, FgdSchema? schema)
+    {
         if (content.LoadedModel(modelName + "_c") is not { } model)
         {
             notes?.Add($"prop {id}: model {modelName} not found");
@@ -133,14 +161,15 @@ internal static class NodePropEntries
         var remap = MaterialGroup(model, keys.Get<string>("skin"));
         var lodLevel = int.TryParse(NodeEntryHeader.PropKey(keys, "lodlevel", schema), out var l) ? l : -1;
         var lodMask = lodLevel == -1 ? 0xff : 1 << lodLevel;
-        var prop = Physics.WorldCollision.PropOf(node);
-        var scales = node.Element.GetValue<Vector3>("scales") ?? Vector3.One;
-        var matrix = PropTransform.Matrix(prop.Origin, prop.Angles, scales);
+        // WRB_LoadPropMeshes (1801d30d0) with the group's LOD -1 copies the model's LOD switch
+        // distances (+0xb8) into each CMesh's +0x40 (CMesh_WriteKV3's lod_group_switch_distances);
+        // AddStaticProps then sends such a baked mesh to the agg_prop list (NodeEntryHeader.Prop).
+        var lodSwitch = lodLevel == -1 && (model.Data.GetArray<double>("m_lodGroupSwitchDistances")?.Length ?? 0) > 0;
         // CMesh_ApplyPropDeformer (1812d7510, from WRBNode_BakePropMeshes): the
         // model-space meshes' positions, normals and tangents through the
         // prop's lattice with the prop's matrix (+0x10), before the bake places them.
-        var deform = prop.Deformer?.For(matrix);
-        if (prop.Deformer is { Mirror: true })
+        var deform = deformer?.For(matrix);
+        if (deformer is { Mirror: true })
             throw new NotSupportedException($"prop {id}: a mirrored deformer (winding and tangent w flipped) is not ported");
         // The prop's transform flags (+0x168), one for all its draws: AddStaticProps
         // (180255b90, after 1802b6db0's material list: the draw materials of the
@@ -198,7 +227,7 @@ internal static class NodePropEntries
                         }
                     PropTransform.Apply(vertices, stride, 0, 3, 6, 10, 16, matrix, PropTransform.AxesOf(info?.Shader, info?.Params), flags);
                     var indices = Enumerable.Range(start, count).Select(i => Index(i) + bas - lo).ToArray();
-                    yield return new NodeMeshEntries.Entry(id, material, stride, loaded.Streams, vertices, indices) { Record = RecordOf(keys), Source = keys, Placement = flags, Matrix = (flags & PropTransform.Place) == 0 ? matrix : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0] };
+                    yield return new NodeMeshEntries.Entry(id, material, stride, loaded.Streams, vertices, indices) { Record = RecordOf(keys), Source = keys, Placement = flags, LodSwitch = lodSwitch, Matrix = (flags & PropTransform.Place) == 0 ? matrix : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0] };
                 }
         }
     }

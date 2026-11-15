@@ -78,7 +78,8 @@ internal static class WorldNodeBuild
                                                                m => Attributes(m).Bool(MeshEntryFlags.Key("SupportsLightmapping")) == true);
             }
         return [.. entries.Select(o => new Node(o, NodeEntryHeader.Prop(o.Source!, o.NodeId, o.Source!.Get<string>("model") ?? "", o.Record, Attributes(o.Material),
-                                                                         placementFlags: o.Placement, baked: lightmapped.GetValueOrDefault(o.Source!), schema: schema)))];
+                                                                         placementFlags: o.Placement, baked: lightmapped.GetValueOrDefault(o.Source!), schema: schema,
+                                                                         lodSwitch: o.LodSwitch)))];
     }
 
     /// <summary>
