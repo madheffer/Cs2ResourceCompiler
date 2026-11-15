@@ -10,7 +10,7 @@ namespace Source2.Compiler.Maps;
 /// <c>SortPairs</c> in visbuilder, vrad3's std_Sort_32ByteElements (BlockGeometry's tiles)
 /// and BakeLighting's chart mesh sort are instances of it.
 /// </summary>
-internal static class MsvcSort
+public static class MsvcSort
 {
     private readonly struct DelegateLess<T>(Func<T, T, bool> less) : Simulation.ILess<T>
     {

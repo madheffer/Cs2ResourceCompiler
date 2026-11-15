@@ -61,7 +61,7 @@ public static class DmxBinary
     /// <summary>One element: its type, its name, and its attributes.</summary>
     public sealed class Element
     {
-        internal Element(string type, string name, Guid id) => (Type, Name, Id) = (type, name, id);
+        public Element(string type, string name, Guid id) => (Type, Name, Id) = (type, name, id);
 
         /// <summary>Element class, e.g. <c>CMapEntity</c>.</summary>
         public string Type { get; }

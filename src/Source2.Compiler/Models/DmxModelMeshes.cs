@@ -37,7 +37,7 @@ namespace Source2.Compiler.Models;
 internal static class DmxModelMeshes
 {
     /// <summary>One CMesh: its name (the DmeMesh's), material, lightmap scale and the corners.</summary>
-    public sealed record Mesh(string Name, string Material, float LightmapScale, WorldNodeCompile.Entry Entry);
+    public sealed record Mesh(string Name, string Material, float LightmapScale, WorldNodeEntry Entry);
 
     /// <summary>The meshes of <paramref name="doc"/>, a model DMX, at <paramref name="scale"/> (the RenderMeshFile's import_scale).</summary>
     public static List<Mesh> Load(DmxBinary.Document doc, float scale)
@@ -149,7 +149,7 @@ internal static class DmxModelMeshes
             var material = faceSet.Get<DmxBinary.Element>("material")?.Get<string>("mtlName") ?? "";
             material = Path.ChangeExtension(material, ".vmat").Replace('\\', '/');
             var facts = new WrbMeshEntry { Material = material, Field28 = Vector4.One, Stride = stride, Streams = streams };
-            yield return new Mesh(mesh.Name, material, 1f, new WorldNodeCompile.Entry(material, stride, vertices, [.. Enumerable.Range(0, corners.Count)], facts));
+            yield return new Mesh(mesh.Name, material, 1f, new WorldNodeEntry(material, stride, vertices, [.. Enumerable.Range(0, corners.Count)], facts));
         }
     }
 
@@ -183,15 +183,15 @@ internal static class DmxModelMeshes
                 (to[0], to[1], to[2]) = (v.X, v.Y, v.Z);
                 break;
             case Vector3 v when isPosition:
-                var p = MapMeshes.Transform(Identity, v);
+                var p = MeshVectors.TransformPoint(Identity, v);
                 (to[0], to[1], to[2]) = (p.X * scale, p.Y * scale, p.Z * scale);
                 break;
             case Vector3 v:
-                var d = NodeMeshEntries.Normalise(NodeMeshEntries.Rotate(Identity, v));
+                var d = MeshVectors.Normalise(MeshVectors.Rotate(Identity, v));
                 (to[0], to[1], to[2]) = (d.X, d.Y, d.Z);
                 break;
             case Vector4 v when direction:
-                var r = NodeMeshEntries.Normalise(NodeMeshEntries.Rotate(Identity, new Vector3(v.X, v.Y, v.Z)));
+                var r = MeshVectors.Normalise(MeshVectors.Rotate(Identity, new Vector3(v.X, v.Y, v.Z)));
                 (to[0], to[1], to[2], to[3]) = (r.X, r.Y, r.Z, v.W);
                 break;
             case Vector4 v:

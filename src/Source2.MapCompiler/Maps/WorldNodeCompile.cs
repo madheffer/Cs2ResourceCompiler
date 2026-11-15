@@ -1,5 +1,6 @@
 using Source2.Compiler.Io;
 using System.Numerics;
+using Entry = Source2.Compiler.Maps.WorldNodeEntry;
 
 namespace Source2.Compiler.Maps;
 
@@ -38,12 +39,6 @@ namespace Source2.Compiler.Maps;
 /// </summary>
 internal static class WorldNodeCompile
 {
-    /// <summary>A node mesh entry (0x238 bytes): its mesh and the facts the compile reads.</summary>
-    public sealed record Entry(string Material, int Stride, float[] Vertices, int[] Indices, WrbMeshEntry Facts)
-    {
-        public int TriangleCount => Indices.Length / 3;
-    }
-
     /// <summary>A render object: its name, layer, cluster, flags (CreateRenderObject's sixth argument) and meshes.</summary>
     public sealed record RenderObject(string Name, int Layer, int Cluster, uint Flags, IReadOnlyList<Entry> Meshes)
     {

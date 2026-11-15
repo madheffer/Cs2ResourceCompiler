@@ -19,7 +19,7 @@ namespace Source2.Compiler.Physics;
 /// on position (<see cref="KdTree"/>), and are tried in the order it returns
 /// them: when two clusters would both take a vertex, that order decides.</para>
 /// </summary>
-internal static class MeshWeld
+public static class MeshWeld
 {
     /// <summary>A vertex stream: its name, first float, float count, whether welds ignore it, and its type.</summary>
     public readonly record struct Stream(string Name, int First, int Count, bool Ignored, int Type);
@@ -208,7 +208,7 @@ internal static class MeshWeld
     /// midpoint (BuildNode). A box query walks left before right and returns
     /// a leaf's vertices in the order the partitions left them.
     /// </summary>
-    internal sealed class KdTree
+    public sealed class KdTree
     {
         private readonly float[] _v;
         private readonly int _stride, _axis;

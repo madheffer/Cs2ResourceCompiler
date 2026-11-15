@@ -265,7 +265,7 @@ public class WorldNodeModelsTests(ITestOutputHelper output)
             if (Environment.GetEnvironmentVariable("WNPROPS_DEPTH") == "1")
                 output.WriteLine($"DEPTH {agg.Material}: valve vbs {mesh.VBIB.VertexBuffers.Count}, depth elems {string.Join(",", Material(agg.Material).Depth.Select(e => e.Semantic))}");
             var name = $"maps/{Path.GetFileNameWithoutExtension(vmap)}/worldnodes/{Path.GetFileNameWithoutExtension(entry.FileName)}.vmdl";
-            var mine = WorldNodeModels.BuildPropAggregate(name, agg, Material);
+            var mine = WorldNodeModels.BuildPropAggregate(name, agg.ModelDraws, agg.TexcoordFormats, Material);
             var trees = WorldPhysicsAuthorTests.Trees(valve);
             var lines = new List<string>();
             foreach (var (block, tree) in new Dictionary<string, KVObject> { ["MDAT"] = WorldNodeModelTrees.Mdat(mine.Model), ["CTRL"] = WorldNodeModelTrees.Ctrl(mine.Model),

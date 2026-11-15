@@ -405,11 +405,7 @@ public static partial class SettleWorld
     /// lowering, as resourcecompiler's 1800c7c10 inlines it (see
     /// <see cref="Io.ResourceNames.Hash"/>).
     /// </summary>
-    internal static uint NameHash(string name)
-    {
-        var bytes = Io.ResourceNames.Terminated(name);
-        return Io.ResourceNames.Hash(bytes, bytes.Length - 1, 0x31415926);
-    }
+    internal static uint NameHash(string name) => MeshVectors.NameHash(name);
 
     private static int[] MeshInts(DmxBinary.Element data, string name)
         => (data.Get<object?[]>(name) ?? []).Select(x => x is int i ? i : 0).ToArray();

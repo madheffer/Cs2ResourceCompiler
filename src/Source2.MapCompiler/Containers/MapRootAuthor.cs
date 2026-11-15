@@ -6,15 +6,16 @@ using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler;
 
-public static partial class Source2ContainerAuthor
+/// <summary>The map root (<c>.vmap_c</c>): its RERL of everything the map loads and its RED2 of the compiled children.</summary>
+public static class MapRootAuthor
 {
     /// <summary>
     /// The identity a map root declares for each kind of child it compiled.
     /// Measured across 116 shipped maps: the rows never vary, only which of them
     /// are present, and that follows what the map actually contains.
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, SpecialDep[]> MapChildIdentities =
-        new Dictionary<string, SpecialDep[]>(StringComparer.OrdinalIgnoreCase)
+    private static readonly IReadOnlyDictionary<string, Source2ContainerAuthor.SpecialDep[]> MapChildIdentities =
+        new Dictionary<string, Source2ContainerAuthor.SpecialDep[]>(StringComparer.OrdinalIgnoreCase)
         {
             [".vents"] = [new("Entity Lump Compiler Version", "CompileEntityLump", 3)],
             [".vmdl"] = [new("ModelDoc Compiler Version", "CompileModel", 3)],
@@ -88,7 +89,7 @@ public static partial class Source2ContainerAuthor
             .ToList();
 
         using var resource = new Resource();
-        ResourceVersionProp.SetValue(resource, (ushort)1);
+        Source2ContainerAuthor.SetResourceVersion(resource, 1);
 
         var rerl = new ResourceExtRefList { Resource = resource };
         foreach (var path in references)
@@ -101,7 +102,7 @@ public static partial class Source2ContainerAuthor
             resource.Blocks.Add(rerl);
 
         var red2 = BuildMapRootEditInfo(sourceFileName, sourceCrc, childPaths);
-        resource.Blocks.Add(AuthoredKv3.Block(NarrowIntegers(red2), KV3IDLookup.Get("generic"), BlockType.RED2, resource));
+        resource.Blocks.Add(AuthoredKv3.Block(Source2ContainerAuthor.NarrowIntegers(red2), KV3IDLookup.Get("generic"), BlockType.RED2, resource));
         resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.DATA, [], resource));
 
         return ResourceBuilder.Serialize(resource);
@@ -112,7 +113,7 @@ public static partial class Source2ContainerAuthor
         var root = KVObject.Collection();
 
         var inputDeps = KVObject.Array();
-        inputDeps.Add(InputDependency(sourceFileName, sourceCrc, optional: false, exists: true));
+        inputDeps.Add(Source2ContainerAuthor.InputDependency(sourceFileName, sourceCrc, optional: false, exists: true));
         root.Add("m_InputDependencies", inputDeps);
         root.Add("m_AdditionalInputDependencies", KVObject.Array());
 
@@ -151,7 +152,7 @@ public static partial class Source2ContainerAuthor
     /// (by the dependency's name, ordinal).</summary>
     private static KVObject MapRootIdentities(IEnumerable<string> children)
     {
-        var deps = new List<SpecialDep>
+        var deps = new List<Source2ContainerAuthor.SpecialDep>
         {
             new("Map Compiler Version", "CompileMap", 2),
             new("Manifest Compiler Version", "CompileResourceManifest", 2),
