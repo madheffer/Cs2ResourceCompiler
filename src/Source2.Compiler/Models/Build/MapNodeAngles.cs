@@ -4,7 +4,7 @@ namespace Source2.Compiler.Maps;
 
 /// <summary>
 /// The angles a map node holds once resourcecompiler has loaded it: every node's angles go through
-/// CMapNode's setter (vfn 0x18, 180f770a0) to CMapPoint's (180fdeda0, <see cref="SettleWorld.SetAngles"/>),
+/// CMapNode's setter (vfn 0x18, 180f770a0) to CMapPoint's (180fdeda0, <see cref="MeshVectors.SetAngles"/>),
 /// which zeroes a component under 0.001 and adds 360 to a negative yaw until it is not negative; pitch
 /// and roll keep their sign and a yaw past 360 stays. A .vmap Hammer saved already holds such angles;
 /// one written another way (a negative yaw) is built from the normalised ones: s2c_navangles' markups
@@ -20,7 +20,7 @@ public static class MapNodeAngles
             return document;
         foreach (var e in document.Elements)
             if (e.Attributes.ContainsKey("nodeID") && e.Attributes.TryGetValue("angles", out var value) && value is Vector3 angles
-                && SettleWorld.SetAngles(angles) is var held && !SameBits(held, angles))
+                && MeshVectors.SetAngles(angles) is var held && !SameBits(held, angles))
                 e.Attributes["angles"] = held;
         return document;
     }

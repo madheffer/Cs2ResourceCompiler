@@ -88,7 +88,7 @@ public sealed record WorldNodeModel(
     public long Argument(string name, long fallback) => name switch
     {
         "embedded_map_mesh" or "preserve_tangents" => EntityClass == null ? 1 : 0,
-        "mapbuilder_entity_classname" when EntityClass != null => SettleWorld.NameHash(EntityClass),
+        "mapbuilder_entity_classname" when EntityClass != null => MeshVectors.NameHash(EntityClass),
         "embedded_aggregate_mesh" or "generate_draw_bounds" or "generate_meshlets" => Aggregate ? 1 : 0,
         _ => fallback,
     };

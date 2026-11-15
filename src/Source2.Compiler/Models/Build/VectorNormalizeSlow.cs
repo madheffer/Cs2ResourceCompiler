@@ -10,7 +10,7 @@ namespace Source2.Compiler.Maps;
 /// float; the length returned clamped to FLT_MAX. HullSimplifier and
 /// VisibilityMeshMerger carry the same port inline.
 /// </summary>
-internal static class VectorNormalizeSlow
+public static class VectorNormalizeSlow
 {
     public static Vector3 Normalise(Vector3 v, out float length)
     {

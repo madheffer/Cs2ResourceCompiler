@@ -33,7 +33,7 @@ public class NoVisClusterProbe(ITestOutputHelper output)
         var (built, overlays) = WorldNodeBuild.BuildNode(world, props, descriptors);
         var envMaps = WorldNodeBuild.EnvMaps(built, lighting!.Volumes);
         var lists = WorldNodeBuild.MergerInputs(built, overlays, descriptors, envMaps, content, shaders, kinds: [.. MeshLists.Order.Select(o => o.Kind)])
-            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(m => new WorldNodeCompile.Entry(m.Material, m.Stride, m.Vertices, m.Indices, m.Facts)).ToList());
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(m => new WorldNodeEntry(m.Material, m.Stride, m.Vertices, m.Indices, m.Facts)).ToList());
 
         if (Environment.GetEnvironmentVariable("NOVISPROBE_MAT") is { Length: > 0 } m)
         {
@@ -79,7 +79,7 @@ public class NoVisClusterProbe(ITestOutputHelper output)
     // NOVISPROBE_RCAPTURE=<capture_rclusters.py output>: Valve's one box-builder call
     // (centroids in, boxes out) against our render boxes and our layer's centroids
     // in BuildNode order (CompileNode's fallback when nothing else made boxes).
-    private void CompareBoxes(string capture, List<WorldNodeCompile.Entry> layer, WorldNodeCompile.Result result)
+    private void CompareBoxes(string capture, List<WorldNodeEntry> layer, WorldNodeCompile.Result result)
     {
         var data = File.ReadAllBytes(capture);
         Vector3[] valveCentroids = [];

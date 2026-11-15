@@ -124,6 +124,10 @@ internal static class NodePropAggregates
     {
         /// <summary>The LOD setups the fragments name, in order.</summary>
         public IReadOnlyList<LodSetup> LodSetups { get; init; } = [];
+
+        /// <summary>The draws as the model builder takes them (<see cref="WorldNodeModels.BuildPropAggregate"/>).</summary>
+        public IReadOnlyList<WorldNodeModels.PropAggregateDraw> ModelDraws
+            => [.. Draws.Select(d => new WorldNodeModels.PropAggregateDraw(d.Material, d.Geometry, d.Stride, d.Streams, d.Attributes))];
     }
 
     /// <summary>

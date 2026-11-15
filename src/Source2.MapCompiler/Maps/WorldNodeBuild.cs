@@ -268,10 +268,10 @@ internal static class WorldNodeBuild
     /// when nothing else makes them (a capture of atixref's -world build:
     /// all 88,857 centroids, from its 882 contributing entries in order).
     /// </summary>
-    public static List<WorldNodeCompile.Entry> LayerEntries(IReadOnlyList<Built> built, IReadOnlyList<NodeOverlays.Projection> overlays,
+    public static List<WorldNodeEntry> LayerEntries(IReadOnlyList<Built> built, IReadOnlyList<NodeOverlays.Projection> overlays,
                                                             IReadOnlyList<NodeOverlays.Descriptor> descriptors, GameContent content, ShaderLibrary shaders)
     {
-        static WorldNodeCompile.Entry Entry(string material, int stride, float[] vertices, int[] indices, ulong attributes, IReadOnlyList<Physics.MeshWeld.Stream> streams, int node,
+        static WorldNodeEntry Entry(string material, int stride, float[] vertices, int[] indices, ulong attributes, IReadOnlyList<Physics.MeshWeld.Stream> streams, int node,
                                             int? layerNode = null)
             => new(material, stride, vertices, indices, new WrbMeshEntry
             {

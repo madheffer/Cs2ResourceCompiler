@@ -23,7 +23,7 @@ namespace Source2.Compiler.Compression;
 /// clips that 1.9.2 gets wrong). Follows the C closely, pointers included, so that it can be checked
 /// line by line against <c>lz4hc.c</c>.
 /// </summary>
-internal sealed unsafe class Lz4HcStream : IDisposable
+public sealed unsafe class Lz4HcStream : IDisposable
 {
     private const int MinMatch = 4, MfLimit = 12, LastLiterals = 5;
     private const int MlBits = 4, MlMask = (1 << MlBits) - 1, RunMask = (1 << (8 - MlBits)) - 1;

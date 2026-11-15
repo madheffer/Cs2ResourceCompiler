@@ -10,7 +10,7 @@ namespace Source2.Compiler;
 /// forward slashes. Without one, FUN_181c1dca0 does the same without touching
 /// the extension. An empty value stays empty.</para>
 /// </summary>
-internal static class ResourcePath
+public static class ResourcePath
 {
     public static string Fixup(string text, string extension)
     {

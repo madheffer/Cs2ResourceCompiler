@@ -19,7 +19,7 @@ namespace Source2.Compiler.Maps;
 /// (VertexOrderProbe).</item>
 /// </list>
 /// </summary>
-internal static class NodeDraw
+public static class NodeDraw
 {
     /// <summary>Meshlet sizes of an aggregate draw (AddDrawDescriptors' meshopt call).</summary>
     public const int MeshletVertices = 255, MeshletTriangles = 48;

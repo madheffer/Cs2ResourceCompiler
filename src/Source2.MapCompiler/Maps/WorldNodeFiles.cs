@@ -76,7 +76,7 @@ public static class WorldNodeFiles
         var (built, overlays) = WorldNodeBuild.BuildNode(world, props, descriptors, bake);
         var envMaps = WorldNodeBuild.EnvMaps(built, volumes);
         var lists = WorldNodeBuild.MergerInputs(built, overlays, descriptors, envMaps, content, shaders, keepLighting: bakes, kinds: [.. MeshLists.Order.Select(o => o.Kind)])
-            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(m => new WorldNodeCompile.Entry(m.Material, m.Stride, m.Vertices, m.Indices, m.Facts)).ToList());
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(m => new WorldNodeEntry(m.Material, m.Stride, m.Vertices, m.Indices, m.Facts)).ToList());
         var (nodeMin, nodeMax) = (new Vector3(float.MaxValue), new Vector3(float.MinValue));
         foreach (var b in built)
             for (var k = 0; k + 2 < b.Vertices.Length; k += b.Source.Entry.Stride)
@@ -90,7 +90,7 @@ public static class WorldNodeFiles
         var layerEntries = WorldNodeBuild.LayerEntries(built, overlays, descriptors, content, shaders);
         var perLayer = Enumerable.Range(0, layerNames.Count).Select(l => (
             ByKind: lists.ToDictionary(kv => kv.Key, kv => kv.Value.Where(e => LayerIndex(e.Facts.LayerNode) == l).ToList()),
-            Entries: (IReadOnlyList<WorldNodeCompile.Entry>?)layerEntries.Where(e => LayerIndex(e.Facts.LayerNode) == l).ToList())).ToList();
+            Entries: (IReadOnlyList<WorldNodeEntry>?)layerEntries.Where(e => LayerIndex(e.Facts.LayerNode) == l).ToList())).ToList();
         var result = WorldNodeCompile.CompileLayers(perLayer, flat, mutual, nodeBounds: built.Count > 0 ? (nodeMin, nodeMax) : null);
         notes.AddRange(result.Unported.Select(u => "world node list not ported: " + u));
         if (result.Clustered)
@@ -156,7 +156,7 @@ public static class WorldNodeFiles
             var n = counters.GetValueOrDefault(prefix);
             counters[prefix] = n + 1;
             var name = $"n0_lr{layerIndex}_{prefix}{n}";
-            Write(name, WorldNodeModels.BuildPropAggregate(ModelPath(name), agg, Material));
+            Write(name, WorldNodeModels.BuildPropAggregate(ModelPath(name), agg.ModelDraws, agg.TexcoordFormats, Material));
             aggregates.Add(new(ModelPath(name), layerIndex, [.. agg.Fragments.Select(f => new WorldNodeSceneTrees.AggregateMesh(f.Draw, f.AggregateFlags,
                 EnvVolumes.ForEntry(new Vector3(float.MaxValue), "", f.Attributes, () => f.MeshBounds, volumes).Probe,
                 new Vector3(f.Tint.X, f.Tint.Y, f.Tint.Z) * 255f) { Transform = f.Matrix, LodMask = f.LodMask, LodSetup = f.LodSetup })])

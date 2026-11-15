@@ -17,7 +17,7 @@ namespace Source2.Compiler;
 /// material loader rejects ("attempting to render with error material"), so a block
 /// left at the defaults ships a crash nothing but the game will show.</para>
 /// </summary>
-internal static class AuthoredKv3
+public static class AuthoredKv3
 {
     /// <summary>Serialization version Valve emits. Stock vmat_c and vmdl_c are both v5.</summary>
     internal const int Version = 5;
@@ -33,7 +33,7 @@ internal static class AuthoredKv3
 
     /// <summary>A KV3 block carrying <paramref name="data"/>, wired to <paramref name="resource"/>,
     /// written as tier0 writes it (<see cref="ValveKv3Block"/>).</summary>
-    internal static BinaryKV3 Block(KVObject data, KV3ID format, BlockType blockType, Resource resource) =>
+    public static BinaryKV3 Block(KVObject data, KV3ID format, BlockType blockType, Resource resource) =>
         new ValveKv3Block(data, format, blockType)
         {
             Resource = resource,
