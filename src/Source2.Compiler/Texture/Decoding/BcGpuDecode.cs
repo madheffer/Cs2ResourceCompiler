@@ -20,16 +20,25 @@ public enum GpuVendor
 /// BC3 alpha are k/255, BC4 (and so BC5) k/65535; the GPU does not round BC4 to 8 bits, and does round BC3's
 /// alpha. A texel is RGBA as the GPU's UNORM format returns it: BC1's three-colour selector 3 is transparent
 /// black (D3D11's BC1_UNORM, CS2's default renderer, has no alpha-less BC1); BC4 is (r, 0, 0, 1), BC5 (r, g, 0, 1).
-/// Not measured: the D3D11 path itself (the tables are from Vulkan on the same hardware), sRGB formats, and
-/// AMD (docs/INDEPENDENCE.md).
+/// sRGB formats decode the colour as UNORM, then convert each colour channel through a measured 256-entry table
+/// (<see cref="SrgbToLinear"/>; not the sRGB curve, 2 of 256 entries equal it in float), alpha unchanged: BC1, BC3,
+/// BC7 and RGBA8, 4,194,304 random texels each (BcSrgbDecodeProbe). D3D11, CS2's default renderer, decodes every
+/// one of these formats, UNORM and sRGB, bit for bit as the Vulkan the tables came from (BcD3D11DecodeProbe,
+/// 1,048,576 random texels a format). Not measured: AMD (docs/INDEPENDENCE.md).
 /// </summary>
 public static class BcGpuDecode
 {
-    private sealed class Tables(byte[] bc1Four, byte[] bc1Three, byte[] bc3Colour, byte[] bc3Alpha, ushort[] bc4)
+    private sealed class Tables(byte[] bc1Four, byte[] bc1Three, byte[] bc3Colour, byte[] bc3Alpha, ushort[] bc4, float[] srgb)
     {
         public readonly byte[] Bc1Four = bc1Four, Bc1Three = bc1Three, Bc3Colour = bc3Colour, Bc3Alpha = bc3Alpha;
         public readonly ushort[] Bc4 = bc4;
+        public readonly float[] Srgb = srgb;
     }
+
+    private static Tables Of(GpuVendor vendor) => vendor switch { GpuVendor.Nvidia => Nvidia.Value, _ => throw new NotSupportedException($"No measured decode for {vendor}.") };
+
+    /// <summary>An sRGB format's colour channel as the GPU returns it, from the channel's UNORM byte (0-255).</summary>
+    public static float SrgbToLinear(int unorm, GpuVendor vendor) => Of(vendor).Srgb[unorm];
 
     private static readonly Lazy<Tables> Nvidia = new(() => Load("nvidia"));
 
@@ -49,7 +58,7 @@ public static class BcGpuDecode
     {
         if (!Handles(format))
             throw new ArgumentException($"{format} is not a BC1-BC5 format.", nameof(format));
-        var t = vendor switch { GpuVendor.Nvidia => Nvidia.Value, _ => throw new NotSupportedException($"No measured decode for {vendor}.") };
+        var t = Of(vendor);
         var blockBytes = format is VTexFormat.DXT1 or VTexFormat.ATI1N ? 8 : 16;
         var blocksWide = (storedWidth + 3) / 4;
         var blocksHigh = (storedHeight + 3) / 4;
@@ -148,6 +157,10 @@ public static class BcGpuDecode
         var bc4 = new ushort[bc4Bytes.Length / 2];
         for (var i = 0; i < bc4.Length; i++)
             bc4[i] = BinaryPrimitives.ReadUInt16LittleEndian(bc4Bytes.AsSpan(2 * i));
-        return new Tables(Read($"{vendor}_bc1_four"), Read($"{vendor}_bc1_three"), Read($"{vendor}_bc3_colour"), Read($"{vendor}_bc3_alpha"), bc4);
+        var srgbBytes = Read($"{vendor}_srgb");
+        var srgb = new float[256];
+        for (var i = 0; i < 256; i++)
+            srgb[i] = BinaryPrimitives.ReadSingleLittleEndian(srgbBytes.AsSpan(4 * i));
+        return new Tables(Read($"{vendor}_bc1_four"), Read($"{vendor}_bc1_three"), Read($"{vendor}_bc3_colour"), Read($"{vendor}_bc3_alpha"), bc4, srgb);
     }
 }
