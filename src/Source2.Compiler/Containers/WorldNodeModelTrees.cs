@@ -98,7 +98,8 @@ public static class WorldNodeModelTrees
         foreach (var h in d.VertexBufferHandles)
             vbs.Add(Binding(h));
         o.Add("m_vertexBuffers", vbs);
-        o.Add("m_bUseCompressedNormalTangent", new KVObject(true));
+        if (d.CompressedNormalTangent)
+            o.Add("m_bUseCompressedNormalTangent", new KVObject(true));
         if (d.BakedLightingFromLightMap)
             o.Add("m_bHasBakedLightingFromLightMap", new KVObject(true));
         if (d.BakedLightingFromVertexStream)

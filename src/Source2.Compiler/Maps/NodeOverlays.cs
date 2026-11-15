@@ -83,7 +83,11 @@ internal static class NodeOverlays
                                          e.GetValue<float>("backFacingAngle") ?? 90f, 0, targets, [.. faces])
                 {
                     IntegerData = integer,
-                    TintColor = e.Attributes.GetValueOrDefault("tintColor") is byte[] { Length: 4 } c ? c : [255, 255, 255, 255],
+                    // CMapStaticOverlay_GetOverlayDescs (181194f40): the alpha is renderAmt (18108c0c0, the property
+                    // 181089940 registers under "renderAmt"), not tintColor's fourth byte (Mako's overlay 7527, 212).
+                    TintColor = e.Attributes.GetValueOrDefault("tintColor") is byte[] { Length: 4 } c
+                        ? [c[0], c[1], c[2], e.Attributes.GetValueOrDefault("renderAmt") is { } amt ? Convert.ToByte(amt, System.Globalization.CultureInfo.InvariantCulture) : (byte)255]
+                        : [255, 255, 255, e.Attributes.GetValueOrDefault("renderAmt") is { } amt2 ? Convert.ToByte(amt2, System.Globalization.CultureInfo.InvariantCulture) : (byte)255],
                 });
         }
         return found;

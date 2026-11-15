@@ -49,6 +49,13 @@ public sealed record WorldNodeModel(
     {
         /// <summary>The draw reads the lightmap (its mesh has a LightmapUV stream: a baked compile).</summary>
         public bool BakedLightingFromLightMap { get; init; }
+
+        /// <summary>
+        /// m_bUseCompressedNormalTangent: the draw's mesh has a normal stream. Mako's dev/black_cheap vis objects,
+        /// whose merged meshes lost the normal to PrepareForMerge's filter, carry no flag; the makov6_pipeb
+        /// objects' position-only depth draws keep it.
+        /// </summary>
+        public bool CompressedNormalTangent { get; init; } = true;
     }
 
     /// <summary>A scene object: its bounds, draw calls, per-draw bounds and meshlets.</summary>

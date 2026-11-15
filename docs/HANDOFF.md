@@ -277,6 +277,14 @@ Valve's own package of the same .vmap (outputs in %TEMP%/s2c_realmaps/<map>, rec
 - Ledger 309: baked props keep float texcoords when the model's are (sofa, floodlighton). Mako -world 1,673/1,782.
   Left: light_red1/yellow1 glass tangent angle (needs CS2 closed), metalpipe008a aggregate split, lr2 nuke_ceiling_02
   base entry, entity models. Next ledger 310.
+- 11-15 evening, CS2 closed (ledgers 311-313): entity models without PHYS for empty physics and with tools buffers;
+  PrepareForMerge on the merged lists only; map meshes lose blend streams; every undeclared material key from the
+  render modes; compressed-frame flag, aggregate overlay tint, overlay alpha from renderAmt. Mako -world 1,734/1,782.
+  Captures kept: %TEMP%/propmesh_capture/mako.bin, %TEMP%/nodeentries_capture/mako_final.bin (Step25d500).
+  Left (48): cable render models (unnamed_20788: CMapCable render export 181151b30 / 1810b8ae0 / texcoords
+  1810bbc40, not ported), lr3/lr4 metaltrain001d aggregate split, decal_prison03a aggregate, and ~35 vertex-level
+  differences (radiator smart prop placement ULPs, walltrim01 weld counts, entity doors/frames, overlays). Next
+  ledger 314 (310 is split/maps').
 - Regressions after every change (%TEMP%/s2c_realmaps/regress/run.sh): probe01 12/13, cardtest 13/14,
   ze_hold_em_p 44/45, atixref 548/553 (Valve variance), the four exact real maps above unchanged.
 - Branch state at the end: research/map-authoring is 7+ commits ahead of box, not pushed. The decompiler-split

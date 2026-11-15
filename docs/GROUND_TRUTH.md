@@ -6929,3 +6929,18 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        takes every undeclared key from OfModes.
      - Result: Mako -world 1,727 of 1,782 (was 1,692); probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2,
        shaurma unchanged.
+
+313. **A draw's compressed-frame flag, an aggregate overlay's tint, an overlay's alpha** (2026-11-15, CS2 closed: rc 0923
+     reads of the CMapMesh property table 181089940 (renderAmt's getter 18108c0c0) and GetOverlayDescs 181194f40;
+     Mako against Valve's -world package). READ + MEASURED.
+     - m_bUseCompressedNormalTangent is written for a draw whose mesh has a normal stream: Mako's dev/black_cheap
+       vis objects (their merged meshes lost the normal to PrepareForMerge's filter) have none, and the makov6_pipeb
+       objects' position-only depth draws keep it. Measured; the writer in AddDrawDescriptors not read.
+     - An aggregate draw takes its CMesh's tint when the overlay projector set it (an overlay entry's own tint,
+       CMesh_SetTint in 181362050); an entry's +0x28 tint rides on the fragment and leaves the draw white (Mako's
+       offseclight_custom aggregates, gamma-expanded (255, 127, 80)).
+     - GetOverlayDescs' tint alpha is the overlay's renderAmt (18108c0c0 is the getter the property table registers
+       under "renderAmt"), not tintColor's fourth byte: Mako's overlay 7527 (renderAmt 212) gives Valve's
+       DebugColor alpha 0.83137256. Ported: NodeOverlays' TintColor.
+     - Result: Mako -world 1,734 of 1,782 (was 1,727); probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2,
+       shaurma unchanged.

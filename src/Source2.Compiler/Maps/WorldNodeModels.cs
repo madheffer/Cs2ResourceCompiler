@@ -257,9 +257,11 @@ internal static class WorldNodeModels
                                 dump.Write(BitConverter.GetBytes(x));
                         }
                     }
-                // An aggregate's draws are white (all 311 of atixref's list aggregate draws);
-                // the mesh's tint rides on its fragment in the .vwnod.
-                var tint = aggregate ? Vector4.One : DrawTint(d.Facts);
+                // An aggregate's draws are white (all 311 of atixref's list aggregate draws): the entry's
+                // tint rides on its fragment in the .vwnod and no CMesh_SetTint gives it to the mesh. An
+                // overlay's mesh is tinted by the projector itself (181362050), so its aggregate draw takes
+                // that (Mako's offseclight_custom; AddDrawDescriptors 1802ed7f0 reads the CMesh's tint).
+                var tint = aggregate ? (d.Facts.DebugColor ? DrawTint(d.Facts with { Field28 = Vector4.One }) : Vector4.One) : DrawTint(d.Facts);
                 described[d] = new WorldNodeModel.Draw(d.Material, new Vector3(tint.X, tint.Y, tint.Z), density, firstMeshlet, meshlets.Count - firstMeshlet,
                     vertexBase, bufferCount > 1 || (mapMesh && factsOf(d).Depth.Count > 0) ? 0 : 255, vertexBase + g.VertexCount, startIndex, g.Indices.Length, indexBuffers.Count, handles,
                     d.Streams.Any(s => s.Name.Equals("PerVertexLighting", StringComparison.OrdinalIgnoreCase)),
@@ -271,6 +273,7 @@ internal static class WorldNodeModels
                                    && !l.Stream.StartsWith("LightmapUV:", StringComparison.OrdinalIgnoreCase)))
                 {
                     BakedLightingFromLightMap = d.Streams.Any(s => s.Name.Equals("LightmapUV", StringComparison.OrdinalIgnoreCase)),
+                    CompressedNormalTangent = d.Streams.Any(s => s.Name.Equals("normal", StringComparison.OrdinalIgnoreCase)),
                 };
                 vertexBase += g.VertexCount;
             }
