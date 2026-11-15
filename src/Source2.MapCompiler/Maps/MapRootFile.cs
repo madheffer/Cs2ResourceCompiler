@@ -104,7 +104,7 @@ public static class MapRootFile
         var references = childList.Concat(assets).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(c => c, StringComparer.Ordinal).ToList();
         var generic = KV3IDLookup.Get("generic");
         using var resource = new Resource();
-        Source2ContainerAuthor.SetResourceVersion(resource, 1);
+        LegacyContainer.SetResourceVersion(resource, 1);
         var rerl = new ResourceExtRefList { Resource = resource };
         foreach (var path in references)
             rerl.ResourceRefInfoList.Add(new ResourceExtRefList.ResourceReferenceInfo { Id = Source2ResourceId.ForPath(path), Name = path });

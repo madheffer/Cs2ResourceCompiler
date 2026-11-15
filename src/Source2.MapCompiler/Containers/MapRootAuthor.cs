@@ -89,7 +89,7 @@ public static class MapRootAuthor
             .ToList();
 
         using var resource = new Resource();
-        Source2ContainerAuthor.SetResourceVersion(resource, 1);
+        LegacyContainer.SetResourceVersion(resource, 1);
 
         var rerl = new ResourceExtRefList { Resource = resource };
         foreach (var path in references)

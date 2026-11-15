@@ -1,9 +1,6 @@
+using Source2.Compiler.Kv3;
 using ValveKeyValue;
 using ValveKeyValue.KeyValues3;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler;
 
@@ -62,8 +59,7 @@ public static partial class Source2ContainerAuthor
                                           SavedSource saved, string contentPath)
     {
         var spec = SpecByExtension[".vdata"];
-        using var resource = new Resource();
-        ResourceVersionProp.SetValue(resource, spec.ResourceVersion);
+        var file = new ResourceFile { Version = spec.ResourceVersion };
 
         var red2 = KVObject.Collection();
         red2.Add("m_InputDependencies", KVObject.Array());
@@ -100,9 +96,9 @@ public static partial class Source2ContainerAuthor
         red2.Add("m_SearchableUserData", user);
         red2.Add("m_SubassetReferences", KVObject.Null());
         red2.Add("m_SubassetDefinitions", KVObject.Null());
-        resource.Blocks.Add(AuthoredKv3.Block(NarrowIntegers(red2), KV3IDLookup.Get("generic"), BlockType.RED2, resource));
+        file.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(NarrowIntegers(red2), Kv3Formats.Get("generic"))));
 
-        resource.Blocks.Add(AuthoredKv3.Block(NarrowIntegers(dataRoot), KV3IDLookup.Get("generic"), BlockType.DATA, resource));
+        file.Blocks.Add(new ResourceBlock("DATA", Kv3Binary.Write(NarrowIntegers(dataRoot), Kv3Formats.Get("generic"))));
 
         var flci = KVObject.Collection();
         var files = KVObject.Array();
@@ -119,8 +115,8 @@ public static partial class Source2ContainerAuthor
         flci.Add("flc_lines", Ints(positions.Select((p, i) => i == 0 ? p.Line : p.Line - positions[i - 1].Line)));
         flci.Add("flc_columns", Ints(positions.Select((p, i) => i == 0 ? p.Column : p.Column - positions[i - 1].Column)));
         flci.Add("flc_count", new KVObject(positions.Count));
-        resource.Blocks.Add(AuthoredKv3.Block(flci, KV3IDLookup.Get("generic"), BlockType.FLCI, resource));
+        file.Blocks.Add(new ResourceBlock("FLCI", Kv3Binary.Write(flci, Kv3Formats.Get("generic"))));
 
-        return ValveLayout.Serialize(resource);
+        return file.Write();
     }
 }

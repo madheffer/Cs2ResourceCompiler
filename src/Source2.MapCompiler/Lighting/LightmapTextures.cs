@@ -366,7 +366,7 @@ public static class LightmapTextures
             : new RcMipChain.Level(slices[0][last].Width, slices[0][last].Height * slices.Length, slices.SelectMany(slice => slice[last].Rgba).ToArray());
         var data = Data(width, height, slices.Length, mipCount, flags, VtexFormat(format), Reflectivity(volume), sizes ? [.. stored.Select(x => x.Length)] : null, lz4);
         using var resource = new Resource();
-        Source2ContainerAuthor.SetResourceVersion(resource, 1);
+        LegacyContainer.SetResourceVersion(resource, 1);
         resource.Blocks.Add(AuthoredKv3.Block(editInfo, KV3IDLookup.Get("generic"), BlockType.RED2, resource));
         resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.DATA, data, resource));
         var container = ValveLayout.Serialize(resource);

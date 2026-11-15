@@ -1,6 +1,4 @@
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
+using Source2.Compiler.Kv3;
 
 namespace Source2.Compiler;
 
@@ -38,13 +36,12 @@ public static class ScriptAuthor
         ArgumentNullException.ThrowIfNull(source);
         if (!relativePath.EndsWith(".js", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException($"{relativePath}: only .js sources compile (resourcecompiler on a user's install compiles no .ts; transpile it to .js)");
-        using var resource = new Resource();
-        Source2ContainerAuthor.SetResourceVersion(resource, ResourceVersion);
+        var file = new ResourceFile { Version = ResourceVersion };
         var red2 = Source2ContainerAuthor.BuildBinaryEditInfo(relativePath, source, SpecialDeps, null,
             [relativePath[..^".js".Length] + ".vjs"], searchPath);
-        resource.Blocks.Add(AuthoredKv3.Block(red2, KV3IDLookup.Get("generic"), BlockType.RED2, resource));
-        resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.DATA, source, resource));
-        // Zero padding between blocks, as RC writes it (VRF's writer pads with markers).
-        return ValveLayout.Serialize(resource);
+        file.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(red2, Kv3Formats.Get("generic"))));
+        file.Blocks.Add(new ResourceBlock("DATA", source));
+        // Zero padding between blocks, as RC writes it.
+        return file.Write();
     }
 }

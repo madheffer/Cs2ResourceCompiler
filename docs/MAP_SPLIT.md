@@ -59,7 +59,8 @@ uncommitted VCS 72 shader support (`CompiledShader/*`). A fresh clone's vendor s
    `Source2.MapCompiler.Cli`, `Source2.Compiler.Gpu` with them, tests split into `Source2.Compiler.Tests` and
    `Source2.MapCompiler.Tests`. Build and test: same results as before the move.
    Before it lands: rebase `split/maps` onto `research/map-authoring`, which gained 2ed1982 (ledger 307) and
-   5777a0b (ledger 308) from the map session after be02a14; neither touches the seams above.
+   5777a0b (ledger 308), 6779804 (ledger 309: NodePropEntries.FloatTexcoords) and a CS2_CLOSED_QUEUE doc
+   commit from the map session after be02a14; none touches the seams above.
 3. **Release the resource package** (`tools/release.ps1`) with the newly public API, so the map repo can pin it.
 4. **Make the map repo.** The existing `cs2-map-decompiler` repo becomes it (name to settle), with history for
    the moved files (`git filter-repo --path ...`). It drops its `compiler` submodule and Publicizer, and
