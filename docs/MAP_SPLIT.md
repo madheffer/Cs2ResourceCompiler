@@ -5,7 +5,7 @@ Agreed with the user on 2026-11-15:
 | Repo | Contents | Depends on |
 |---|---|---|
 | **Source2ResourceCompiler** (this repo; GitHub `madheffer/Source2MapTools`, renamed by the user) | Every non-map resource compiler: textures, materials, models (ModelDoc), KV3 documents, sounds, SVG, anims, particles, scripts, surface properties, and the readers/writers they share | Nothing of ours |
-| **Map tools** (map compiler + map decompiler, one repo) | `.vmap` compile (world nodes, vis, physics world, lighting, cubemaps, Steam Audio, nav, entity lump) and the decompiler | The resource compiler, as the `Source2.Compiler` package from the s2c feed, pinned |
+| **cs2-map-compiler** (the map compiler; the decompiler is a part of it) | `.vmap` compile (world nodes, vis, physics world, lighting, cubemaps, Steam Audio, nav, entity lump) and the decompiler | The resource compiler, as the `Source2.Compiler` package from the s2c feed, pinned |
 | s2port | Unchanged for now | Later the same package, like vpkstuff |
 
 The resource compiler never references map code. No submodules, no `InternalsVisibleTo`, no Publicizer. vpkstuff
@@ -70,8 +70,40 @@ uncommitted VCS 72 shader support (`CompiledShader/*`). A fresh clone's vendor s
 6. Fresh-clone build of both repos; delete the old branches (`research/vmap-decompile`,
    `split/decompiler-out`) and the wt-decompile worktree once everything is reachable.
 
+## No VRF in either repo (user, 2026-11-15)
+
+The user does not want to ship or depend on ValveResourceFormat: take what we use and maintain it ourselves.
+That was the goal of docs/INDEPENDENCE.md, and `main` reached it for the resource library on 10-13 (79af15e:
+own container, KV3 reader, textures, models, meshes, VBIB, materials, VfxEval, each checked 1:1 against VRF
+over pak01). The map line merged main on 11-05 (6e0b54e) but kept its VRF code beside the own stack, so on
+`split/maps` VRF is back: 15 resource-library files, 38 map files, 11 GPU, 8 CLI, 119 test files.
+
+Measured (type-reference closure over VRF at 661a5f58):
+
+- Copying VRF's files as they are is no small subset: whatever we start from, `Resource`/`Block` pull in
+  most of VRF (36k-44k of its 118k lines, and SpirvCross, K4os LZ4, TinyBCSharp), because the container
+  builds every resource type.
+- So the subset is owned the way 10-13 did it: each reader rebuilt on our `ResourceFile` / `Kv3/Reading`
+  stack, VRF's parsing code (MIT) as the source, checked against VRF over pak01, then VRF dropped.
+
+Work, in order:
+
+1. Call sites onto what we already own: VRF `Resource`/`Block`/`BlockType`/`BinaryKV3`/`KV3IDLookup`/
+   `ResourceExtRefList` (about 340 uses) to `ResourceFile`/`CompiledResource`/`Kv3`; `Texture` (56) to
+   `CompiledTexture`; `Model`/`Mesh`/`VBIB` (162) to `CompiledModel`/`CompiledMesh`/`Vbib`; `Material` (128) to
+   `CompiledMaterial`. Byte output unchanged; the parity tests decide.
+2. Readers we do not own yet, ported (sizes are VRF's):
+   - compiled shaders (`VfxProgramData`, `ShaderCollection`, blocks, enums; 6.9k, with our VCS 72 change);
+   - `PhysAggregateData` and the Rubikon shapes (0.8k);
+   - `World`, `WorldNode`, `SmartProp`, `EntityLump`, `NavMeshFile`, the VXVS block (2.5k);
+   - whatever the tests still read through VRF (119 files; most go with step 1).
+3. Delete `third_party/`, `tools/vendor.cs` and the `Source2CompilerVrfProject` property; the resource
+   compiler package carries the readers, so cs2-map-compiler needs no VRF either.
+
+The readers belong in the resource compiler (they read resources); cs2-map-compiler gets them from the package.
+
 ## Still to settle
 
-- The map repo's name, and whether it is public on GitHub.
+- Whether cs2-map-compiler is public on GitHub (named 2026-11-15; the existing cs2-map-decompiler repo folds into it).
 - Where the shared RE tooling goes (`tools/re`, `tools/ghidra_scripts`, `docs/ADDRESSES.md`): both repos use
   the Ghidra scripts and addresses.
