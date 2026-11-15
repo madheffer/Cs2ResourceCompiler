@@ -271,7 +271,9 @@ Valve's own package of the same .vmap (outputs in %TEMP%/s2c_realmaps/<map>, rec
   (it has a space) takes the path as the window title and pops a "cannot find compile-map" dialog.
 - Ledger 307 (CS2 open): overlays under instance templates take their copy's id and so the placing instance's
   layer. Mako -world 1,448/1,782; cluster counts match on every layer. Left: lr1 mesh_overlay objects differ in
-  MVTX1 only (~100), the nuke_ceiling_02 base entry in lr2, a few sofa/light_red_glass nomerge cuts. Next ledger 308.
+  MVTX1 only (~100), the nuke_ceiling_02 base entry in lr2, a few sofa/light_red_glass nomerge cuts.
+- Ledger 308: an overlay's PerVertexLighting is decoded, blended and encoded (black -> w 43/255). Mako -world
+  1,651/1,782. Next ledger 309.
 - Regressions after every change (%TEMP%/s2c_realmaps/regress/run.sh): probe01 12/13, cardtest 13/14,
   ze_hold_em_p 44/45, atixref 548/553 (Valve variance), the four exact real maps above unchanged.
 - Branch state at the end: research/map-authoring is 7+ commits ahead of box, not pushed. The decompiler-split

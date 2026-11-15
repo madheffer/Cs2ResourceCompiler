@@ -6850,3 +6850,18 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        F_LAYERS 0 material is not env-mapped in our attributes; not traced). Meshes 7,051 of 7,084 exact.
      - Result: Mako -world 1,448 of 1,782 (was 1,211); every layer's render cluster count is Valve's (lr1 117).
        probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2, shaurma unchanged.
+
+308. **An overlay's PerVertexLighting is blended decoded and encoded again** (2026-11-15, CS2 open: rc 0923
+     decompile of the overlay mesh build 181361000 and the disassembly of its codec 18126a070 / 18126a0d0; every
+     Mako mesh_overlay vertex against Valve's -world package). READ + MEASURED.
+     - 181361000 blends every target float with the corner weights except PerVertexLighting (4 floats): each corner
+       is decoded, rgb = ((c * 6) * m)^2, the colours blended in the same order, and the result encoded: each
+       channel sqrt(c) / 6 clamped to [0, 1] (maxss order, a NaN to 0); m = ceilf(max(r, g, b, 1/6) * 255) / 255
+       over the raw channels (Ghidra's version reads as the scaled ones; the disassembly 18126a195-18126a1c9 takes
+       movsd [rbx] and maxss [rbx+8]), clamped; the channels times 1 / m, clamped. Black (Mako's stored lighting is
+       all zero) encodes as (0, 0, 0, 43/255): all 2,648 of Valve's overlay vertices with that layout carry half
+       0x3165 in w, ours 0. Ported: OverlayProjector.Build, EncodeLighting.
+     - Read on the way, not ported: 181361000 also adds VertexPaintTintColor and VertexPaintBlendParams streams when
+       the descriptor carries them (its params 7 and 8).
+     - Result: Mako -world 1,651 of 1,782 (was 1,448). probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2, shaurma
+       unchanged.

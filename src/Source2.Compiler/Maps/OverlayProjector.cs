@@ -141,7 +141,8 @@ internal static class OverlayProjector
     /// <summary>
     /// 181361000: one vertex per projected point. The target's streams are
     /// carried over, each float its source triangle's corners weighted
-    /// ((v1 b1) + (v0 b0)) + v2 b2; position, normal and texcoord are added
+    /// ((v1 b1) + (v0 b0)) + v2 b2, but PerVertexLighting, blended decoded and encoded again
+    /// (<see cref="EncodeLighting"/>); position, normal and texcoord are added
     /// when missing, then VertexGenericIntegerData (when
     /// <paramref name="integerData"/> is not zero) and
     /// OverlayProjectionDirection (when <paramref name="dir"/> is not zero),
@@ -150,6 +151,29 @@ internal static class OverlayProjector
     /// target's matrix, the direction dir * 0.5 + 0.5 with w the normal's dot
     /// with dir, likewise.
     /// </summary>
+    // 18126a070: a stored lighting value (rgb, m) as linear colour, ((c * 6) * m) squared per channel.
+    private static Vector3 DecodeLighting(float[] v, int at)
+    {
+        float C(float c) { var x = c * 6f * v[at + 3]; return x * x; }
+        return new Vector3(C(v[at]), C(v[at + 1]), C(v[at + 2]));
+    }
+
+    // 18126a0d0 (from its disassembly): each channel sqrt(c) / 6 clamped to [0, 1] (a NaN to 0, maxss's
+    // operand order); m = ceilf(max(r, g, b, 1/6) * 255) / 255 over the raw channels, clamped; the
+    // channels then times 1 / m, clamped. Black encodes as (0, 0, 0, 43 / 255).
+    internal static Vector4 EncodeLighting(Vector3 c)
+    {
+        static float Max(float a, float b) => a > b ? a : b;
+        static float Min(float a, float b) => a < b ? a : b;
+        const float sixth = 0.16666667f;
+        float S(float x) => Min(Max(MathF.Sqrt(x) * sixth, 0f), 1f);
+        var (r, g, b) = (S(c.X), S(c.Y), S(c.Z));
+        var m = Max(Max(c.X, Max(c.Y, c.Z)), sixth);
+        m = Min(Max(MathF.Ceiling(m * 255f) / 255f, 0f), 1f);
+        var inv = 1f / m;
+        return new Vector4(Min(Max(r * inv, 0f), 1f), Min(Max(g * inv, 0f), 1f), Min(Max(b * inv, 0f), 1f), m);
+    }
+
     public static Mesh Build(Result projected, IReadOnlyList<Vector2> texcoords, float[] target, int targetStride, IReadOnlyList<Physics.MeshWeld.Stream> targetStreams,
                              IReadOnlyList<int> targetIndices, float[] matrix, int integerData, Vector3 dir)
     {
@@ -169,6 +193,7 @@ internal static class OverlayProjector
         var integer = integerData != 0 ? Add("VertexGenericIntegerData", 1, 0x22) : -1;
         var direction = dir != Vector3.Zero ? Add("OverlayProjectionDirection", 4, 0x2b) : -1;
         var stride = streams.Max(s => s.First + s.Count);
+        var lighting = targetStreams.FirstOrDefault(s => s.Name == "PerVertexLighting" && s.Count == 4) is { Name: not null } l ? l.First : -1;
         var v = new float[projected.Points.Count * stride];
         for (var k = 0; k < projected.Points.Count; k++)
         {
@@ -178,6 +203,17 @@ internal static class OverlayProjector
             int i0 = targetIndices[tri * 3] * targetStride, i1 = targetIndices[(tri * 3) + 1] * targetStride, i2 = targetIndices[(tri * 3) + 2] * targetStride;
             for (var j = 0; j < targetStride; j++)
                 v[at + j] = (target[i1 + j] * tag.Z) + (target[i0 + j] * tag.Y) + (target[i2 + j] * tag.W);
+            if (lighting >= 0)
+            {
+                // PerVertexLighting is not blended as stored: each corner decoded (18126a070), the
+                // colours blended, the result encoded again (18126a0d0).
+                var c0 = DecodeLighting(target, i0 + lighting);
+                var c1 = DecodeLighting(target, i1 + lighting);
+                var c2 = DecodeLighting(target, i2 + lighting);
+                var e = EncodeLighting(new Vector3((c1.X * tag.Z) + (c0.X * tag.Y) + (c2.X * tag.W), (c1.Y * tag.Z) + (c0.Y * tag.Y) + (c2.Y * tag.W),
+                                                   (c1.Z * tag.Z) + (c0.Z * tag.Y) + (c2.Z * tag.W)));
+                (v[at + lighting], v[at + lighting + 1], v[at + lighting + 2], v[at + lighting + 3]) = (e.X, e.Y, e.Z, e.W);
+            }
             var p = projected.Points[k];
             (v[at + position], v[at + position + 1], v[at + position + 2]) = (p.X, p.Y, p.Z);
             (v[at + texcoord], v[at + texcoord + 1]) = (texcoords[k].X, texcoords[k].Y);
