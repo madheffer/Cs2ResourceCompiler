@@ -48,6 +48,26 @@ public static class Kv3Binary
         return reader.Data;
     }
 
+    /// <summary>
+    /// The KV3 block at <paramref name="reader"/>'s position (one embedded in a non-resource file, such as a
+    /// .nav's), leaving the reader just past it.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The bytes there are not a well-formed KV3 block.</exception>
+    public static KVDocument ReadEmbedded(BinaryReader reader)
+    {
+        var kv3 = new Kv3BinaryReader { Offset = reader.BaseStream.Position };
+        try
+        {
+            kv3.Read(reader);
+        }
+        catch (Exception ex) when (ex is EndOfStreamException or ArgumentException or IndexOutOfRangeException
+                                       or InvalidCastException or OverflowException or KeyNotFoundException)
+        {
+            throw new InvalidDataException("Malformed KV3 block: " + ex.Message, ex);
+        }
+        return kv3.Data;
+    }
+
     /// <summary><paramref name="root"/> under <paramref name="format"/>, as tier0's binary_auto save writes it,
     /// in binary <paramref name="version"/> 5 (today's) or 4.</summary>
     public static byte[] Write(KVObject root, KV3ID format, Kv3Compression? compression = null, int version = 5) =>

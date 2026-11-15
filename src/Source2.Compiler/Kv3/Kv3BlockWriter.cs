@@ -28,6 +28,12 @@ namespace Source2.Compiler;
 /// </summary>
 public static class Kv3BlockWriter
 {
+    /// <summary>
+    /// tier0's binary_auto save (1800c7220 via SaveKV3): below this many bytes of buffers plus blobs a block
+    /// is stored raw (1800c8790 / 1800c8d80).
+    /// </summary>
+    public const int RawBelow = 0x100;
+
     // KeyValues3's own kinds (the type field 1801... reads, bits 2-5). Numerically the node types
     // of the same name.
     private enum Kind { Null = 1, Bool, Int, UInt, Double, String, Blob, Array, Table }

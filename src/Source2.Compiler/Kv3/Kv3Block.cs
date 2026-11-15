@@ -286,7 +286,7 @@ internal sealed class Kv3Block
         var blobsRaw = blobs.SelectMany(x => x).ToArray();
         var raw1Length = raw1?.Length ?? 0;
         var total = raw1Length + raw2.Length + blobsRaw.Length;
-        var chosen = method ?? (total < 0x100 ? Kv3Compression.Uncompressed
+        var chosen = method ?? (total < Kv3BlockWriter.RawBelow ? Kv3Compression.Uncompressed
             : total < 0x80001 ? Kv3Compression.Lz4 : Kv3Compression.Zstd);
         if (chosen == Kv3Compression.Lz4)
         {

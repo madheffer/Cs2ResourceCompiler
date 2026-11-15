@@ -91,6 +91,55 @@ public sealed class CompiledModel
             ? ctrl["embedded_meshes"]!.Values.Select(m => new EmbeddedMesh(this, m)).ToList()
             : [];
 
+    /// <summary>
+    /// The embedded meshes with their index, name and LOD mask (<c>m_refLODGroupMasks</c> by CTRL
+    /// order). A mesh past the end of the masks takes mask 1 (LOD 0), as the VRF reader the map
+    /// compiler was measured with did: CS2 models with only embedded meshes ship an empty
+    /// <c>m_refLODGroupMasks</c>.
+    /// </summary>
+    public IReadOnlyList<(EmbeddedMesh Mesh, int MeshIndex, string Name, long LodMask)> EmbeddedMeshesAndLod()
+    {
+        var masks = Data.GetIntegerArray("m_refLODGroupMasks");
+        var meshes = Meshes;
+        var result = new List<(EmbeddedMesh, int, string, long)>(meshes.Count);
+        for (var i = 0; i < meshes.Count; i++)
+            result.Add((meshes[i], meshes[i].MeshIndex, meshes[i].Name, i < masks.Length ? masks[i] : 1L));
+        return result;
+    }
+
+    /// <summary>
+    /// The physics CTRL's <c>embedded_physics.phys_data_block</c> points at, or null when the model
+    /// embeds none.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The block named is not KV3.</exception>
+    public Rubikon.PhysAggregateData? EmbeddedPhysics
+    {
+        get
+        {
+            if (Control?.GetSubCollection("embedded_physics") is not { } embedded)
+                return null;
+            var index = Field.Block(this, embedded, "phys_data_block");
+            return new Rubikon.PhysAggregateData(Resource.Kv3At(index)
+                ?? throw new InvalidDataException($"phys_data_block {index} is not a KV3 block."));
+        }
+    }
+
+    /// <summary>
+    /// <c>m_modelInfo.m_keyValueText</c> parsed as KV3 text, or an empty collection when the text is
+    /// missing, not KV3, or shorter than the 140 characters an empty document takes.
+    /// </summary>
+    public KVObject KeyValues => _keyValues ??= ParseKeyValues() ?? KVObject.Collection();
+
+    private KVObject? _keyValues;
+
+    private KVObject? ParseKeyValues()
+    {
+        var text = Data.GetSubCollection("m_modelInfo")?.GetStringProperty("m_keyValueText");
+        if (string.IsNullOrEmpty(text) || !text.StartsWith("<!-- kv3 ", StringComparison.Ordinal) || text.Length < 140)
+            return null;
+        return Kv3Text.Parse(System.Text.Encoding.UTF8.GetBytes(text)).Root;
+    }
+
     /// <summary>The file, re-encoding only what changed.</summary>
     public byte[] Write() => Resource.Write();
 }
@@ -148,9 +197,11 @@ public sealed class EmbeddedMesh
 
     /// <summary>The vertex and index buffers decoded, with their layouts, from either layout.</summary>
     /// <exception cref="InvalidDataException">A buffer is malformed.</exception>
-    public Vbib Vbib => HasVbibBlock
+    public Vbib Vbib => _vbib ??= HasVbibBlock
         ? Vbib.Read(_model.Resource.File.Blocks[Field.Block(_model, Descriptor, "vbib_block")].Data)
         : Vbib.FromDescriptor(_model.Resource, Descriptor);
+
+    private Vbib? _vbib;
 
     /// <summary>The vertex buffers.</summary>
     public IReadOnlyList<MeshBuffer> VertexBuffers => Buffers("m_vertexBuffers", vertex: true);
