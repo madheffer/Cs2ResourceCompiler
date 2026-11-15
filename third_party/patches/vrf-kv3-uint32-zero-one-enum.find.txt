@@ -1,2 +1,0 @@
-            ARRAY_TYPE_AUXILIARY_BUFFER = 25,
-        }

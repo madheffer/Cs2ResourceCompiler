@@ -1,4 +1,0 @@
-        /// <summary>
-        /// Gets the file type version.
-        /// </summary>
-        public ushort Version { get; private set; }
