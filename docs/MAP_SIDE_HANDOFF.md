@@ -6,9 +6,9 @@ You are picking up the repo split after the resource library was finished. Read 
 ## What the user decided
 
 - **Two repos.**
-  - **Source2ResourceCompiler** is this repo, with non-map resources only. It is box `repos/rc-standalone.git`.
-    The user called it "s2-compiler" when they gave the go-ahead, so confirm the name before pushing. GitHub is
-    `madheffer/Source2MapTools`, which the user renames to Source2ResourceCompiler themselves.
+  - **Source2ResourceCompiler** is this repo, with non-map resources only. On the box it is
+    `repos/rc-standalone.git` (confirmed by the user on 2026-11-15). GitHub is `madheffer/Source2MapTools`, which
+    the user renames to Source2ResourceCompiler themselves.
   - **cs2-map-compiler** is a new repo for the map compiler. The decompiler is a side part of it, so the existing
     cs2-map-decompiler repo folds in. It depends on the resource compiler as the pinned `Source2.Compiler`
     package from the s2c feed, the way vpkstuff does.
@@ -25,8 +25,8 @@ You are picking up the repo split after the resource library was finished. Read 
 
 ## Where things are
 
-- **Work:** branch `split/maps`, in the worktree `D:\_cursor projects\source2-compiler-wt-split`. It is local only;
-  nothing is pushed.
+- **Work:** branch `split/maps`, in the worktree `D:\_cursor projects\source2-compiler-wt-split`, pushed to
+  box `split/maps` on 2026-11-15 (not rebased yet; `research/map-authoring` on the box is untouched).
 - **Commits on top of be02a14, oldest first:**
   - 09fe202, e00f7ec: the decompile line's compiler-side work (old docs/SPLIT_HANDOFF.md step 1).
   - e206ca9: the library split into `src/Source2.Compiler` and `src/Source2.MapCompiler`.
