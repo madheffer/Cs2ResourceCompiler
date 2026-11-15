@@ -7571,3 +7571,19 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - On 200 pak01 textures a format, the sRGB forms of DXT1, DXT5, BC7, RGBA8888 and BGRA8888 equal the GPU's
        bit for bit too.
      - Not measured: AMD (needs an AMD GPU).
+
+314. **The map side reads and writes without VRF; int16 and uint16 arrays are native KV3 arrays** (2026-11-15, CS2
+     closed: materialsystem2.dll 1.41.9.7 scanned with tools/re/vfx_zstd_dicts.py; tier0 SaveKV3's typed array writer
+     1800c5ea0 as the legacy writer recorded it; Valve's .nav files in NavMovableTests and NavWriterTests). READ +
+     MEASURED.
+     - The VCS 72 shader reader (Shaders/Vfx) decompresses each static combo's bytecode block with one of two zstd
+       dictionaries chosen by the block's compression type (3: id 0x2bc2fa87, 5: id 0x255df362). Both are the
+       64 KB buffers materialsystem2.dll hands V_ZSTD_createDDict_byReference (zstd dictionary magic 0xec30a437
+       then the id), one copy each in that DLL, taken from it byte for byte; no other type occurs in CS2's files.
+     - A typed array whose elements are all INT16 (or all UINT16) is written as a natively typed one: element type
+       0x14 (0x15) and the values in the auxiliary buffer's 2-byte lane, as floats are with 0x13 in the 4-byte lane.
+       Kv3BlockWriter had floats only and widened the int16 array to INT32; a .nav's movable-mesh gravity flags
+       (an int16 array) are stored natively in Valve's files, and with the rule the three nav tests against
+       Valve's bytes pass again.
+     - The whole test suite (1,596 tests; the pre-change tip with VRF passed 1,602, the difference being the tests
+       that only compared with VRF) passes after this, with no output change anywhere else.

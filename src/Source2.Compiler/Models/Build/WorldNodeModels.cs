@@ -31,11 +31,11 @@ namespace Source2.Compiler.Maps;
 public static class WorldNodeModels
 {
     /// <summary>Exploration hook (TangentFrameCaptureProbe): each packed NORMAL word with the frame it came from.</summary>
-    internal static Action<Vector3, Vector4, uint>? ObserveTangentFrame;
+    public static Action<Vector3, Vector4, uint>? ObserveTangentFrame;
 
     /// <summary>The model and draw being packed, for <see cref="ObserveTangentFrame"/>.</summary>
     [ThreadStatic]
-    internal static string? ObservedDraw;
+    public static string? ObservedDraw;
 
     /// <summary>
     /// What a material tells the model: its vertex input signature (INSG

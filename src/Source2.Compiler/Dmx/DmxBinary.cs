@@ -184,7 +184,7 @@ public static class DmxBinary
     }
 
     /// <summary>An element for another reader of the format to fill, or a writer to build.</summary>
-    internal static Element NewElement(string type, string name, Guid id) => new(type, name, id);
+    public static Element NewElement(string type, string name, Guid id) => new(type, name, id);
 
     /// <summary>DMX attribute type codes (the binary encoding's numbering).</summary>
     public static class AttrType

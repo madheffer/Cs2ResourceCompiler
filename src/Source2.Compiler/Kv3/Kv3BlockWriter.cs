@@ -268,19 +268,25 @@ public static class Kv3BlockWriter
             b.Main.Put((uint)items.Count, 4);
         else
             b.Main.Put((byte)items.Count, 1);
-        var native = items.All(x => x.ValueType == KVValueType.FloatingPoint);
+        // Natively typed arrays (1800c5ea0): float elements as FLOAT (4-byte lane), int16 as INT16 and uint16
+        // as UINT16 (2-byte lane); only native arrays carry those element types (a .nav's movable-mesh flags
+        // are an int16 array, stored so in Valve's files).
+        Kv3Type? nativeType = items.All(x => x.ValueType == KVValueType.FloatingPoint) ? Kv3Type.Float
+            : items.All(x => x.ValueType == KVValueType.Int16) ? Kv3Type.Int16
+            : items.All(x => x.ValueType == KVValueType.UInt16) ? Kv3Type.UInt16 : null;
+        var native = nativeType is not null;
         b.Arrays++;
         if (!native && (type != Kv3Type.ArrayTypeAuxiliaryBuffer || items.Count > 0x1f))
         {
             b.ArraysMain++;
             b.ElementsMain += items.Count;
         }
-        if (native)
+        if (nativeType is { } nt)
         {
-            // 1800c5ea0: the element type, then the raw floats into the auxiliary lanes.
-            b.Type((int)Kv3Type.Float, (byte)items[0].Flag);
+            // 1800c5ea0: the element type, then the raw values into the auxiliary lanes.
+            b.Type((int)nt, (byte)items[0].Flag);
             foreach (var x in items)
-                b.Aux.Put(BitConverter.SingleToUInt32Bits((float)x), 4);
+                Value(c, b.Aux, x, nt);
             return;
         }
         var lanes = type == Kv3Type.ArrayTypeAuxiliaryBuffer ? b.Aux : b.Main;

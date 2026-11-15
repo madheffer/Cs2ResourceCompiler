@@ -20,7 +20,7 @@ public enum Bc7Vendor
 public static unsafe class Bc7e
 {
     /// <summary>Tests: sees each call's input blocks and the blocks encoded from them.</summary>
-    internal static Action<byte[], byte[]>? Observer;
+    public static Action<byte[], byte[]>? Observer;
 
     private static readonly Lazy<nint>[] Encoders =
         [new(() => Load(Bc7Vendor.Amd)), new(() => Load(Bc7Vendor.Intel))];
