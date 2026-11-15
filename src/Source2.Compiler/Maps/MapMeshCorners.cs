@@ -93,6 +93,11 @@ internal static class MapMeshCorners
             var name = s.Name.Split(':')[0];
             if (name == "tangent" && !withTangent)
                 continue;
+            // A mesh's blendweight(s) and blendindices face-vertex streams never reach the builder: Mako's ten
+            // metalpipe008a meshes that carry them in the .vmap have neither in any of Valve's node entries
+            // (capture_nodeentries.py, Step25d500) nor in its models (ledger 312).
+            if (name is "blendweights" or "blendweight" or "blendindices")
+                continue;
             var values = s.Get<object?[]>("data") ?? [];
             if (name == "PerVertexLighting" && vertexLighting is null && !keepStoredLighting)
                 continue;

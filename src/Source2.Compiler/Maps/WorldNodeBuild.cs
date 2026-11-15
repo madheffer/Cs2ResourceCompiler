@@ -185,11 +185,15 @@ internal static class WorldNodeBuild
                 streams[i].Type != 0 ? streams[i].Type : 39 + streams[i].Count))];
 
         (int Stride, float[] Vertices, List<WrbMeshEntry.Stream> Streams) Filtered(string material, float[] vertices, int stride,
-                                                                                    IReadOnlyList<Physics.MeshWeld.Stream> streams, bool precise, ulong attributes)
+                                                                                    IReadOnlyList<Physics.MeshWeld.Stream> streams, bool precise, ulong attributes,
+                                                                                    MeshLists.Kind kind)
         {
             var kept = Enumerable.Range(0, streams.Count).ToList();
-            // PrepareForMerge passes over an entry with attribute bit 0 or 11 (& 0x801).
-            if ((attributes & 0x801) == 0 && content.Read(material + "_c") is { } bytes)
+            // PrepareForMerge passes over an entry with attribute bit 0 or 11 (& 0x801), and CompileNode calls it
+            // on the three merged lists only (the call at 1802787a8 in its loop over the aggregate, overlay and base lists
+            // before MergeMeshes): the instanced, no-split and baked prop lists keep every stream (Mako's light_red1
+            // glass keeps its tangent, which the model compile then preserves; ledger 312).
+            if (MeshLists.Merged.Contains(kind) && (attributes & 0x801) == 0 && content.Read(material + "_c") is { } bytes)
                 kept = MaterialStreams.Kept(streams, MaterialStreams.Inputs(Source2.Compiler.MaterialAuthor.ExtractInputSignature(bytes).Select(x => x.Semantic)),
                                             keepLighting && (attributes & 0x20000000) != 0);
             var newStride = kept.Sum(i => streams[i].Count);
@@ -216,7 +220,7 @@ internal static class WorldNodeBuild
             if (MeshLists.Assign(new MeshLists.Input(h.Attributes, h.ObjectFlags, 0, e.Record.FadeMax, !string.IsNullOrEmpty(e.Record.LightingOrigin), false)) is not { } kind
                 || !lists.TryGetValue(kind, out var list))
                 continue;
-            var (stride, v, streams) = Filtered(e.Material, b.Vertices, e.Stride, e.Streams, e.PreciseTexcoords, h.Attributes);
+            var (stride, v, streams) = Filtered(e.Material, b.Vertices, e.Stride, e.Streams, e.PreciseTexcoords, h.Attributes, kind);
             list.Add(new MergerInput(e.Material, stride, v, b.Indices, new WrbMeshEntry
             {
                 // COverlayMeshList::OnAdd (180271150) ORs 0x2000 into +0xbc of every entry the overlay list
@@ -239,7 +243,7 @@ internal static class WorldNodeBuild
                 continue;
             var mesh = projection.Mesh;
             var (wv, wi) = Physics.MeshWeld.Weld(mesh.Vertices, mesh.Stride, [.. Enumerable.Range(0, mesh.Vertices.Length / mesh.Stride)], mesh.Streams, 1f / 32f, true);
-            var (stride, v, streams) = Filtered(d.Material, wv, mesh.Stride, mesh.Streams, built[projection.Target].Source.Entry.PreciseTexcoords, flags);
+            var (stride, v, streams) = Filtered(d.Material, wv, mesh.Stride, mesh.Streams, built[projection.Target].Source.Entry.PreciseTexcoords, flags, kind);
             var tinted = d.TintColor.Any(x => x != 255);
             list.Add(new MergerInput(d.Material, stride, v, wi, new WrbMeshEntry
             {

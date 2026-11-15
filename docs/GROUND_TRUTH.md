@@ -6903,3 +6903,29 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        EntityRenderModels keeps the tool-eligible streams on the piece.
      - Result: Mako -world 1,692 of 1,782 (was 1,673); probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2,
        shaurma unchanged.
+
+312. **Only the merged lists drop streams; no blend streams from a map mesh; every key from the render modes**
+     (2026-11-15, CS2 closed: Frida, tools/vis/capture_propmeshes.py (WRB_LoadPropMeshes) and
+     capture_nodeentries.py --stages Step25d500 on a standalone resourcecompiler compiling s2c_big
+     ze_ffvii_mako_reactor_v6_p -world -fshallow, packages restored cmp-ok, %TEMP%/propmesh_capture/mako.bin and
+     %TEMP%/nodeentries_capture/mako_final.bin; rc 0923 CompileNode's PrepareForMerge call at 1802787a8;
+     ShaderAttributeProbe on csgo_lightmappedgeneric). READ + MEASURED.
+     - CompileNode calls WRBMeshList_PrepareForMerge (1802b52d0) on the aggregate, overlay and base lists only,
+       in its loop before MergeMeshes (the other call, 18027456b, is BuildPropAggregates'). The instanced, no-split
+       and baked prop lists keep every stream. Ours filtered all lists, so de_nuke/light_red1 and light_yellow1's
+       baked glass (a translucent instanced entry whose material reads no tangent) lost its tangent and the model
+       compile regenerated one; Valve's entry keeps the stored tangent, which preserve_tangents keeps. Our loader
+       and entries were Valve's float for float (PropMeshDirectProbe, EntryVertexProbe). Ported:
+       WorldNodeBuild.MergerInputs' Filtered takes the list kind.
+     - Mako's ten metalpipe008a meshes carry blendweights:0 and blendindices:0 face-vertex streams in the .vmap;
+       none of Valve's 29,167 captured entries has a blend stream, nor any of its metalpipe models. The stream in
+       ours broke the aggregate runs (GroupAggregates compares streams). Ported: MapMeshCorners skips the
+       blendweight(s) and blendindices face-vertex streams. Where the map load drops them is not read.
+     - The per-mode attribute merge of ledgers 157 and 277 is not only AllowBackfaceCulling: every key the
+       material's own static combo leaves undeclared comes from the shader's render modes. csgo_lightmappedgeneric
+       declares environmentmapped in combos with S_SPECULAR_INDIRECT=1 and in every ToolsVis combo
+       (S_MODE_TOOLS_VIS=1); nuke_ceiling_02 sets no F_SPECULAR_INDIRECT, and Valve's entry for its face on a
+       cubeMapName mesh (node 27196) is env-mapped (0x160300002, so instanced). Ported: MaterialAttributes.Of
+       takes every undeclared key from OfModes.
+     - Result: Mako -world 1,727 of 1,782 (was 1,692); probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2,
+       shaurma unchanged.

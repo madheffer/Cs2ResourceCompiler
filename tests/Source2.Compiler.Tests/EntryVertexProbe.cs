@@ -36,7 +36,16 @@ public sealed class EntryVertexProbe(ITestOutputHelper output)
             output.WriteLine($"valve {stage} {mat.GetString()} {nv} vertices stride {stride} attr {BitConverter.ToUInt64(blob, 0x1b0):x}: {string.Join(" ", streams)}");
             for (var k = 0; k < Math.Min(3, nv); k++)
                 output.WriteLine("   " + string.Join(" ", v.Skip(k * stride).Take(stride).Select(x => x.ToString("R"))));
+            if (Environment.GetEnvironmentVariable("ENTRYVERTEX_PACK") == "1")
+                for (var k = 0; k < nv; k++)
+                {
+                    var o = k * stride;
+                    var word = TangentFrame.Compress(new System.Numerics.Vector3(v[o + 3], v[o + 4], v[o + 5]), new System.Numerics.Vector4(v[o + 6], v[o + 7], v[o + 8], v[o + 9]));
+                    output.WriteLine($"   pack v{k} {word:X8} n {v[o + 3]:R} {v[o + 4]:R} {v[o + 5]:R} t {v[o + 6]:R} {v[o + 7]:R} {v[o + 8]:R} {v[o + 9]:R}");
+                }
             shown++;
+            if (Environment.GetEnvironmentVariable("ENTRYVERTEX_PACK") == "1")
+                break;
         }
         var game = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(pak)!, ".."));
         var addon = Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(vmap)))!;
@@ -49,6 +58,14 @@ public sealed class EntryVertexProbe(ITestOutputHelper output)
             output.WriteLine($"ours {e.Material} {e.Vertices.Length / e.Stride} vertices stride {e.Stride} attr {n.Header.Attributes:x}: {string.Join(" ", e.Streams.Select(s => $"{s.Name}@{s.First}x{s.Count}"))}");
             for (var k = 0; k < 3; k++)
                 output.WriteLine("   " + string.Join(" ", e.Vertices.Skip(k * e.Stride).Take(e.Stride).Select(x => x.ToString("R"))));
+            if (Environment.GetEnvironmentVariable("ENTRYVERTEX_PACK") == "1")
+                for (var k = 0; k < e.Vertices.Length / e.Stride; k++)
+                {
+                    var o = k * e.Stride;
+                    var v = e.Vertices;
+                    output.WriteLine($"   ours v{k} {TangentFrame.Compress(new System.Numerics.Vector3(v[o + 3], v[o + 4], v[o + 5]), new System.Numerics.Vector4(v[o + 6], v[o + 7], v[o + 8], v[o + 9])):X8} n {v[o + 3]:R} {v[o + 4]:R} {v[o + 5]:R} t {v[o + 6]:R} {v[o + 7]:R} {v[o + 8]:R} {v[o + 9]:R}");
+                }
+            break;
         }
     }
 }

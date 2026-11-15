@@ -60,9 +60,13 @@ public sealed class MaterialAttributes : MeshEntryFlags.IAttributes
         // material's own block chain (its second block), with no parent block (+0x1e0) and no owner (+0x60), so
         // the compile's material store is filled the same way (ledger 277). A shader none of whose modes declare it
         // (csgo_water_fancy) answers not found.
-        var cull = MeshEntryFlags.Key("AllowBackfaceCulling");
-        if (!result.values.ContainsKey(cull) && shaders != null && OfModes(material, shaders).values.TryGetValue(cull, out var fromModes))
-            result.values[cull] = fromModes;
+        // The same per-mode merge fills every other key the material's own static combo leaves undeclared: Mako's
+        // nuke_ceiling_02 (csgo_lightmappedgeneric, no F_SPECULAR_INDIRECT) declares environmentmapped only in
+        // its ToolsVis mode's combos (S_MODE_TOOLS_VIS=1), and Valve's entry for its face on a cubeMapName mesh is
+        // env-mapped (0x200002, capture_nodeentries.py; ledger 312).
+        if (shaders != null)
+            foreach (var (key, value) in OfModes(material, shaders).values)
+                result.values.TryAdd(key, value);
         return result;
     }
 

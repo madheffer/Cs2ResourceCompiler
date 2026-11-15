@@ -94,7 +94,7 @@ public class ShaderAttributeProbe(ITestOutputHelper output)
                 foreach (var (name, fallback, staticName, value) in features.Modes)
                     output.WriteLine($"MODE {shader}: {name} shader '{fallback}' combo {staticName}={value}");
             var seen = new Dictionary<string, HashSet<string>>();
-            output.WriteLine($"== {shader} static combos: {string.Join(" ", program.StaticComboArray.Select(c => $"{c.Name}[{c.RangeMin}..{c.RangeMax}]x{c.ComboIndexValue}"))}");
+            output.WriteLine($"== {shader} static combos: {string.Join(" ", program.StaticComboArray.Select(c => $"{c.Name}[{c.RangeMin}..{c.RangeMax}]x{c.ComboIndexValue} src{c.ComboSourceType} cmp{c.FeatureComparisonValue} feat{c.FeatureIndex}"))}");
             foreach (var id in program.StaticComboEntries.Keys)
             {
                 var combo = program.GetStaticCombo(id);
