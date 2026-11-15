@@ -1,0 +1,2 @@
+gpu NVIDIA GeForce RTX 4070
+layout colour: [channel R32,G64,B32 concatenated][a][b][selector 4] float32; bc3_alpha and bc4: [a 256][b 256][index 8] float32
