@@ -25,6 +25,9 @@ is no longer built here, so a host that vendors an adapter keeps its own copy.
 
 ### Removed
 - Every map type (see above).
+- The VRF-based layer: `ResourceBuilder` (use `PackageResourceBuilder`), `MaterialAuthor` (`PackageMaterialAuthor`),
+  `Kv3V5Writer` (`Kv3BlockWriter`, `Kv3Binary.Write`), `ResourceDecompiler` (`ResourceText`). release.json lists
+  every API difference against the previous release (`api.diagnostics`).
 
 ## Unreleased (resourcecompiler 1.41.9.5 byte parity)
 
