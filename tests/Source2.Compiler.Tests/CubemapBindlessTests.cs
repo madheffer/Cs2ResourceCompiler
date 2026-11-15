@@ -1,6 +1,6 @@
+using Source2.Compiler.Materials;
+using Source2.Compiler.Textures;
 using System.Text.Json.Nodes;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -41,12 +41,12 @@ public sealed class CubemapBindlessTests(ITestOutputHelper output)
             }
             throw new FileNotFoundException(path);
         }
-        using var material = new Resource();
+        using var material = new TestResource();
         material.Read(new MemoryStream(Read(materialPath)));
-        var noise = ((Material)material.DataBlock!).TextureParams["g_tNoiseMap"];
-        using var texture = new Resource();
+        var noise = ((CompiledMaterial)material.DataBlock!).TextureParams["g_tNoiseMap"];
+        using var texture = new TestResource();
         texture.Read(new MemoryStream(Read(noise)));
-        var tex = (Texture)texture.DataBlock!;
+        var tex = (CompiledTexture)texture.DataBlock!;
         output.WriteLine($"{image} ({bound["descriptor"]!["format"]}, {captured.Count} mips) against {noise}: {tex.Width} x {tex.Height} x {tex.Depth} {tex.Format}");
         var failures = new List<string>();
         foreach (var (level, _, _, _, size) in tex.GetEveryMipLevelMetrics())

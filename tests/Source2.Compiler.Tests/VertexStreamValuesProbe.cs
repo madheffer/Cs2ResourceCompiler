@@ -1,3 +1,4 @@
+using Source2.Compiler.Meshes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -20,11 +21,11 @@ public sealed class VertexStreamValuesProbe(ITestOutputHelper output)
         foreach (var entry in pkg.Entries.Where(e => e.Key == "vmdl_c").SelectMany(e => e.Value).OrderBy(e => e.GetFullPath(), StringComparer.Ordinal))
         {
             pkg.ReadEntry(entry, out var bytes);
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(bytes));
-            var model = (ValveResourceFormat.ResourceTypes.Model)res.DataBlock!;
-            foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
-                foreach (var vb in mesh.VBIB.VertexBuffers)
+            var model = (CompiledModel)res.DataBlock!;
+            foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
+                foreach (var vb in mesh.Vbib.VertexBuffers)
                     output.WriteLine($"{entry.GetFullPath()}: {vb.ElementCount} x {vb.ElementSizeInBytes}: "
                         + string.Join(", ", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}/{f.ShaderSemantic} {f.Format}@{f.Offset}")));
         }
@@ -37,11 +38,11 @@ public sealed class VertexStreamValuesProbe(ITestOutputHelper output)
             return;
         foreach (var file in files.Split(';'))
         {
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(file);
-            var model = (ValveResourceFormat.ResourceTypes.Model)res.DataBlock!;
-            foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
-                foreach (var vb in mesh.VBIB.VertexBuffers)
+            var model = (CompiledModel)res.DataBlock!;
+            foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
+                foreach (var vb in mesh.Vbib.VertexBuffers)
                 {
                     var field = vb.InputLayoutFields.FirstOrDefault(f => f.ShaderSemantic == semantic);
                     if (field.ShaderSemantic != semantic)

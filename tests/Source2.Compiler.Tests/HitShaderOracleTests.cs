@@ -1,3 +1,4 @@
+using Source2.Compiler.Textures;
 using System.Buffers.Binary;
 using System.Numerics;
 using Source2.Compiler.Gpu;
@@ -5,7 +6,6 @@ using Source2.Compiler.Lighting.Bake;
 using Source2.Compiler.Lighting.Bake.Glsl;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -145,9 +145,9 @@ public class HitShaderOracleTests(ITestOutputHelper output)
                 images.Add(image);
                 continue;
             }
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(content.Read(source.Path + "_c")!));
-            images.Add(GpuTextures.Upload(gpu, (Texture)res.DataBlock!, source.Srgb, RtxScene.TextureCap));
+            images.Add(GpuTextures.Upload(gpu, (CompiledTexture)res.DataBlock!, source.Srgb, RtxScene.TextureCap));
         }
         var hitContext = rtx.NewContext();
         var samplers = hitContext.Samplers.Select(s => oracle.CreateSampler(s.AddressU, s.AddressV, s.Linear, s.Mipmaps)).ToArray();
@@ -284,9 +284,9 @@ public class HitShaderOracleTests(ITestOutputHelper output)
             var outDir = Path.Combine(Path.GetTempPath(), "hitoracle_tex");
             Directory.CreateDirectory(outDir);
             File.WriteAllBytes(Path.Combine(outDir, $"tex{dumpIndex}_gpu.bin"), fetched);
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(rtx.ContentRead!(dumpPath + "_c")!));
-            var vtex = (Texture)res.DataBlock!;
+            var vtex = (CompiledTexture)res.DataBlock!;
             var level = RtxScene.ResidentLevel(vtex.Width, vtex.Height, Math.Max(1, (int)vtex.NumMipLevels));
             var size = vtex.GetEveryMipLevelMetrics().First(m => m.Level == level).BufferSize;
             var data = new byte[size];

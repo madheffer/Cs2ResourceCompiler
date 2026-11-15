@@ -1,5 +1,4 @@
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
+using Source2.Compiler.Materials;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -32,9 +31,9 @@ public class MaterialProbe(ITestOutputHelper output)
                 output.WriteLine($"{path}: not found");
                 continue;
             }
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var m = (Material)resource.DataBlock!;
+            var m = (CompiledMaterial)resource.DataBlock!;
             output.WriteLine($"{path}: shader {m.ShaderName}");
             output.WriteLine("  int " + string.Join(", ", m.IntParams.Select(kv => $"{kv.Key}={kv.Value}")));
             output.WriteLine("  float " + string.Join(", ", m.FloatParams.Select(kv => $"{kv.Key}={kv.Value}")));

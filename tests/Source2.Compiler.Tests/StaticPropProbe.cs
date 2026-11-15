@@ -1,4 +1,5 @@
-using ValveResourceFormat.Serialization.KeyValues;
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -94,9 +95,9 @@ public class PhysTablesProbe(ITestOutputHelper output)
         using var package = new ValvePak.Package();
         package.Read(vpk);
         package.ReadEntry(package.FindEntry(p[1])!, out var bytes);
-        using var resource = new ValveResourceFormat.Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        var phys = ((ValveResourceFormat.ResourceTypes.Model)resource.DataBlock!).GetEmbeddedPhys()!;
+        var phys = ((CompiledModel)resource.DataBlock!).EmbeddedPhysics!;
         var data = phys.Data;
         foreach (var key in new[] { "m_collisionAttributes", "m_surfacePropertyHashes", "m_boneNames", "m_indexNames", "m_indexHash", "m_bindPose" })
             if (data.ContainsKey(key) && key != "m_bindPose")

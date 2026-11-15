@@ -1,3 +1,4 @@
+using Source2.Compiler.Shaders.Vfx;
 using System.Reflection;
 using Source2.Compiler.Maps;
 using Xunit;

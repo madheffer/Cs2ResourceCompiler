@@ -1,5 +1,5 @@
+using Source2.Compiler.Shaders.Vfx;
 using Source2.Compiler.Gpu;
-using ValveResourceFormat.CompiledShader;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -21,8 +21,7 @@ public sealed class CubemapModesProbe(ITestOutputHelper output)
             var entry = csgo.FindEntry($"shaders/vfx/{shader}_vulkan_50_features.vcs");
             if (entry == null) { output.WriteLine($"{shader}: no features"); continue; }
             csgo.ReadEntry(entry, out var bytes);
-            using var f = new VfxProgramData();
-            f.Read($"{shader}_vulkan_50_features.vcs", new MemoryStream(bytes));
+            var f = VfxProgramData.Read($"{shader}_vulkan_50_features.vcs", bytes);
             output.WriteLine($"{shader}: " + string.Join("; ", f.FeaturesHeader!.Modes.Select(m => $"{m.Name}=>{m.ShaderFallback}/{m.StaticComboName}={m.StaticComboValue}")));
             foreach (var stage in new[] { "vs", "ps" })
                 foreach (var (statics, label) in new[] { (new Dictionary<string, int> { ["S_MODE_DEPTH"] = 1 }, "S_MODE_DEPTH=1"), (new Dictionary<string, int>(), "none"), (new Dictionary<string, int> { ["S_ALPHA_TEST"] = 1 }, "S_ALPHA_TEST=1") })

@@ -1,8 +1,7 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using ValveKeyValue;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -31,10 +30,10 @@ public class WorldPhysicsSurvey(ITestOutputHelper output)
             return;
         }
         package.ReadEntry(entry, out var bytes);
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        var model = (Model)resource.DataBlock!;
-        var phys = model.GetEmbeddedPhys() ?? throw new InvalidDataException("no embedded physics");
+        var model = (CompiledModel)resource.DataBlock!;
+        var phys = model.EmbeddedPhysics ?? throw new InvalidDataException("no embedded physics");
         var data = phys.Data;
         output.WriteLine($"PHYS keys: {string.Join(", ", data.Children.Select(c => c.Key))}");
         foreach (var key in new[] { "m_collisionAttributes", "m_surfacePropertyHashes", "m_boneNames" })

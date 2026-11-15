@@ -1,4 +1,4 @@
-using ValveResourceFormat.Serialization.KeyValues;
+using Source2.Compiler.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -18,7 +18,7 @@ public sealed class CubemapSceneKeysProbe(ITestOutputHelper output)
         foreach (var entry in package.Entries!.GetValueOrDefault("vents_c") ?? [])
         {
             package.ReadEntry(entry, out var bytes);
-            var data = (ValveResourceFormat.ResourceTypes.EntityLump)ResourceTrees.Read(bytes, entry.GetFullPath()).DataBlock!;
+            var data = (TestKv3Typed)ResourceTrees.Read(bytes, entry.GetFullPath()).DataBlock!;
             foreach (var entity in data.Data.GetArray("m_entityKeyValues"))
             {
                 var values = entity.GetSubCollection("keyValues3Data")?.GetSubCollection("values")?.Children.ToList() ?? [];
@@ -33,7 +33,7 @@ public sealed class CubemapSceneKeysProbe(ITestOutputHelper output)
         foreach (var entry in package.Entries!.SelectMany(kv => kv.Value).Where(e => e.TypeName is "vwrld_c"))
         {
             package.ReadEntry(entry, out var bytes);
-            var w = (ValveResourceFormat.ResourceTypes.World)ResourceTrees.Read(bytes, entry.GetFullPath()).DataBlock!;
+            var w = (TestKv3Typed)ResourceTrees.Read(bytes, entry.GetFullPath()).DataBlock!;
             output.WriteLine($"== {entry.GetFullPath()} m_worldLightingInfo: {w.Data.GetSubCollection("m_worldLightingInfo")}");
         }
     }

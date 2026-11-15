@@ -1,8 +1,7 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using System.Text;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -39,16 +38,16 @@ public class WorldNodeProbe(ITestOutputHelper output)
             package.ReadEntry(entry, out var bytes);
             var file = Path.Combine(p[1], Path.GetFileName(path));
             File.WriteAllBytes(file, bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var model = (Model)resource.DataBlock!;
-            foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
+            var model = (CompiledModel)resource.DataBlock!;
+            foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
             {
                 items.Add(new
                 {
                     path = file,
-                    vb = mesh.VBIB.VertexBuffers.Select(b => new[] { (long)b.ElementCount, (long)b.ElementSizeInBytes }).ToArray(),
-                    ib = mesh.VBIB.IndexBuffers.Select(b => new[] { (long)b.ElementCount, (long)b.ElementSizeInBytes }).ToArray(),
+                    vb = mesh.Vbib.VertexBuffers.Select(b => new[] { (long)b.ElementCount, (long)b.ElementSizeInBytes }).ToArray(),
+                    ib = mesh.Vbib.IndexBuffers.Select(b => new[] { (long)b.ElementCount, (long)b.ElementSizeInBytes }).ToArray(),
                 });
                 break;
             }
@@ -142,14 +141,14 @@ public class WorldNodeProbe(ITestOutputHelper output)
         if (Environment.GetEnvironmentVariable("WNMODEL") is not { Length: > 0 } spec)
             return;
         var p = spec.Split('|');
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(p[0]);
-        var model = (Model)resource.DataBlock!;
+        var model = (CompiledModel)resource.DataBlock!;
         var text = new StringBuilder();
-        foreach (var (mesh, index, name, lod) in model.GetEmbeddedMeshesAndLoD())
+        foreach (var (mesh, index, name, lod) in model.EmbeddedMeshesAndLod())
         {
             text.AppendLine($"mesh {index} {name} lod {lod}");
-            var vbib = mesh.VBIB;
+            var vbib = mesh.Vbib;
             for (var b = 0; b < vbib.VertexBuffers.Count; b++)
             {
                 var vb = vbib.VertexBuffers[b];

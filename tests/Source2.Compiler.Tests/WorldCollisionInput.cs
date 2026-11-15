@@ -2,8 +2,6 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using Source2.Compiler.Physics;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 

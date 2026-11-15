@@ -1,10 +1,9 @@
-﻿using System.Numerics;
+using Source2.Compiler.Materials;
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
+using System.Numerics;
 using Source2.Compiler.Maps;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -36,9 +35,9 @@ public class EntityRenderProbe(ITestOutputHelper output)
             if (!entry.DirectoryName.EndsWith("entities", StringComparison.OrdinalIgnoreCase))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var embedded = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().Select(m => m.Mesh).ToList();
+            var embedded = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().Select(m => m.Mesh).ToList();
             if (embedded.Count == 0)
                 continue;
             var name = entry.FileName;
@@ -113,7 +112,7 @@ public class EntityRenderProbe(ITestOutputHelper output)
         {
             if (!facts.TryGetValue(path, out var f))
                 facts[path] = f = content.Read(path + "_c") is { } b
-                    ? new WorldNodeModels.MaterialFacts(MaterialAuthor.ExtractInputSignature(b), MaterialAuthor.ExtractDepthSignature(b))
+                    ? new WorldNodeModels.MaterialFacts(PackageMaterialAuthor.ExtractInputSignature(b), PackageMaterialAuthor.ExtractDepthSignature(b))
                     : new WorldNodeModels.MaterialFacts([], []);
             return f;
         }
@@ -121,7 +120,7 @@ public class EntityRenderProbe(ITestOutputHelper output)
         {
             foreach (var m in mats.Split(','))
                 if (content.Read(m + "_c") is { } raw)
-                    output.WriteLine($"SIG {m}: elems {string.Join(",", MaterialAuthor.ExtractInputSignature(raw).Select(e => e.Semantic))}; depth {string.Join(",", MaterialAuthor.ExtractDepthSignature(raw).Select(e => e.Semantic))}");
+                    output.WriteLine($"SIG {m}: elems {string.Join(",", PackageMaterialAuthor.ExtractInputSignature(raw).Select(e => e.Semantic))}; depth {string.Join(",", PackageMaterialAuthor.ExtractDepthSignature(raw).Select(e => e.Semantic))}");
             foreach (var m in mats.Split(','))
                 if (content.Material(m) is { } info)
                     output.WriteLine($"MAT {m}: shader {info.Shader}; ints {string.Join(" ", info.Ints.Select(kv => $"{kv.Key}={kv.Value}"))}; params {string.Join(" ", info.Params.Select(kv => $"{kv.Key}={kv.Value}"))}");
@@ -136,9 +135,9 @@ public class EntityRenderProbe(ITestOutputHelper output)
             if (!entry.DirectoryName.EndsWith("entities", StringComparison.OrdinalIgnoreCase))
                 continue;
             package.ReadEntry(entry, out var valve);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(valve));
-            if (resource.Blocks.All(b => b.Type != BlockType.MDAT))
+            if (resource.Blocks.All(b => b.Type != "MDAT"))
                 continue;
             var name = entry.FileName;
             if (!int.TryParse(name[(name.LastIndexOf('_') + 1)..], out var id) || !byId.TryGetValue(id, out var entity) || !physicsModels.TryGetValue(name, out var physics))
@@ -153,10 +152,10 @@ public class EntityRenderProbe(ITestOutputHelper output)
                     output.WriteLine($"NAMES {name} ({physics.ClassName}) mesh {mm.GetValue<int>("nodeID")}: {string.Join(",", (mm.Get<DmxBinary.Element>("meshData")?.Get<object?[]>("materials") ?? []).Select(x => x as string))}");
             if (Environment.GetEnvironmentVariable("ENTMODELS_UV") == "1")
             {
-                var embeddedMeshes = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().Select(m => m.Mesh).ToList();
+                var embeddedMeshes = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().Select(m => m.Mesh).ToList();
                 for (var i = 0; i < Math.Min(pieces.Count, embeddedMeshes.Count); i++)
                 {
-                    var uvField = embeddedMeshes[i].VBIB.VertexBuffers[0].InputLayoutFields.FirstOrDefault(f => f.SemanticName == "TEXCOORD");
+                    var uvField = embeddedMeshes[i].Vbib.VertexBuffers[0].InputLayoutFields.FirstOrDefault(f => f.SemanticName == "TEXCOORD");
                     var e = pieces[i].Entry;
                     var at = 0;
                     foreach (var st in e.Facts.Streams)
@@ -182,12 +181,12 @@ public class EntityRenderProbe(ITestOutputHelper output)
             // Trees block by block in order (MDATs by position).
             List<(string Type, ValveKeyValue.KVObject Tree)> Blocks(byte[] bytes)
             {
-                using var r = new Resource();
+                using var r = new TestResource();
                 r.Read(new MemoryStream(bytes));
                 return [.. r.Blocks.Select(b => (b.Type.ToString(), b switch
                 {
-                    BinaryKV3 k => k.Data.Root,
-                    ResourceEditInfo2 e => e.Data?.Root,
+                    TestEditInfo e => e.Data?.Root,
+                    TestKv3Block k => k.Data.Root,
                     _ => null,
                 })).Where(x => x.Item2 != null).Select(x => (x.Item1, x.Item2!))];
             }
@@ -215,14 +214,14 @@ public class EntityRenderProbe(ITestOutputHelper output)
             else
             {
                 tally["buffers"] = tally.GetValueOrDefault("buffers") + 1;
-                var vm = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().Select(m => m.Mesh).ToList();
+                var vm = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().Select(m => m.Mesh).ToList();
                 for (var i = 0; i < Math.Min(vm.Count, raws.Count); i++)
                 {
-                    var vbuf = vm[i].VBIB.VertexBuffers[0];
+                    var vbuf = vm[i].Vbib.VertexBuffers[0];
                     var (vd, od, st) = (vbuf.Data, raws[i].RawVertexBuffers[0], (int)vbuf.ElementSizeInBytes);
                     var diffs = Enumerable.Range(0, Math.Min(vd.Length, od.Length)).Where(x => vd[x] != od[x])
                         .GroupBy(x => { var f = vbuf.InputLayoutFields.Last(f => f.Offset <= x % st); return f.SemanticName + f.SemanticIndex; }).Select(g => $"{g.Key}:{g.Count()}").ToList();
-                    var vi = vm[i].VBIB.IndexBuffers[0].Data;
+                    var vi = vm[i].Vbib.IndexBuffers[0].Data;
                     var oi = raws[i].Model.SceneObjects[0].Draws.Count > 0 ? raws[i].Buffers[^1].Bytes : [];
                     if (diffs.Count > 0 || vd.Length != od.Length)
                         output.WriteLine($"BUF {name} {i}: vb {vd.Length}/{od.Length} {string.Join(" ", diffs)} fmt {string.Join(",", vbuf.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{(int)f.Format}"))} first {(Enumerable.Range(0, Math.Min(vd.Length, od.Length)).FirstOrDefault(x => vd[x] != od[x], -1) is var fx and >= 0 ? $"v{fx / st} valve {Convert.ToHexString(vd, fx / st * st, st)} ours {Convert.ToHexString(od, fx / st * st, st)}" : "")}");
@@ -282,12 +281,12 @@ public class EntityRenderProbe(ITestOutputHelper output)
             var ours = m.PhysicsOnly ? Physics.EntityPhysicsModels.Author(m, content.SurfaceName) : EntityRenderModels.Author(m, content);
             List<(string Type, ValveKeyValue.KVObject Tree)> Blocks(byte[] bytes)
             {
-                using var r = new Resource();
+                using var r = new TestResource();
                 r.Read(new MemoryStream(bytes));
                 return [.. r.Blocks.Select(b => (b.Type.ToString(), b switch
                 {
-                    BinaryKV3 k => k.Data.Root,
-                    ResourceEditInfo2 e => e.Data?.Root,
+                    TestEditInfo e => e.Data?.Root,
+                    TestKv3Block k => k.Data.Root,
                     _ => null,
                 })).Where(x => x.Item2 != null).Select(x => (x.Item1, x.Item2!))];
             }
@@ -337,24 +336,24 @@ public class EntityRenderProbe(ITestOutputHelper output)
             if (!entry.DirectoryName.EndsWith("entities", StringComparison.OrdinalIgnoreCase))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            if (resource.Blocks.All(b => b.Type != BlockType.MDAT))
+            if (resource.Blocks.All(b => b.Type != "MDAT"))
                 continue;
             var name = entry.FileName;
-            var model = (Model)resource.DataBlock!;
-            var ctrl = ((BinaryKV3)resource.GetBlockByType(BlockType.CTRL)!).Data.Root;
+            var model = (CompiledModel)resource.DataBlock!;
+            var ctrl = ((TestKv3Block)resource.GetBlockByType("CTRL")!).Data.Root;
             var meshNames = ctrl["embedded_meshes"]!.Values.Select(m => (string)m["m_Name"]!).ToList();
-            var embedded = model.GetEmbeddedMeshesAndLoD().Select(m => m.Mesh).ToList();
+            var embedded = model.EmbeddedMeshesAndLod().Select(m => m.Mesh).ToList();
             var valve = new List<string>();
             for (var i = 0; i < embedded.Count; i++)
             {
                 var m = embedded[i];
-                var vb = m.VBIB.VertexBuffers[0];
+                var vb = m.Vbib.VertexBuffers[0];
                 var layout = string.Join(",", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}"));
                 layouts[layout] = layouts.GetValueOrDefault(layout) + 1;
                 var mats = string.Join("+", m.Data.GetArray("m_sceneObjects").SelectMany(so => so.GetArray("m_drawCalls")).Select(d => Path.GetFileNameWithoutExtension(d.GetStringProperty("m_material"))));
-                valve.Add($"{meshNames.ElementAtOrDefault(i)}[{mats} v{vb.ElementCount} i{m.VBIB.IndexBuffers[0].ElementCount}]");
+                valve.Add($"{meshNames.ElementAtOrDefault(i)}[{mats} v{vb.ElementCount} i{m.Vbib.IndexBuffers[0].ElementCount}]");
             }
             var line = $"{name}: valve {string.Join(" ", valve)}";
             if (int.TryParse(name[(name.LastIndexOf('_') + 1)..], out var id) && byId.TryGetValue(id, out var entity))
@@ -478,15 +477,15 @@ public class EntityRenderProbe(ITestOutputHelper output)
         }
     }
 
-    private static List<string> Triangles(ValveResourceFormat.ResourceTypes.Mesh mesh)
+    private static List<string> Triangles(EmbeddedMesh mesh)
     {
         var tris = new List<string>();
         foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
             foreach (var dc in so.GetArray("m_drawCalls"))
             {
-                var vb = mesh.VBIB.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                var pos = VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
-                var ib = mesh.VBIB.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                var vb = mesh.Vbib.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                var pos = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
+                var ib = mesh.Vbib.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                 var start = dc.GetInt32Property("m_nStartIndex");
                 var n = dc.GetInt32Property("m_nIndexCount");
                 var bas = dc.GetInt32Property("m_nBaseVertex");

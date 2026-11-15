@@ -1,6 +1,6 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 

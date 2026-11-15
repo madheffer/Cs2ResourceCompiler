@@ -1,7 +1,6 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Maps;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -23,11 +22,11 @@ public class MeshToolsDataProbe(ITestOutputHelper output)
             return;
         using var content = new GameContent(pak);
         var bytes = content.Read(path) ?? throw new FileNotFoundException(path);
-        using var resource = new Resource { FileName = path };
+        using var resource = new TestResource { FileName = path };
         resource.Read(new MemoryStream(bytes));
         output.WriteLine("blocks: " + string.Join(" ", resource.Blocks.Select(b => b.Type)));
-        var model = (Model)resource.DataBlock!;
-        foreach (var (mesh, index, name, lod) in model.GetEmbeddedMeshesAndLoD())
+        var model = (CompiledModel)resource.DataBlock!;
+        foreach (var (mesh, index, name, lod) in model.EmbeddedMeshesAndLod())
         {
             output.WriteLine($"mesh {index} {name} lod 0x{lod:x}: keys {string.Join(",", mesh.Data.Keys)}");
             foreach (var key in mesh.Data.Keys.Where(k => k.Contains("tools", StringComparison.OrdinalIgnoreCase)))

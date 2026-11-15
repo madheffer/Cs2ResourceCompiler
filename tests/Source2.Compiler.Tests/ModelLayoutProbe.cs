@@ -1,5 +1,6 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Maps;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -21,11 +22,11 @@ public sealed class ModelLayoutProbe(ITestOutputHelper output)
                 output.WriteLine($"{name}: not found");
                 continue;
             }
-            foreach (var (mesh, _, _, lod) in model.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, lod) in model.EmbeddedMeshesAndLod())
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var call in so.GetArray("m_drawCalls"))
                     {
-                        var vb = mesh.VBIB.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                        var vb = mesh.Vbib.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
                         output.WriteLine($"{name} lod {lod} {call.GetStringProperty("m_material")}: " +
                                          string.Join(" ", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}")));
                     }

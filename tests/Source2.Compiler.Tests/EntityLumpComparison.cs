@@ -1,9 +1,7 @@
+using Source2.Compiler.KeyValues;
 using System.Globalization;
 using System.Text;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Tests;
 
@@ -35,7 +33,7 @@ internal static class EntityLumpComparison
     public static IReadOnlyList<Entity> Read(byte[] lump, string name = "lump.vents_c")
     {
         using var resource = ResourceTrees.Read(lump, name);
-        var data = resource.DataBlock as EntityLump
+        var data = resource.DataBlock as TestKv3Typed
                    ?? throw new InvalidOperationException($"{name} has no entity lump DATA block.");
 
         var entities = new List<Entity>();

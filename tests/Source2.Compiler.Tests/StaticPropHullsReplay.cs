@@ -1,9 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Physics;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -32,9 +31,9 @@ public class StaticPropHullsReplay(ITestOutputHelper output)
         using var package = new Package();
         package.Read(parts.Length > 2 ? parts[2] : Path.Combine(game, "csgo_addons", parts[0], "maps", parts[1] + ".vpk"));
         package.ReadEntry(package.FindEntry($"maps/{parts[1]}/world_physics.vmdl_c")!, out var bytes);
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        var shipped = ((Model)resource.DataBlock!).GetEmbeddedPhys()?.Parts.SelectMany(p => p.Shape.Hulls).Select(h => h.Shape).ToList() ?? [];
+        var shipped = ((CompiledModel)resource.DataBlock!).EmbeddedPhysics?.Parts.SelectMany(p => p.Shape.Hulls).Select(h => h.Shape).ToList() ?? [];
         output.WriteLine($"shipped world_physics: {shipped.Count} hulls");
 
         var doc = DmxBinary.ReadFile(vmap);

@@ -1,4 +1,4 @@
-using ValveResourceFormat.CompiledShader;
+using Source2.Compiler.Shaders.Vfx;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -27,8 +27,7 @@ public class ShaderDumpProbe(ITestOutputHelper output)
             var dir = Path.Combine(outDir, name);
             Directory.CreateDirectory(dir);
             package.ReadEntry(entry, out var bytes);
-            using var program = new VfxProgramData();
-            program.Read(entry.GetFullPath(), new MemoryStream(bytes));
+            var program = VfxProgramData.Read(entry.GetFullPath(), bytes);
             File.WriteAllLines(Path.Combine(dir, "variables.txt"),
                 program.VariableDescriptions.Select((v, i) => $"{i}\t{v.Name}\t{v.VfxType}\t{v.SourceIndex}"));
             var files = 0;
@@ -37,7 +36,7 @@ public class ShaderDumpProbe(ITestOutputHelper output)
                 var data = combo.Unserialize();
                 for (var f = 0; f < data.ShaderFiles.Length; f++)
                 {
-                    var code = data.ShaderFiles[f] is { } file ? file.GetDecompiledFile() : "";
+                    var code = data.ShaderFiles[f] is { } file ? Decompile(file) : "";
                     File.WriteAllText(Path.Combine(dir, $"s{id}_f{f}.hlsl"), code);
                     files++;
                 }
@@ -45,4 +44,10 @@ public class ShaderDumpProbe(ITestOutputHelper output)
             output.WriteLine($"{name}: {program.VariableDescriptions.Length} variables, {program.StaticComboEntries.Count} static combos, {files} shader files");
         }
     }
+
+    // A Vulkan file as HLSL, else GLSL (as VRF's GetDecompiledFile tried them); other bytecode is not decompiled.
+    private static string Decompile(VfxShaderFile file) => file is VfxShaderFileVulkan vk
+        ? ShaderSpirvReflection.ReflectSpirv(vk, Vortice.SpirvCross.Backend.HLSL, out var hlsl) ? hlsl
+          : ShaderSpirvReflection.ReflectSpirv(vk, Vortice.SpirvCross.Backend.GLSL, out var glsl) ? glsl : "// SPIR-V reflection failed"
+        : $"{file.SourceType} decompilation is not supported.";
 }

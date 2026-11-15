@@ -380,12 +380,9 @@ public sealed class NavAnalysisTests(ITestOutputHelper output)
     internal static ValveKeyValue.KVObject CustomData(byte[] nav)
     {
         var start = nav.AsSpan().LastIndexOf(new byte[] { 0x05, 0x33, 0x56, 0x4b });
-        using var holder = new ValveResourceFormat.Resource();
-        var kv3 = new ValveResourceFormat.ResourceTypes.BinaryKV3 { Resource = holder, Offset = (uint)start, Size = (uint)(nav.Length - start) };
         using var reader = new BinaryReader(new MemoryStream(nav));
         reader.BaseStream.Position = start;
-        kv3.Read(reader);
-        return kv3.Data.Root;
+        return Kv3Binary.ReadEmbedded(reader).Root;
     }
 
     [Fact]
@@ -825,7 +822,7 @@ public sealed class NavAnalysisTests(ITestOutputHelper output)
             for (var k = 0; k < ids.Count; k++)
                 spotPointer[encs[^1].Spots[k].Spot] = ids[k];
         }
-        var ours = Kv3V5Writer.Write(fresh.CustomData(a => pointerOf[a.Id], s => spotPointer.GetValueOrDefault(s)), NavWriter.CustomDataFormat);
+        var ours = Kv3BlockWriter.Write(fresh.CustomData(a => pointerOf[a.Id], s => spotPointer.GetValueOrDefault(s)), NavWriter.CustomDataFormat);
         var start = nav.AsSpan().LastIndexOf(new byte[] { 0x05, 0x33, 0x56, 0x4b });
         var valve = nav.AsSpan(start).ToArray();
         output.WriteLine($"ours {ours.Length} bytes, Valve {valve.Length}");

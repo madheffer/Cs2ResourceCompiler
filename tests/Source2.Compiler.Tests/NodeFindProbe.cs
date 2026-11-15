@@ -1,3 +1,4 @@
+using Source2.Compiler.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -153,7 +154,7 @@ public class NodeFindProbe(ITestOutputHelper output)
                     // DUMPRES_TYPES=1: every leaf as "path type value" (KV3 text loses int against uint).
                     var text = Environment.GetEnvironmentVariable("DUMPRES_TYPES") == "1"
                         ? string.Join('\n', Leaves("", tree))
-                        : ValveResourceFormat.Serialization.KeyValues.KVDocumentExtensions.ToKV3String(tree);
+                        : (tree).ToKV3String();
                     if (rest is [var dir])
                         File.WriteAllText(Path.Combine(dir, $"{Path.GetFileName(e.GetFullPath())}.{block}.kv3"), text);
                     else

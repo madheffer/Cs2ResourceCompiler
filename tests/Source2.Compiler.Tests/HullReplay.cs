@@ -1,10 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Physics;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -37,9 +35,9 @@ public class HullReplay(ITestOutputHelper output)
         foreach (var entry in package.Entries.SelectMany(kv => kv.Value).Where(e => e.TypeName == "vmdl_c" && e.GetFullPath().Contains(filter, StringComparison.Ordinal)))
         {
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            if (resource.DataBlock is not Model model || model.GetEmbeddedPhys() is not { } phys)
+            if (resource.DataBlock is not CompiledModel model || model.EmbeddedPhysics is not { } phys)
                 continue;
             foreach (var part in phys.Parts)
             {
@@ -61,7 +59,7 @@ public class HullReplay(ITestOutputHelper output)
             output.WriteLine($"{k}: {v}");
     }
 
-    private static List<string> Compare(Hull valve, out string note)
+    private static List<string> Compare(Source2.Compiler.Rubikon.Shapes.Hull valve, out string note)
     {
         var diffs = new List<string>();
         note = "";

@@ -1,6 +1,5 @@
+using Source2.Compiler.Materials;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -32,9 +31,9 @@ public class MaterialAttributeNamesProbe(ITestOutputHelper output)
                 try
                 {
                     package.ReadEntry(entry, out var bytes);
-                    using var resource = new Resource();
+                    using var resource = new TestResource();
                     resource.Read(new MemoryStream(bytes));
-                    if (resource.DataBlock is not Material m)
+                    if (resource.DataBlock is not CompiledMaterial m)
                         continue;
                     foreach (var k in m.IntAttributes.Keys.Concat(m.FloatAttributes.Keys).Concat(m.VectorAttributes.Keys).Concat(m.StringAttributes.Keys))
                         names.Add(k);

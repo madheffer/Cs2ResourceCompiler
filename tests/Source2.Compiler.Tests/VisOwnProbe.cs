@@ -1,3 +1,4 @@
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Maps;
 using Xunit;
@@ -53,10 +54,7 @@ public class VisConfigDump(ITestOutputHelper output)
         var path = Path.Combine(Path.GetTempPath(), "csgo_addons", addon, "maps", map + ".viscfg");
         if (Environment.GetEnvironmentVariable("VISOWN") != "1" || !File.Exists(path))
             return;
-        using var reader = new BinaryReader(File.OpenRead(path));
-        using var owner = new ValveResourceFormat.Resource();
-        var kv = new ValveResourceFormat.ResourceTypes.BinaryKV3 { Resource = owner };
-        kv.Read(reader);
-        output.WriteLine($"{map}:\n{ValveResourceFormat.Serialization.KeyValues.KVDocumentExtensions.ToKV3String(kv.Data)}");
+        var kv = Kv3Binary.Read(File.ReadAllBytes(path));
+        output.WriteLine($"{map}:\n{kv.Root.ToKV3String(kv.Header?.Format)}");
     }
 }

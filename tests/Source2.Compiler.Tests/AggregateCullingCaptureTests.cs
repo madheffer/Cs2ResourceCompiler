@@ -1,11 +1,9 @@
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using System.Text.Json.Nodes;
 using Source2.Compiler.Cubemaps;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -103,7 +101,7 @@ public sealed class AggregateCullingCaptureTests(ITestOutputHelper output)
         {
             package.ReadEntry(entry, out var bytes);
             using var resource = ResourceTrees.Read(bytes, entry.GetFullPath());
-            foreach (var entity in ((EntityLump)resource.DataBlock!).Data.GetArray("m_entityKeyValues"))
+            foreach (var entity in ((TestKv3Typed)resource.DataBlock!).Data.GetArray("m_entityKeyValues"))
             {
                 var values = entity.GetSubCollection("keyValues3Data")?.GetSubCollection("values")?.Children.ToList() ?? [];
                 var cls = values.FirstOrDefault(v => v.Key == "classname").Value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "";

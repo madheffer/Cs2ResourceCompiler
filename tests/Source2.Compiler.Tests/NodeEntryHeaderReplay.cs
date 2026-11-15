@@ -23,7 +23,7 @@ public class NodeEntryHeaderReplay(ITestOutputHelper output)
         using var content = new GameContent(pak, Path.Combine(game, "csgo_addons", addon));
         using var shaders = new ShaderLibrary(Path.Combine(game, "csgo", "shaders_pc_dir.vpk"), Path.Combine(game, "core", "shaders_pc_dir.vpk"));
         IReadOnlyCollection<string> Signature(string material) => content.Read(material + "_c") is { } b
-            ? [.. MaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
+            ? [.. PackageMaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
         var doc = DmxBinary.ReadFile(vmap);
         var ours = NodeMeshEntries.FromWorld(doc, signature: Signature, rendersAsWorld: NodeEntriesFromVmap.RendersAsWorld(game));
         var copyIds = NodePropEntries.CopyIds(doc, content);

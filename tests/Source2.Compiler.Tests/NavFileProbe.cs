@@ -1,6 +1,4 @@
 using System.Buffers.Binary;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -37,17 +35,15 @@ public class NavFileProbe(ITestOutputHelper output)
                     output.WriteLine($"  raw {pos}..{gapEnd}: {Convert.ToHexString(bytes.AsSpan(pos, gapEnd - pos))}");
                 if (next < 0)
                     break;
-                using var holder = new Resource();
-                var kv3 = new BinaryKV3 { Resource = holder, Offset = (uint)next, Size = (uint)(bytes.Length - next) };
                 using var reader = new BinaryReader(new MemoryStream(bytes));
                 reader.BaseStream.Position = next;
-                kv3.Read(reader);
+                var kv3Data = Kv3Binary.ReadEmbedded(reader);
                 var end = (int)reader.BaseStream.Position;
-                var method = (KV3BinaryCompressionMethod)BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(next + 20));
-                var ours = Kv3V5Writer.Write(kv3.Data.Root, kv3.Data.Header!.Format.Id, method);
+                var method = (Kv3Compression)BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(next + 20));
+                var ours = Kv3BlockWriter.Write(kv3Data.Root, kv3Data.Header!.Format.Id, method);
                 var exact = ours.AsSpan().SequenceEqual(bytes.AsSpan(next, Math.Min(ours.Length, bytes.Length - next))) ? "exact" : "differs";
                 output.WriteLine($"  kv3 #{at++} {next}..{end} ({end - next} bytes, method {method}, ours {ours.Length} bytes {exact}):");
-                Print("root", kv3.Data.Root, "    ");
+                Print("root", kv3Data.Root, "    ");
                 pos = Math.Max(end, next + 4);
             }
         }

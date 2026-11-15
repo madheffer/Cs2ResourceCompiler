@@ -1,8 +1,6 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -27,16 +25,16 @@ public class EntityModelSurvey(ITestOutputHelper output)
         foreach (var entry in package.Entries!["vmdl_c"].Where(e => e.GetFullPath().Contains("/entities/", StringComparison.Ordinal)).OrderBy(e => e.GetFullPath(), StringComparer.Ordinal))
         {
             package.ReadEntry(entry, out var bytes);
-            using var res = new Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(bytes));
             var blocks = string.Join(" ", res.Blocks.Select(b => b.Type.ToString()).Distinct());
-            var red2 = (res.EditInfo as ResourceEditInfo2)?.Data?.Root;
+            var red2 = (res.EditInfo as TestEditInfo)?.Data?.Root;
             var args = red2?.GetArray("m_ArgumentDependencies")?.Select(a => $"{a.GetStringProperty("m_ParameterName")}:{a.GetStringProperty("m_ParameterType")}:{a.GetUInt32Property("m_nFingerprint")}") ?? [];
             var user = red2?.GetSubCollection("m_SearchableUserData");
             var subassets = red2?.ContainsKey("m_SubassetReferences") == true && red2.GetSubCollection("m_SubassetReferences") is { } sr ? string.Join(",", sr.Children.Select(c => c.Key + "=" + string.Join("/", c.Value.Children.Select(x => x.Key)))) : "null";
-            var model = res.DataBlock as Model;
+            var model = res.DataBlock as CompiledModel;
             var flags = model?.Data.GetSubCollection("m_modelInfo")?.GetUInt32Property("m_nFlags");
-            var phys = model?.GetEmbeddedPhys();
+            var phys = model?.EmbeddedPhysics;
             string Tools(ValveKeyValue.KVObject shape, string key) => string.Join("/", (shape.GetArray(key) ?? []).Select(d => d.GetUInt32Property("m_nToolMaterialHash")).Distinct());
             var parts = phys == null ? "no phys" : string.Join(" ", (phys.Data.GetArray("m_parts") ?? []).Select(p =>
             {

@@ -1,6 +1,7 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Maps;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -54,14 +55,14 @@ public class PropEntriesProbe(ITestOutputHelper output)
                 var placed = Source2.Compiler.Physics.WorldCollision.PropOf(ent);
                 var pm = PropTransform.Matrix(placed.Origin, placed.Angles, scale);
                 Vector3 Place(Vector3 p) => LightMath.Transform34(pm, p);
-                foreach (var (mesh, index, _, lod) in model.GetEmbeddedMeshesAndLoD())
+                foreach (var (mesh, index, _, lod) in model.EmbeddedMeshesAndLod())
                 {
-                    var vbib = mesh.VBIB;
+                    var vbib = mesh.Vbib;
                     foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                         foreach (var call in so.GetArray("m_drawCalls"))
                         {
                             var vb = vbib.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                            var positions = ValveResourceFormat.Blocks.VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
+                            var positions = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName == "POSITION"));
                             var bas = call.GetInt32Property("m_nBaseVertex");
                             var nv = entry.Vertices.Length / entry.Stride;
                             var ib = vbib.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
@@ -245,7 +246,7 @@ public class PropEntriesProbe(ITestOutputHelper output)
         Assert.Equal(valve.Count, exact);
     }
 
-    private static Vector2 TexcoordOf(ValveResourceFormat.Blocks.VBIB.OnDiskBufferData vb, ValveResourceFormat.Blocks.VBIB.RenderInputLayoutField f, int vertex)
+    private static Vector2 TexcoordOf(OnDiskBufferData vb, RenderInputLayoutField f, int vertex)
     {
         var off = (vertex * (int)vb.ElementSizeInBytes) + (int)f.Offset;
         return f.Format.ToString() switch
@@ -275,16 +276,16 @@ public class PropEntriesProbe(ITestOutputHelper output)
         var models = entities.Select(e => e.Element.Get<DmxBinary.Element>("entity_properties"))
             .Where(p => p?.Get<string>("classname") == "prop_static").Select(p => p!.Get<string>("model")!).Distinct().ToList();
         // Draw calls by (material, vertex count).
-        var calls = new Dictionary<(string, int), List<(ValveResourceFormat.Blocks.VBIB.OnDiskBufferData Vb, int Lo)>>();
+        var calls = new Dictionary<(string, int), List<(OnDiskBufferData Vb, int Lo)>>();
         foreach (var name in models)
         {
             if (content.LoadedModel(name + "_c") is not { } model)
                 continue;
-            foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var call in so.GetArray("m_drawCalls"))
                     {
-                        var vbib = mesh.VBIB;
+                        var vbib = mesh.Vbib;
                         var vb = vbib.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
                         var ib = vbib.IndexBuffers[call.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                         int Index(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
@@ -323,9 +324,9 @@ public class PropEntriesProbe(ITestOutputHelper output)
             if (Environment.GetEnvironmentVariable("PROPMESHES_OURS") == "1")
             {
                 // Several models can share a draw call's positions: take the one whose frames match best.
-                int Score((ValveResourceFormat.Blocks.VBIB.OnDiskBufferData Vb, int Lo) c)
+                int Score((OnDiskBufferData Vb, int Lo) c)
                 {
-                    var pos = ValveResourceFormat.Blocks.VBIB.GetVector3AttributeArray(c.Vb, c.Vb.InputLayoutFields.First(x => x.SemanticName == "POSITION"));
+                    var pos = Vbib.GetVector3AttributeArray(c.Vb, c.Vb.InputLayoutFields.First(x => x.SemanticName == "POSITION"));
                     if (c.Lo + nv > pos.Length || Enumerable.Range(0, nv).Any(k => pos[c.Lo + k] != new Vector3(v[k * stride], v[(k * stride) + 1], v[(k * stride) + 2])))
                         return -1;
                     var nf2 = c.Vb.InputLayoutFields.First(x => x.SemanticName == "NORMAL");
@@ -344,13 +345,13 @@ public class PropEntriesProbe(ITestOutputHelper output)
             }
             foreach (var (vb, lo) in candidates)
             {
-                var pos = ValveResourceFormat.Blocks.VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(x => x.SemanticName == "POSITION"));
+                var pos = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(x => x.SemanticName == "POSITION"));
                 if (lo + nv > pos.Length || Enumerable.Range(0, nv).Any(k => pos[lo + k] != new Vector3(v[k * stride], v[(k * stride) + 1], v[(k * stride) + 2])))
                     continue;
                 hit = true;
                 T("positions exact");
                 var nf = vb.InputLayoutFields.First(x => x.SemanticName == "NORMAL");
-                var (normals, tangents) = ValveResourceFormat.Blocks.VBIB.GetNormalTangentArray(vb, nf);
+                var (normals, tangents) = Vbib.GetNormalTangentArray(vb, nf);
                 if (Environment.GetEnvironmentVariable("PROPMESHES_OURS") == "1")
                     for (var k = 0; k < nv; k++)
                     {

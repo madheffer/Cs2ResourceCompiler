@@ -1,10 +1,8 @@
+using Source2.Compiler.Meshes;
 using System.Numerics;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -72,9 +70,9 @@ public class WorldNodeModelTreesTests(ITestOutputHelper output)
                 treesExact++;
             else if (Environment.GetEnvironmentVariable("WNTREES_SHOW") == "1")
             {
-                using var r = new Resource();
+                using var r = new TestResource();
                 r.Read(new MemoryStream(valve));
-                var vb0 = ((Model)r.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh.VBIB.VertexBuffers[0];
+                var vb0 = ((CompiledModel)r.DataBlock!).EmbeddedMeshesAndLod().First().Mesh.Vbib.VertexBuffers[0];
                 output.WriteLine($"{Path.GetFileName(path)}: {lines.Count} lines, {string.Join(" ", vb0.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}"))}; {lines[0]}");
             }
             foreach (var l in lines)
@@ -109,9 +107,9 @@ public class WorldNodeModelTreesTests(ITestOutputHelper output)
     /// <summary>A node model's description, measured parts from its buffers.</summary>
     internal static WorldNodeModel Describe(byte[] file, Dictionary<string, KVObject> trees)
     {
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(file));
-        var mesh = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh;
+        var mesh = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().First().Mesh;
         var ctrl = trees["CTRL"]["embedded_meshes"]!.Values.First();
         var vbs = ctrl["m_vertexBuffers"]!.Values.Select(v => new WorldNodeModel.VertexBuffer(
             (int)v["m_nElementCount"]!, (int)v["m_nElementSizeInBytes"]!, (bool)v["m_bMeshoptCompressed"]!,
@@ -131,9 +129,9 @@ public class WorldNodeModelTreesTests(ITestOutputHelper output)
             foreach (var d in so["m_drawCalls"]!.Values)
             {
                 var vbHandle = (int)d["m_vertexBuffers"]!.Values.First()["m_hBuffer"]!;
-                var vb = mesh.VBIB.VertexBuffers[vbHandle];
-                var positions = VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
-                var ib = mesh.VBIB.IndexBuffers[(int)d["m_indexBuffer"]!["m_hBuffer"]!];
+                var vb = mesh.Vbib.VertexBuffers[vbHandle];
+                var positions = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
+                var ib = mesh.Vbib.IndexBuffers[(int)d["m_indexBuffer"]!["m_hBuffer"]!];
                 var start = (int)d["m_nStartIndex"]!;
                 var indexCount = (int)d["m_nIndexCount"]!;
                 var offset = (int)d["m_nAppliedIndexOffset"]!;
@@ -168,9 +166,9 @@ public class WorldNodeModelTreesTests(ITestOutputHelper output)
             for (var di = 0; di < drawList.Count; di++)
             {
                 var d = drawList[di];
-                var vb = mesh.VBIB.VertexBuffers[(int)d["m_vertexBuffers"]!.Values.First()["m_hBuffer"]!];
-                var positions = VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
-                var ib = mesh.VBIB.IndexBuffers[(int)d["m_indexBuffer"]!["m_hBuffer"]!];
+                var vb = mesh.Vbib.VertexBuffers[(int)d["m_vertexBuffers"]!.Values.First()["m_hBuffer"]!];
+                var positions = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
+                var ib = mesh.Vbib.IndexBuffers[(int)d["m_indexBuffer"]!["m_hBuffer"]!];
                 int Index(int at) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, at * 2) : BitConverter.ToInt32(ib.Data, at * 4);
                 var first = (int)d["m_nFirstMeshlet"]!;
                 var n = (int)d["m_nNumMeshlets"]!;
@@ -239,15 +237,15 @@ public class WorldNodeModelDeriveProbe(ITestOutputHelper output)
                     .Where(a => (long)a["m_nFingerprint"]! != (long)a["m_nFingerprintDefault"]!)
                     .Select(a => $"{a["m_ParameterName"]}={a["m_nFingerprint"]}"));
                 Count($"args {kind}: {args} warnings={trees["RED2"]["m_SearchableUserData"]!["compile_warnings"]}");
-                using var resource = new Resource();
+                using var resource = new TestResource();
                 resource.Read(new MemoryStream(valve));
-                var mesh = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh;
+                var mesh = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().First().Mesh;
                 foreach (var so in trees["MDAT"]["m_sceneObjects"]!.Values)
                 {
                     Count($"bounds {kind}: drawBounds={so["m_drawBounds"]!.Values.Any()} meshlets={so["m_meshlets"]!.Values.Any()}");
                     foreach (var d in so["m_drawCalls"]!.Values)
                     {
-                        var vb = mesh.VBIB.VertexBuffers[(int)d["m_vertexBuffers"]!.Values.First()["m_hBuffer"]!];
+                        var vb = mesh.Vbib.VertexBuffers[(int)d["m_vertexBuffers"]!.Values.First()["m_hBuffer"]!];
                         var pos = vb.InputLayoutFields.FirstOrDefault(f => f.SemanticName is "POSITION" or "position");
                         var uv = vb.InputLayoutFields.FirstOrDefault(f => f.SemanticName is "TEXCOORD" or "texcoord" && f.SemanticIndex == 0);
                         if (uv.SemanticName == null || uv.Format != DXGI_FORMAT.R32G32_FLOAT)
@@ -255,9 +253,9 @@ public class WorldNodeModelDeriveProbe(ITestOutputHelper output)
                             Count($"uv {kind}: texcoords {uv.Format}");
                             continue;
                         }
-                        var positions = VBIB.GetVector3AttributeArray(vb, pos);
-                        var uvs = VBIB.GetVector2AttributeArray(vb, uv);
-                        var ib = mesh.VBIB.IndexBuffers[(int)d["m_indexBuffer"]!["m_hBuffer"]!];
+                        var positions = Vbib.GetVector3AttributeArray(vb, pos);
+                        var uvs = Vbib.GetVector2AttributeArray(vb, uv);
+                        var ib = mesh.Vbib.IndexBuffers[(int)d["m_indexBuffer"]!["m_hBuffer"]!];
                         var start = (int)d["m_nStartIndex"]!;
                         var idx = new int[(int)d["m_nIndexCount"]!];
                         for (var i = 0; i < idx.Length; i++)
@@ -296,17 +294,17 @@ public class WorldNodeLayoutProbe(ITestOutputHelper output)
                 if (!entry.GetFullPath().Contains("/worldnodes/", StringComparison.Ordinal))
                     continue;
                 package.ReadEntry(entry, out var bytes);
-                using var resource = new Resource();
+                using var resource = new TestResource();
                 resource.Read(new MemoryStream(bytes));
                 var name = Path.GetFileNameWithoutExtension(entry.GetFullPath());
                 var kind = name.Contains("_agg_prop_", StringComparison.Ordinal) ? "prop" : name.Contains("_agg_", StringComparison.Ordinal) ? "agg" : "mesh";
-                foreach (var vb in ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh.VBIB.VertexBuffers)
+                foreach (var vb in ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().First().Mesh.Vbib.VertexBuffers)
                 {
                     var layout = string.Join(" ", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}"));
                     foreach (var f in vb.InputLayoutFields.Where(f => f.SemanticName is "TEXCOORD" or "texcoord"
                                                                    && f.Format is DXGI_FORMAT.R32G32_FLOAT or DXGI_FORMAT.R16G16_FLOAT or DXGI_FORMAT.R16G16_SNORM))
                     {
-                        var uv = VBIB.GetVector2AttributeArray(vb, f);
+                        var uv = Vbib.GetVector2AttributeArray(vb, f);
                         var lo = uv.Aggregate(new Vector2(float.MaxValue), Vector2.Min);
                         var hi = uv.Aggregate(new Vector2(float.MinValue), Vector2.Max);
                         var span = MathF.Max(MathF.Max(MathF.Abs(lo.X), MathF.Abs(hi.X)), MathF.Max(MathF.Abs(lo.Y), MathF.Abs(hi.Y)));
@@ -446,15 +444,15 @@ public class WorldNodePropConeProbe(ITestOutputHelper output)
     /// <summary>Meshlet <paramref name="index"/>'s triangle corners, from its draw's own buffers.</summary>
     static Vector3[] MeshletPositions(byte[] file, Dictionary<string, KVObject> trees, int index)
     {
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(file));
-        var mesh = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh;
+        var mesh = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().First().Mesh;
         var so = trees["MDAT"]["m_sceneObjects"]!.Values.First();
         var meshlet = so["m_meshlets"]!.Values.ElementAt(index);
         var d = so["m_drawCalls"]!.Values.First(d => (int)d["m_nFirstMeshlet"]! <= index && index < (int)d["m_nFirstMeshlet"]! + (int)d["m_nNumMeshlets"]!);
-        var vb = mesh.VBIB.VertexBuffers[(int)d["m_vertexBuffers"]!.Values.First()["m_hBuffer"]!];
-        var positions = VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
-        var ib = mesh.VBIB.IndexBuffers[(int)d["m_indexBuffer"]!["m_hBuffer"]!];
+        var vb = mesh.Vbib.VertexBuffers[(int)d["m_vertexBuffers"]!.Values.First()["m_hBuffer"]!];
+        var positions = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
+        var ib = mesh.Vbib.IndexBuffers[(int)d["m_indexBuffer"]!["m_hBuffer"]!];
         var first = (int)meshlet["m_nTriangleOffset"]! * 3;
         var count = (int)meshlet["m_nTriangleCount"]! * 3;
         return [.. Enumerable.Range(first, count).Select(at => positions[ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, at * 2) : BitConverter.ToInt32(ib.Data, at * 4)])];

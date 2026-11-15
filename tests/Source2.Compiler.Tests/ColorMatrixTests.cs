@@ -1,8 +1,7 @@
+using Source2.Compiler.Materials;
 using Source2.Compiler.Gpu;
 using Source2.Compiler.Lighting;
 using Source2.Compiler.Lighting.Bake;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -70,9 +69,9 @@ public sealed class ColorMatrixTests(ITestOutputHelper output)
             foreach (var entry in pak.Entries?.GetValueOrDefault("vmat_c") ?? [])
             {
                 pak.ReadEntry(entry, out var bytes);
-                using var resource = new Resource();
+                using var resource = new TestResource();
                 resource.Read(new MemoryStream(bytes));
-                if (resource.DataBlock is not Material mat)
+                if (resource.DataBlock is not CompiledMaterial mat)
                     continue;
                 var odd = mat.FloatParams.Where(p => (p.Key.Contains("Contrast", StringComparison.Ordinal) || p.Key.Contains("Saturation", StringComparison.Ordinal)
                                                       || p.Key.Contains("Brightness", StringComparison.Ordinal)) && p.Key.Contains("TextureColor", StringComparison.Ordinal) && p.Value != 1f)

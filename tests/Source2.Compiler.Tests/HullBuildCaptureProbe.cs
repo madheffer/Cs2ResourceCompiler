@@ -1,8 +1,8 @@
+using Source2.Compiler.Meshes;
 using System.Numerics;
 using System.Text.Json;
 using Source2.Compiler.Physics;
 using ValvePak;
-using ValveResourceFormat;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -36,9 +36,9 @@ public class HullBuildCaptureProbe(ITestOutputHelper output)
                 if (!path.Contains(filter, StringComparison.Ordinal))
                     continue;
                 package.ReadEntry(entry, out var bytes);
-                using var res = new Resource();
+                using var res = new TestResource();
                 res.Read(new MemoryStream(bytes));
-                var phys = ((ValveResourceFormat.ResourceTypes.Model)res.DataBlock!).GetEmbeddedPhys();
+                var phys = ((CompiledModel)res.DataBlock!).EmbeddedPhysics;
                 foreach (var part in phys?.Parts ?? [])
                     foreach (var h in part.Shape.Hulls)
                     {

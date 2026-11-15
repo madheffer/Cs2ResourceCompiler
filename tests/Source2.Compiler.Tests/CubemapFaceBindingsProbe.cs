@@ -1,5 +1,4 @@
 using Source2.Compiler.Gpu;
-using ValveResourceFormat.CompiledShader;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -44,8 +43,6 @@ public sealed class CubemapFaceBindingsProbe(ITestOutputHelper output)
                 var v = p.Program.VariableDescriptions[f.VariableIndex];
                 output.WriteLine($"  seq {v.Name} {v.RegisterType} src {v.VariableSource}/{v.SourceString} set {f.LayoutSet} slot {f.BindingSlot} ctl {f.Control} desc {v.DescriptorSet} reg {v.RegisterOffset}");
             }
-            foreach (var c in p.Program.ExtConstantBufferDescriptions)
-                output.WriteLine($"  cbuffer {c.Index} {c.Name} size {c.BufferSize} push {c.IsPushConstantBuffer} type {c.Type}");
         }
         foreach (var compressed in new[] { 0, 1 })
             Dump(csgo, "csgo_depth_only", "vs", [], new() { ["D_COMPRESSED_NORMALS_AND_TANGENTS"] = compressed });

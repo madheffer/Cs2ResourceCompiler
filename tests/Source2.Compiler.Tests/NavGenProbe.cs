@@ -1,6 +1,5 @@
+using Source2.Compiler.Meshes;
 using System.Numerics;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -42,9 +41,9 @@ public sealed class NavGenProbe(ITestOutputHelper output)
         using var package = new ValvePak.Package();
         package.Read(p[0]);
         package.ReadEntry(package.FindEntry($"maps/{p[1]}/world_physics.vmdl_c")!, out var bytes);
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        var phys = ((Model)resource.DataBlock!).GetEmbeddedPhys()!;
+        var phys = ((CompiledModel)resource.DataBlock!).EmbeddedPhysics!;
         foreach (var part in phys.Parts)
         {
             foreach (var m in part.Shape.Meshes)

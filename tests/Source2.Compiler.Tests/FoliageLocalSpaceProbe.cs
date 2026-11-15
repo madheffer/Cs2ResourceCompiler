@@ -1,7 +1,7 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Maps;
-using ValveResourceFormat.Serialization.KeyValues;
 using ValvePak;
-using ValveResourceFormat;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -24,9 +24,9 @@ public class FoliageLocalSpaceProbe(ITestOutputHelper output)
         using var package = new Package();
         package.Read(vpkPath);
         package.ReadEntry(package.FindEntry(file)!, out var bytes);
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        ValveKeyValue.KVObject data = ((ValveResourceFormat.ResourceTypes.KeyValuesOrNTRO)resource.DataBlock!).Data;
+        ValveKeyValue.KVObject data = ((TestKv3Typed)resource.DataBlock!).Data;
         var agg = data.GetArray("m_aggregateSceneObjects")[int.Parse(index, System.Globalization.CultureInfo.InvariantCulture)];
         output.WriteLine($"allFlags {agg["m_allFlags"]} ({agg["m_allFlags"]?.ValueType}) anyFlags {agg["m_anyFlags"]} model {agg["m_renderableModel"]}");
         foreach (var mesh in agg.GetArray("m_aggregateMeshes"))
@@ -45,18 +45,18 @@ public class FoliageLocalSpaceProbe(ITestOutputHelper output)
         using var package = new Package();
         package.Read(vpkPath);
         package.ReadEntry(package.FindEntry(file)!, out var bytes);
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        var model = (ValveResourceFormat.ResourceTypes.Model)resource.DataBlock!;
+        var model = (CompiledModel)resource.DataBlock!;
         var show = rest.Length > 0 ? int.Parse(rest[0], System.Globalization.CultureInfo.InvariantCulture) : 0;
-        foreach (var (mesh, _, name, lod) in model.GetEmbeddedMeshesAndLoD())
+        foreach (var (mesh, _, name, lod) in model.EmbeddedMeshesAndLod())
         {
             foreach (var call in mesh.Data.GetArray("m_sceneObjects").SelectMany(s => s.GetArray("m_drawCalls")))
                 output.WriteLine($"draw {call.GetStringProperty("m_material")} vb {call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")} " +
                                  $"verts {call.GetInt32Property("m_nVertexCount")} uvdensity {call["m_flUvDensity"]}");
-            for (var b = 0; b < mesh.VBIB.VertexBuffers.Count; b++)
+            for (var b = 0; b < mesh.Vbib.VertexBuffers.Count; b++)
             {
-                var vb = mesh.VBIB.VertexBuffers[b];
+                var vb = mesh.Vbib.VertexBuffers[b];
                 output.WriteLine($"vb {b}: {vb.ElementCount} x {vb.ElementSizeInBytes}: " +
                                  string.Join(", ", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex} {f.Format} @{f.Offset}")));
                 for (var v = 0; v < Math.Min(show, (int)vb.ElementCount); v++)
@@ -96,7 +96,7 @@ public class FoliageLocalSpaceProbe(ITestOutputHelper output)
             foreach (var g in model.Data.GetArray("m_materialGroups") ?? [])
                 output.WriteLine($"group {g.GetStringProperty("m_name")}: {string.Join(", ", g.GetArray<string>("m_materials"))}");
             output.WriteLine($"m_nDefaultMeshGroupMask / skin keys: {string.Join(", ", model.Data.Keys.Where(k => k.Contains("Group", StringComparison.OrdinalIgnoreCase) || k.Contains("skin", StringComparison.OrdinalIgnoreCase)))}");
-            foreach (var (mesh, _, name, lod) in model.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, name, lod) in model.EmbeddedMeshesAndLod())
                 output.WriteLine($"mesh {name} lod 0x{lod:x}: {string.Join(", ", mesh.Data.GetArray("m_sceneObjects").SelectMany(s => s.GetArray("m_drawCalls")).Select(c => c.GetStringProperty("m_material")))}");
             return;
         }
@@ -125,7 +125,7 @@ public class FoliageLocalSpaceProbe(ITestOutputHelper output)
         foreach (var entry in package.Entries.GetValueOrDefault("vmdl_c") ?? [])
         {
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
             var refs = resource.ExternalReferences?.ResourceRefInfoList.Select(r => r.Name).ToList() ?? [];
             var used = refs.Where(local.Contains).ToList();

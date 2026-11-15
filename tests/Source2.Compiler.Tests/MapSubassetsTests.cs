@@ -1,4 +1,5 @@
-using ValveResourceFormat.Serialization.KeyValues;
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
 using ValvePak;
@@ -104,7 +105,7 @@ public class MapAssetsTests(ITestOutputHelper output)
             if (package.FindEntry($"maps/{map}.vmap_c") is not { } entry)
                 continue;
             using var res = ResourceTrees.Read(Io.VpkEntries.Read(package, entry), "map.vmap_c");
-            var red2 = ((ValveResourceFormat.Blocks.ResourceEditInfo2)res.EditInfo!).Data!.Root;
+            var red2 = ((TestEditInfo)res.EditInfo!).Data!.Root;
             var children = red2.GetArray<string>("m_ChildResourceList")!.ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (MapRootFileTests.StaleSource(red2, map, source))
             {
@@ -152,7 +153,7 @@ public class MapRootProbe(ITestOutputHelper output)
         package.Read(vpk);
         var bytes = Io.VpkEntries.Read(package, package.FindEntry($"maps/{map}.vmap_c")!);
         using var res = ResourceTrees.Read(bytes, "map.vmap_c");
-        var red2 = ((ValveResourceFormat.Blocks.ResourceEditInfo2)res.EditInfo!).Data!.Root;
+        var red2 = ((TestEditInfo)res.EditInfo!).Data!.Root;
         var children = red2.GetArray<string>("m_ChildResourceList")!.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var rerl = res.ExternalReferences!.ResourceRefInfoList;
         output.WriteLine($"{rerl.Count} references, {children.Count} children; blocks {string.Join(" ", ResourceTrees.BlockTable(bytes).Select(b => $"{b.FourCC}:{b.Size}"))}");
@@ -210,7 +211,7 @@ public class MapRootFileTests(ITestOutputHelper output)
                 continue;
             var valve = Io.VpkEntries.Read(package, entry);
             using var res = ResourceTrees.Read(valve, "map.vmap_c");
-            var red2 = ((ValveResourceFormat.Blocks.ResourceEditInfo2)res.EditInfo!).Data!.Root;
+            var red2 = ((TestEditInfo)res.EditInfo!).Data!.Root;
             var children = red2.GetArray<string>("m_ChildResourceList")!.ToList();
             if (StaleSource(red2, map, source))
             {
@@ -276,8 +277,8 @@ public class MapRootFileTests(ITestOutputHelper output)
             {
                 failed.Add(map);
                 using var mine = ResourceTrees.Read(ours, "map.vmap_c");
-                var a = ValveResourceFormat.Serialization.KeyValues.KVDocumentExtensions.ToKV3String(((ValveResourceFormat.Blocks.ResourceEditInfo2)mine.EditInfo!).Data!.Root);
-                var b = ValveResourceFormat.Serialization.KeyValues.KVDocumentExtensions.ToKV3String(red2);
+                var a = ((TestEditInfo)mine.EditInfo!).Data!.Root.ToKV3String();
+                var b = (red2).ToKV3String();
                 File.WriteAllText(Path.Combine(Path.GetTempPath(), $"maproot_{map}_ours.kv3"), a);
                 File.WriteAllText(Path.Combine(Path.GetTempPath(), $"maproot_{map}_valve.kv3"), b);
                 var at = Enumerable.Range(0, Math.Min(a.Length, b.Length)).FirstOrDefault(i => a[i] != b[i], -1);
@@ -344,7 +345,7 @@ public class MapRootFileTests(ITestOutputHelper output)
                     continue;
                 var valve = Io.VpkEntries.Read(package, entry);
                 using var res = ResourceTrees.Read(valve, "map.vmap_c");
-                var red2 = ((ValveResourceFormat.Blocks.ResourceEditInfo2)res.EditInfo!).Data!.Root;
+                var red2 = ((TestEditInfo)res.EditInfo!).Data!.Root;
                 var children = red2.GetArray<string>("m_ChildResourceList")!.ToList();
                 var content = Path.GetDirectoryName(Path.GetDirectoryName(source))!;
                 var document = DmxBinary.ReadFile(source);
@@ -372,9 +373,9 @@ public class MapRootFileTests(ITestOutputHelper output)
                 failed.Add($"{folder}/{map}");
                 using var mine = ResourceTrees.Read(ours, "map.vmap_c");
                 static string Names(KVObject root) => string.Join(" ", root.GetArray("m_ArgumentDependencies")!.Select(a => a.GetStringProperty("m_ParameterName")));
-                output.WriteLine($"  ours  {Names(((ValveResourceFormat.Blocks.ResourceEditInfo2)mine.EditInfo!).Data!.Root)}");
+                output.WriteLine($"  ours  {Names(((TestEditInfo)mine.EditInfo!).Data!.Root)}");
                 output.WriteLine($"  valve {Names(red2)}");
-                foreach (var line in KvTreeDiff.Diff(red2, ((ValveResourceFormat.Blocks.ResourceEditInfo2)mine.EditInfo!).Data!.Root, 40))
+                foreach (var line in KvTreeDiff.Diff(red2, ((TestEditInfo)mine.EditInfo!).Data!.Root, 40))
                     output.WriteLine($"  {line}");
             }
         }
@@ -418,8 +419,8 @@ public class MapRootFileTests(ITestOutputHelper output)
         using var res = ResourceTrees.Read(model, "model.vmdl_c");
         var data = res.DataBlock switch
         {
-            ValveResourceFormat.ResourceTypes.Model m => m.Data,
-            ValveResourceFormat.ResourceTypes.BinaryKV3 kv => kv.Data.Root,
+            CompiledModel m => m.Data,
+            TestKv3Block kv => kv.Data.Root,
             _ => null,
         };
         return data is not null && (data.GetArray("m_refLODGroupMasks")?.Count > 0 || data.GetArray("m_refMeshes")?.Count > 0);
@@ -504,14 +505,14 @@ public class TexcoordBiasProbe(ITestOutputHelper output)
 
     private static List<List<System.Numerics.Vector2>> Draws(byte[] bytes)
     {
-        using var resource = new ValveResourceFormat.Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        var model = (ValveResourceFormat.ResourceTypes.Model)resource.DataBlock!;
+        var model = (CompiledModel)resource.DataBlock!;
         var result = new List<List<System.Numerics.Vector2>>();
-        foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
+        foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
             foreach (var call in mesh.Data.GetArray("m_sceneObjects").SelectMany(o => o.GetArray("m_drawCalls")))
             {
-                var m = Lighting.PathTraceProps.DrawMesh(mesh.VBIB, call, "");
+                var m = Lighting.PathTraceProps.DrawMesh(mesh.Vbib, call, "");
                 var t = m.Streams.First(s => s.Name == "texcoord").Offset;
                 var list = new List<System.Numerics.Vector2>();
                 for (var v = 0; v < m.VertexCount; v++)

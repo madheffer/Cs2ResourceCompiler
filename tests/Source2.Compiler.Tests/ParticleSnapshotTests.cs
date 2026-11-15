@@ -1,7 +1,6 @@
 using Source2.Compiler.Compression;
 using Source2.Compiler.Maps;
 using ValvePak;
-using ValveResourceFormat;
 using Xunit;
 
 namespace Source2.Compiler.Tests;
@@ -84,9 +83,9 @@ public class ParticleSnapshotTests
     {
         var valve = ValveSnapshot();
         if (valve is null) { MapFixtures.Skip("Valve's probe_classes package with node_3.vsnap_c"); return; }
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(valve));
-        var block = resource.Blocks.Single(b => b.Type == BlockType.SNAP);
+        var block = resource.Blocks.Single(b => b.Type == "SNAP");
         var bytes = valve.AsSpan((int)block.Offset, (int)block.Size).ToArray();
         var plain = BlockCompress.FastDecompress(bytes);
         Assert.Equal(16 * 12 * 2, plain.Length);

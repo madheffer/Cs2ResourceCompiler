@@ -1,8 +1,6 @@
 using System.Buffers.Binary;
 using ValveKeyValue;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -38,14 +36,10 @@ public class Kv3V5WriterTests(ITestOutputHelper output)
         root.Add("u5", new KVObject(5u));
         root.Add("i0", new KVObject(0L));
         root.Add("i1", new KVObject(1));
-        var bytes = Kv3V5Writer.Write(root, Guid.Parse("1b860500-f7d8-40c1-ad82-75a48267e714"), KV3BinaryCompressionMethod.Uncompressed);
+        var bytes = Kv3BlockWriter.Write(root, Guid.Parse("1b860500-f7d8-40c1-ad82-75a48267e714"), Kv3Compression.Uncompressed);
         // The members' type bytes, uncompressed: 26, 27, UINT32, INT64_ZERO, INT64_ONE.
         Assert.True(bytes.AsSpan().IndexOf((ReadOnlySpan<byte>)[26, 27, 12, 15, 16]) >= 0);
-        using var holder = new Resource();
-        var kv3 = new BinaryKV3 { Resource = holder, Offset = 0, Size = (uint)bytes.Length };
-        using (var reader = new BinaryReader(new MemoryStream(bytes)))
-            kv3.Read(reader);
-        var back = kv3.Data.Root;
+        var back = Kv3Binary.Read(bytes).Root;
         Assert.Equal(KVValueType.UInt32, back["u0"]!.ValueType);
         Assert.Equal(KVValueType.UInt32, back["u1"]!.ValueType);
         Assert.Equal(KVValueType.UInt32, back["u5"]!.ValueType);
@@ -78,24 +72,21 @@ public class Kv3V5WriterTests(ITestOutputHelper output)
                     var size = (int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(at + 8));
                     if (start + size > bytes.Length || size < 120 || BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(start)) != 0x4B563305)
                         continue;
-                    using var holder = new Resource();
-                    var kv3 = new BinaryKV3 { Resource = holder, Offset = (uint)start, Size = (uint)size };
+                    ValveKeyValue.KVDocument kv3Data;
                     try
                     {
-                        using var reader = new BinaryReader(new MemoryStream(bytes));
-                        reader.BaseStream.Position = start;
-                        kv3.Read(reader);
+                        kv3Data = Kv3Binary.Read(bytes[start..(start + size)]);
                     }
-                    catch
+                    catch (InvalidDataException)
                     {
                         continue;
                     }
                     var valve = bytes.AsSpan(start, size);
-                    var method = (KV3BinaryCompressionMethod)BinaryPrimitives.ReadInt32LittleEndian(valve[20..]);
+                    var method = (Kv3Compression)BinaryPrimitives.ReadInt32LittleEndian(valve[20..]);
                     byte[] ours;
                     try
                     {
-                        ours = Kv3V5Writer.Write(kv3.Data.Root, kv3.Data.Header!.Format.Id, Environment.GetEnvironmentVariable("KV3ROUNDTRIP_AUTO") == "1" ? null : method);
+                        ours = Kv3BlockWriter.Write(kv3Data.Root, kv3Data.Header!.Format.Id, Environment.GetEnvironmentVariable("KV3ROUNDTRIP_AUTO") == "1" ? null : method);
                     }
                     catch (NotSupportedException ex)
                     {

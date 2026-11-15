@@ -203,7 +203,7 @@ public class NodeEntriesFromVmap(ITestOutputHelper output)
         {
             if (!signatures.TryGetValue(material, out var sig))
                 signatures[material] = sig = content.Read(material + "_c") is { } b
-                    ? [.. Source2.Compiler.MaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
+                    ? [.. PackageMaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
             return sig;
         }
         var ours = NodeMeshEntries.FromWorld(MapSource.Read(vmap), signature: Signature, rendersAsWorld: NodeEntriesFromVmap.RendersAsWorld(game));
@@ -326,7 +326,7 @@ public class NodeEntriesFromVmap(ITestOutputHelper output)
             var addon = Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(vmap)))!;
             using var content = new GameContent(pak, Path.Combine(game, "csgo_addons", addon));
             IReadOnlyCollection<string> Signature(string material) => content.Read(material + "_c") is { } b
-                ? [.. MaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
+                ? [.. PackageMaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
             List<NodeMeshEntries.Entry> ours;
             try
             {
@@ -380,7 +380,7 @@ public class NodeEntriesFromVmap(ITestOutputHelper output)
         {
             var e = valve[i];
             var bytes = content.Read(e.Material + "_c");
-            var insg = bytes == null ? "(no vmat_c)" : string.Join(",", Source2.Compiler.MaterialAuthor.ExtractInputSignature(bytes)
+            var insg = bytes == null ? "(no vmat_c)" : string.Join(",", PackageMaterialAuthor.ExtractInputSignature(bytes)
                 .Select(x => x.Semantic).Where(x => x is not ("PosXyz" or "Normal" or "Tangent" or "LowPrecisionUv")).Distinct());
             var match = ours.FirstOrDefault(o => string.Equals(o.Material, e.Material, StringComparison.OrdinalIgnoreCase)
                                                  && o.Vertices.Length / o.Stride == e.Vertices.Length / e.Stride);
@@ -394,7 +394,7 @@ public class NodeEntriesFromVmap(ITestOutputHelper output)
         // Per mesh: the union of its materials' signatures against the layout
         // Valve gave its pieces.
         string[] Insg(string material) => content.Read(material + "_c") is { } b
-            ? [.. Source2.Compiler.MaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
+            ? [.. PackageMaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
         var byNode = ours.GroupBy(o => o.NodeId).ToList();
         int agree = 0, disagree = 0;
         foreach (var g in byNode)

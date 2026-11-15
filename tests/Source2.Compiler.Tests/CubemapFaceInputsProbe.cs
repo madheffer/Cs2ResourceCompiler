@@ -1,7 +1,8 @@
+using Source2.Compiler.Materials;
+using Source2.Compiler.Textures;
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Text.Json.Nodes;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -38,9 +39,9 @@ public sealed class CubemapFaceInputsProbe(ITestOutputHelper output)
             if (material == null && p.FindEntry(materialPath + "_c") is { } e)
                 p.ReadEntry(e, out material);
         }
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(material ?? throw new FileNotFoundException(materialPath)));
-        var mat = (Material)resource.DataBlock!;
+        var mat = (CompiledMaterial)resource.DataBlock!;
         var features = mat.IntParams.ToDictionary(kv => kv.Key, kv => (int)kv.Value);
         // CUBEREPLAY_PROGRAM=<shader>|<module id>|<statics>|<dynamics> (pairs name=value, comma separated);
         // generic's colour combo by default.
@@ -76,9 +77,9 @@ public sealed class CubemapFaceInputsProbe(ITestOutputHelper output)
             }
             if (texBytes == null)
                 continue;
-            using var texResource = new Resource();
+            using var texResource = new TestResource();
             texResource.Read(new MemoryStream(texBytes));
-            var tex = (Texture)texResource.DataBlock!;
+            var tex = (CompiledTexture)texResource.DataBlock!;
             output.WriteLine($"{param} = {path}: {tex.Width} x {tex.Height} {tex.Format}, {tex.NumMipLevels} mips");
             foreach (var (level, _, _, _, size) in tex.GetEveryMipLevelMetrics())
             {
@@ -154,9 +155,9 @@ public sealed class CubemapFaceInputsProbe(ITestOutputHelper output)
         foreach (var entry in package.Entries!.GetValueOrDefault("vtex_c") ?? [])
         {
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var tex = (Texture)resource.DataBlock!;
+            var tex = (CompiledTexture)resource.DataBlock!;
             output.WriteLine($"{entry.GetFullPath()}: {tex.Width} x {tex.Height} x {tex.Depth} {tex.Format}, {tex.NumMipLevels} mips, flags {tex.Flags}");
             foreach (var (level, _, _, _, size) in tex.GetEveryMipLevelMetrics())
             {
@@ -200,14 +201,14 @@ public sealed class CubemapFaceInputsProbe(ITestOutputHelper output)
             if (!entry.DirectoryName.Contains("worldnodes", StringComparison.OrdinalIgnoreCase))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            foreach (var (mesh, _, _, _) in ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, _) in ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod())
             {
-                for (var i = 0; i < mesh.VBIB.VertexBuffers.Count; i++)
-                    vbs.Add(($"{entry.FileName} vb{i}", mesh.VBIB.VertexBuffers[i].Data, mesh.VBIB.VertexBuffers[i].ElementSizeInBytes));
-                for (var i = 0; i < mesh.VBIB.IndexBuffers.Count; i++)
-                    ibs.Add(($"{entry.FileName} ib{i}", mesh.VBIB.IndexBuffers[i].Data, mesh.VBIB.IndexBuffers[i].ElementSizeInBytes));
+                for (var i = 0; i < mesh.Vbib.VertexBuffers.Count; i++)
+                    vbs.Add(($"{entry.FileName} vb{i}", mesh.Vbib.VertexBuffers[i].Data, mesh.Vbib.VertexBuffers[i].ElementSizeInBytes));
+                for (var i = 0; i < mesh.Vbib.IndexBuffers.Count; i++)
+                    ibs.Add(($"{entry.FileName} ib{i}", mesh.Vbib.IndexBuffers[i].Data, mesh.Vbib.IndexBuffers[i].ElementSizeInBytes));
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var dc in so.GetArray("m_drawCalls"))
                         output.WriteLine($"{entry.FileName}: draw {dc.GetStringProperty("m_material")} start {dc.GetInt32Property("m_nStartIndex")} count {dc.GetInt32Property("m_nIndexCount")} base {dc.GetInt32Property("m_nBaseVertex")} vertices {dc.GetInt32Property("m_nVertexCount")}");

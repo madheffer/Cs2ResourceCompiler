@@ -1,5 +1,5 @@
+using Source2.Compiler.Shaders.Vfx;
 using Source2.Compiler.Gpu;
-using ValveResourceFormat.CompiledShader;
 using Xunit;
 using Xunit.Abstractions;
 

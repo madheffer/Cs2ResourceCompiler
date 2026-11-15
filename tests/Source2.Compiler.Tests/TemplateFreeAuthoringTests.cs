@@ -1,8 +1,6 @@
+using Source2.Compiler.Textures;
+using Source2.Compiler.KeyValues;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 
 namespace Source2.Compiler.Tests;
@@ -19,7 +17,7 @@ namespace Source2.Compiler.Tests;
 /// </summary>
 public class TemplateFreeAuthoringTests
 {
-    private static ResourceBuilder.TextureDef Checkerboard(int size = 32)
+    private static PackageResourceBuilder.TextureDef Checkerboard(int size = 32)
     {
         var rgba = new byte[size * size * 4];
         for (var i = 0; i < size * size; i++)
@@ -30,12 +28,12 @@ public class TemplateFreeAuthoringTests
             rgba[i * 4 + 2] = on ? (byte)0 : (byte)255;
             rgba[i * 4 + 3] = 255;
         }
-        return new ResourceBuilder.TextureDef
+        return new PackageResourceBuilder.TextureDef
         {
             RawRgba = rgba,
             RawWidth = size,
             RawHeight = size,
-            Compression = ResourceBuilder.TextureCompression.BC7,
+            Compression = PackageResourceBuilder.TextureCompression.BC7,
         };
     }
 
@@ -45,17 +43,17 @@ public class TemplateFreeAuthoringTests
         var def = Checkerboard();
         def.SourceName = "materials/mine/checker.png";
 
-        var bytes = ResourceBuilder.BuildTexture(def);
+        var bytes = PackageResourceBuilder.BuildTexture(def);
 
-        using var res = new Resource { FileName = "checker.vtex_c" };
+        using var res = new TestResource { FileName = "checker.vtex_c" };
         res.Read(new MemoryStream(bytes));
 
         // Every stock .vtex_c sampled (200 of 71,175) is Version 1 with exactly
         // these two blocks and no RERL.
-        Assert.Equal(ResourceType.Texture, res.ResourceType);
+        Assert.Equal(TestResourceType.Texture, res.ResourceType);
         Assert.Equal(Source2ContainerAuthor.TextureResourceVersion, res.Version);
-        Assert.Equal([BlockType.RED2, BlockType.DATA], res.Blocks.Select(b => b.Type).ToArray());
-        Assert.Null(res.GetBlockByType(BlockType.RERL));
+        Assert.Equal(["RED2", "DATA"], res.Blocks.Select(b => b.Type).ToArray());
+        Assert.Null(res.GetBlockByType("RERL"));
 
         // The two dependencies every stock texture carries.
         var deps = res.EditInfo!.SpecialDependencies;
@@ -65,7 +63,7 @@ public class TemplateFreeAuthoringTests
         // It describes its own compile, not somebody else's.
         Assert.Contains(res.EditInfo.InputDependencies, d => d.ContentRelativeFilename == "materials/mine/checker.png");
 
-        var tex = (Texture)res.DataBlock!;
+        var tex = (CompiledTexture)res.DataBlock!;
         Assert.Equal(32, tex.Width);
         Assert.Equal(32, tex.Height);
         Assert.True(tex.NumMipLevels >= 1);
@@ -80,11 +78,11 @@ public class TemplateFreeAuthoringTests
         // This is what makes "the game is a bootstrap, not a dependency" testable.
         var seedDef = Checkerboard();
         seedDef.SourceName = "materials/mine/checker.png";
-        var authored = ResourceBuilder.BuildTexture(seedDef);
+        var authored = PackageResourceBuilder.BuildTexture(seedDef);
 
         var againDef = Checkerboard();
         againDef.SourceName = "materials/mine/checker.png";
-        var templated = ResourceBuilder.BuildTexture(authored, againDef);
+        var templated = PackageResourceBuilder.BuildTexture(authored, againDef);
 
         Assert.Equal(authored, templated);
     }
@@ -99,8 +97,8 @@ public class TemplateFreeAuthoringTests
         def.EncodingSemantics.Add(
             new Source2ContainerAuthor.SpecialDep("Texture Compiler Version Mip HemiOctAnisoRoughness", "CompileTexture", 3));
 
-        using var res = new Resource();
-        res.Read(new MemoryStream(ResourceBuilder.BuildTexture(def)));
+        using var res = new TestResource();
+        res.Read(new MemoryStream(PackageResourceBuilder.BuildTexture(def)));
 
         Assert.Contains(res.EditInfo!.SpecialDependencies,
             d => d.String == "Texture Compiler Version Mip HemiOctAnisoRoughness" && d.Fingerprint == 3);
@@ -123,7 +121,7 @@ public class TemplateFreeAuthoringTests
             new Source2ContainerAuthor.MaterialAuthoring.InputSignatureElement("vTexCoord", "TexCoord", "TEXCOORD", 0),
         };
 
-        var def = new ResourceBuilder.MaterialDef
+        var def = new PackageResourceBuilder.MaterialDef
         {
             Name = "materials/mine/thing.vmat",
             Shader = "csgo_complex.vfx",
@@ -132,16 +130,16 @@ public class TemplateFreeAuthoringTests
         def.TextureParams["g_tNormal"] = "materials/mine/thing_normal.vtex";
         def.IntParams["F_TRANSLUCENT"] = 1;
 
-        using var container = MaterialAuthor.NewContainer(signature, "materials/mine/thing.vmat");
-        var bytes = ResourceBuilder.BuildMaterial(def, container);
+        var container = PackageMaterialAuthor.NewContainer(signature, "materials/mine/thing.vmat");
+        var bytes = PackageResourceBuilder.BuildMaterial(def, container);
 
-        using var res = new Resource { FileName = "thing.vmat_c" };
+        using var res = new TestResource { FileName = "thing.vmat_c" };
         res.Read(new MemoryStream(bytes));
 
         // Stock block order, invariant across 200 stock and 320 community materials.
-        Assert.Equal(ResourceType.Material, res.ResourceType);
+        Assert.Equal(TestResourceType.Material, res.ResourceType);
         Assert.Equal(Source2ContainerAuthor.MaterialResourceVersion, res.Version);
-        Assert.Equal([BlockType.RERL, BlockType.RED2, BlockType.DATA, BlockType.INSG],
+        Assert.Equal(["RERL", "RED2", "DATA", "INSG"],
             res.Blocks.Select(b => b.Type).ToArray());
 
         Assert.Contains(res.EditInfo!.SpecialDependencies,
@@ -149,7 +147,7 @@ public class TemplateFreeAuthoringTests
 
         // The parameters landed, and the texture refs are Resource-flagged with
         // matching RERL ids - the invariant a flagless ref breaks.
-        var root = (res.DataBlock as KeyValuesOrNTRO)!.Data!;
+        var root = (res.DataBlock as TestKv3Typed)!.Data!;
         Assert.Equal("csgo_complex.vfx", root.GetStringProperty("m_shaderName"));
 
         var texParams = root["m_textureParams"]!.Values.ToList();
@@ -165,7 +163,7 @@ public class TemplateFreeAuthoringTests
         }
 
         // And the signature we asked for is the signature it carries.
-        var insg = (BinaryKV3)res.GetBlockByType(BlockType.INSG)!;
+        var insg = (TestKv3Block)res.GetBlockByType("INSG")!;
         var elems = insg.Data!.Root!["m_elems"]!.Values.ToList();
         Assert.Equal(3, elems.Count);
         Assert.Equal("vPositionOs", elems[0].GetStringProperty("m_pName"));
@@ -178,7 +176,7 @@ public class TemplateFreeAuthoringTests
         // Not a limitation to paper over: no material in the game or in any
         // shipping community pack has an empty one, so silently writing one
         // would be inventing a file shape nothing has ever loaded.
-        var ex = Assert.Throws<ArgumentException>(() => MaterialAuthor.NewContainer([]));
+        var ex = Assert.Throws<ArgumentException>(() => PackageMaterialAuthor.NewContainer([]));
         Assert.Contains("input signature", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -191,11 +189,11 @@ public class TemplateFreeAuthoringTests
             new Source2ContainerAuthor.MaterialAuthoring.InputSignatureElement("vBlendWeight", "BlendWeight", "BLENDWEIGHT", 1),
         };
 
-        using var container = MaterialAuthor.NewContainer(signature);
-        var bytes = ResourceBuilder.BuildMaterial(
-            new ResourceBuilder.MaterialDef { Name = "materials/x.vmat", Shader = "csgo_simple.vfx" }, container);
+        var container = PackageMaterialAuthor.NewContainer(signature);
+        var bytes = PackageResourceBuilder.BuildMaterial(
+            new PackageResourceBuilder.MaterialDef { Name = "materials/x.vmat", Shader = "csgo_simple.vfx" }, container);
 
-        Assert.Equal(signature, MaterialAuthor.ExtractInputSignature(bytes));
+        Assert.Equal(signature, PackageMaterialAuthor.ExtractInputSignature(bytes));
     }
 
     /// <summary>A minimal PCM16 mono WAV, so the sound tests need no game file.</summary>
@@ -237,23 +235,24 @@ public class TemplateFreeAuthoringTests
     [Fact]
     public void VectorGraphic_AuthoredWithNoTemplate_MatchesStockContainerShape()
     {
-        var bytes = ResourceBuilder.BuildPanoramaSvg(
+        var bytes = PackageResourceBuilder.BuildPanoramaSvg(
             System.Text.Encoding.UTF8.GetBytes(Svg), "panorama/images/icons/equipment/mine.svg");
 
-        using var res = new Resource { FileName = "mine.vsvg_c" };
+        using var res = new TestResource { FileName = "mine.vsvg_c" };
         res.Read(new MemoryStream(bytes));
 
         // 400 of 400 sampled stock vector graphics: version 2, RED2 + DATA,
         // and an EMPTY name table - which is the only thing a template was
         // contributing here.
-        Assert.Equal(ResourceType.PanoramaVectorGraphic, res.ResourceType);
+        Assert.Equal(TestResourceType.PanoramaVectorGraphic, res.ResourceType);
         Assert.Equal(Source2ContainerAuthor.PanoramaVectorGraphicResourceVersion, res.Version);
-        Assert.Equal([BlockType.RED2, BlockType.DATA], res.Blocks.Select(b => b.Type).ToArray());
+        Assert.Equal(["RED2", "DATA"], res.Blocks.Select(b => b.Type).ToArray());
 
-        var pan = (Panorama)res.DataBlock!;
-        Assert.Empty(pan.Images);
-        // Read() validates CRC32 against the payload, so getting here proves it.
-        Assert.Contains("M8 8", System.Text.Encoding.UTF8.GetString(pan.Data));
+        // DATA: u32 CRC32 of the payload, u16 image count, then the payload.
+        var data = res.GetBlockByType("DATA")!.Bytes;
+        Assert.Equal(0, BitConverter.ToUInt16(data, 4));
+        Assert.Equal(System.IO.Hashing.Crc32.HashToUInt32(data.AsSpan(6)), BitConverter.ToUInt32(data, 0));
+        Assert.Contains("M8 8", System.Text.Encoding.UTF8.GetString(data.AsSpan(6)));
 
         Assert.Contains(res.EditInfo!.SpecialDependencies,
             d => d.String == "Vector Graphic Version" && d.CompilerIdentifier == "CompileVectorGraphic" && d.Fingerprint == 2);
@@ -264,26 +263,27 @@ public class TemplateFreeAuthoringTests
     [Fact]
     public void Sound_AuthoredWithNoTemplate_MatchesStockContainerShape()
     {
-        var bytes = ResourceBuilder.BuildSound(SineWav(), "sounds/mine/beep.wav");
+        var bytes = PackageResourceBuilder.BuildSound(SineWav(), "sounds/mine/beep.wav");
 
-        using var res = new Resource { FileName = "beep.vsnd_c" };
+        using var res = new TestResource { FileName = "beep.vsnd_c" };
         res.Read(new MemoryStream(bytes));
 
         // Stock ships v4 as RED2 + DATA (93 of 200 sampled; the rest are v5,
         // which ModernizeVsnd produces from this).
-        Assert.Equal(ResourceType.Sound, res.ResourceType);
+        Assert.Equal(TestResourceType.Sound, res.ResourceType);
         Assert.Equal(Source2ContainerAuthor.SoundResourceVersion, res.Version);
-        Assert.Equal([BlockType.RED2, BlockType.DATA], res.Blocks.Select(b => b.Type).ToArray());
-        Assert.Null(res.GetBlockByType(BlockType.RERL));
+        Assert.Equal(["RED2", "DATA"], res.Blocks.Select(b => b.Type).ToArray());
+        Assert.Null(res.GetBlockByType("RERL"));
 
         Assert.Contains(res.EditInfo!.SpecialDependencies,
             d => d.String == "Sound Compiler Version" && d.CompilerIdentifier == "CompileSound" && d.Fingerprint == 1);
         Assert.Contains(res.EditInfo.InputDependencies,
             d => d.ContentRelativeFilename == "sounds/mine/beep.wav");
 
-        var snd = (Sound)res.DataBlock!;
-        Assert.Equal(22050u, snd.SampleRate);
-        Assert.True(snd.SampleCount > 0);
+        // v4 DATA: u16 sample rate, u8 format, u8 channels, i32 loop start, u32 sample count, ...
+        var data = res.GetBlockByType("DATA")!.Bytes;
+        Assert.Equal(22050, BitConverter.ToUInt16(data, 0));
+        Assert.True(BitConverter.ToUInt32(data, 8) > 0);
     }
 
     [Fact]
@@ -292,13 +292,13 @@ public class TemplateFreeAuthoringTests
         // The v5 layout is what the override path actually ships, so the
         // authored container has to survive the conversion the same way a
         // templated one does.
-        var v4 = ResourceBuilder.BuildSound(SineWav(), "sounds/mine/beep.wav");
-        var v5 = ResourceBuilder.ModernizeVsnd(v4);
+        var v4 = PackageResourceBuilder.BuildSound(SineWav(), "sounds/mine/beep.wav");
+        var v5 = PackageResourceBuilder.ModernizeVsnd(v4);
 
-        using var res = new Resource { FileName = "beep.vsnd_c" };
+        using var res = new TestResource { FileName = "beep.vsnd_c" };
         res.Read(new MemoryStream(v5));
         Assert.Equal(5, res.Version);
-        Assert.NotNull(res.GetBlockByType(BlockType.CTRL));
+        Assert.NotNull(res.GetBlockByType("CTRL"));
         Assert.Contains(res.EditInfo!.SpecialDependencies, d => d.String == "Sound Compiler Version");
     }
 
@@ -306,8 +306,8 @@ public class TemplateFreeAuthoringTests
     public void VectorGraphic_AuthoredAndTemplated_AgreeByteForByte()
     {
         var svg = System.Text.Encoding.UTF8.GetBytes(Svg);
-        var authored = ResourceBuilder.BuildPanoramaSvg(svg, "panorama/images/icons/equipment/mine.svg");
-        var templated = ResourceBuilder.BuildPanoramaSvg(authored, svg, "panorama/images/icons/equipment/mine.svg");
+        var authored = PackageResourceBuilder.BuildPanoramaSvg(svg, "panorama/images/icons/equipment/mine.svg");
+        var templated = PackageResourceBuilder.BuildPanoramaSvg(authored, svg, "panorama/images/icons/equipment/mine.svg");
         Assert.Equal(authored, templated);
     }
 
@@ -318,23 +318,23 @@ public class TemplateFreeAuthoringTests
         // can disagree. The copy into the bitmap does not say so when the buffer
         // is SHORT: the tail stays transparent black and a texture that is wrong
         // from some row down ships with nothing raised anywhere.
-        var ex = Assert.Throws<ArgumentException>(() => ResourceBuilder.BuildTexture(
-            new ResourceBuilder.TextureDef
+        var ex = Assert.Throws<ArgumentException>(() => PackageResourceBuilder.BuildTexture(
+            new PackageResourceBuilder.TextureDef
             {
                 RawRgba = new byte[10],
                 RawWidth = 64,
                 RawHeight = 64,
-                Compression = ResourceBuilder.TextureCompression.None,
+                Compression = PackageResourceBuilder.TextureCompression.None,
             }));
         Assert.Contains("16384", ex.Message);
 
         // And the matching buffer still builds.
-        ResourceBuilder.BuildTexture(new ResourceBuilder.TextureDef
+        PackageResourceBuilder.BuildTexture(new PackageResourceBuilder.TextureDef
         {
             RawRgba = new byte[64 * 64 * 4],
             RawWidth = 64,
             RawHeight = 64,
-            Compression = ResourceBuilder.TextureCompression.None,
+            Compression = PackageResourceBuilder.TextureCompression.None,
         });
     }
 
@@ -349,7 +349,7 @@ public class TemplateFreeAuthoringTests
         // holding bytes the engine cannot draw: an icon simply missing in game,
         // with no failure anywhere upstream.
         var ex = Assert.Throws<InvalidDataException>(
-            () => ResourceBuilder.BuildPanoramaSvg(System.Text.Encoding.UTF8.GetBytes(body)));
+            () => PackageResourceBuilder.BuildPanoramaSvg(System.Text.Encoding.UTF8.GetBytes(body)));
         Assert.Contains(expected, ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -359,7 +359,7 @@ public class TemplateFreeAuthoringTests
         // AuthorKv3Resource stamps the document's own format GUID into DATA, so
         // a header-less document has nothing to stamp. Kv3SourceCompiler already
         // refuses that input; this entry point is public and reachable directly.
-        var root = new KVObject("root").ToKV3Document().Root;
+        var root = KVObject.Collection();
         var doc = new ValveKeyValue.KVDocument(header: null, name: null, root);
         var ex = Assert.Throws<InvalidOperationException>(
             () => Source2ContainerAuthor.AuthorKv3Resource(doc, ".vdata", [1, 2, 3]));

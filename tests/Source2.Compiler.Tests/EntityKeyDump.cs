@@ -1,8 +1,6 @@
+using Source2.Compiler.KeyValues;
 using System.Text.RegularExpressions;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -26,9 +24,9 @@ public class EntityKeyDump(ITestOutputHelper output)
         foreach (var entry in (package.Entries!.GetValueOrDefault("vents_c") ?? []).OrderBy(e => e.GetFullPath(), StringComparer.Ordinal))
         {
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource { FileName = entry.GetFullPath() };
+            using var resource = new TestResource { FileName = entry.GetFullPath() };
             resource.Read(new MemoryStream(bytes));
-            foreach (var entity in ((EntityLump)resource.DataBlock!).Data.GetArray("m_entityKeyValues"))
+            foreach (var entity in ((TestKv3Typed)resource.DataBlock!).Data.GetArray("m_entityKeyValues"))
             {
                 var values = entity.GetSubCollection("keyValues3Data")?.GetSubCollection("values")?.Children.ToDictionary(kv => kv.Key, kv => kv.Value) ?? [];
                 var cls = values.TryGetValue("classname", out var c) ? c.ToString() : "";

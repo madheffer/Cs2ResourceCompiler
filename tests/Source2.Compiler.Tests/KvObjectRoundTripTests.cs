@@ -1,6 +1,4 @@
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 
 namespace Source2.Compiler.Tests;
@@ -15,10 +13,10 @@ namespace Source2.Compiler.Tests;
 /// highest-impact upgrade risk we can guard against here.
 ///
 /// Each test exercises the public verbs the backend itself uses
-/// (Kv3SourceCompiler + ResourceBuilder + the BinaryKV3 read path) so an
+/// (Kv3SourceCompiler + ResourceBuilder + the TestKv3Block read path) so an
 /// upstream re-vendor that still satisfies our patches passes vacuously.
 /// The specific contracts pinned:
-///   1. <see cref="BinaryKV3.Data"/>.Root is a usable KVObject after
+///   1. <see cref="TestKv3Block.Data"/>.Root is a usable KVObject after
 ///      Resource.Read().
 ///   2. KVObject ContainsKey / TryGetValue / indexer round-trip on a
 ///      collection-shaped KVObject we construct ourselves.
@@ -27,7 +25,7 @@ namespace Source2.Compiler.Tests;
 /// </summary>
 public class KvObjectRoundTripTests
 {
-    /// <summary>A real BinaryKV3-backed resource out of the installed game, so
+    /// <summary>A real TestKv3Block-backed resource out of the installed game, so
     /// the API surface is pinned against bytes Valve actually shipped rather
     /// than against something this project wrote itself.</summary>
     private static byte[]? FindKv3Fixture() => CS2Fixtures.Template(".vsndevts_c");
@@ -39,11 +37,11 @@ public class KvObjectRoundTripTests
         if (bytes is null) { CS2Fixtures.Skip("a compiled .vsndevts_c"); return; }
         Assert.NotEmpty(bytes);
 
-        using var resource = new Resource();
+        using var resource = new TestResource();
         using var ms = new MemoryStream(bytes, writable: false);
         resource.Read(ms);
 
-        var data = Assert.IsType<BinaryKV3>(resource.DataBlock);
+        var data = Assert.IsType<TestKv3Block>(resource.DataBlock);
         Assert.NotNull(data.Data);
         var root = data.Data.Root;
         Assert.NotNull(root);
@@ -68,7 +66,7 @@ public class KvObjectRoundTripTests
     public void KvObject_CollectionConstructAndAdd_RoundTripsViaIndexer()
     {
         // Mirrors the construction shape Kv3SourceCompiler uses when it
-        // builds the BinaryKV3 DATA block from a parsed text source. The
+        // builds the TestKv3Block DATA block from a parsed text source. The
         // ctor + Add + implicit-conversion API needs to keep the same
         // names - KVObject is now a single value type, so an upstream
         // change that re-introduces KVValue would break this exact line.

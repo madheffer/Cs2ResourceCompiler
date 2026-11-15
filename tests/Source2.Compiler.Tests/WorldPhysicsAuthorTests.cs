@@ -1,10 +1,8 @@
+using Source2.Compiler.Meshes;
 using System.Numerics;
 using System.Buffers.Binary;
 using ValveKeyValue;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -342,7 +340,7 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
                     output.WriteLine($"piece {i} node {x.NodeId} {line}");
                 last = line;
             }
-            using var red = new ValveResourceFormat.Resource();
+            using var red = new TestResource();
             red.Read(new MemoryStream(Read(p[2], $"maps/{(p.Length > 3 ? p[3] : p[1])}/world_physics.vmdl_c")));
             output.WriteLine("valve RED2: " + (red.EditInfo?.ToString() ?? "none"));
             return;
@@ -352,9 +350,9 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
             var wanted = nodesText.Split(',').Select(int.Parse).ToHashSet();
             var pieces = Physics.WorldCollision.Pieces(doc, name => Physics.WorldCollision.ReadMaterial(name, models.Material, models.CollisionProperty),
                 null, gpu == null ? null : gpu.For, models.Physics, models.SmartProp, models.CollisionProperty);
-            using var res = new ValveResourceFormat.Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(Read(p[2], $"maps/{(p.Length > 3 ? p[3] : p[1])}/world_physics.vmdl_c")));
-            var phys = ((ValveResourceFormat.ResourceTypes.Model)res.DataBlock!).GetEmbeddedPhys()!;
+            var phys = ((CompiledModel)res.DataBlock!).EmbeddedPhysics!;
             var hulls = phys.Parts[0].Shape.Hulls;
             foreach (var piece in pieces.Where(x => x.Hull != null && wanted.Contains(x.NodeId)))
             {
@@ -651,9 +649,9 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
         {
             foreach (var (label, bytes) in new[] { ("valve", valve), ("ours", mine) })
             {
-                using var res = new ValveResourceFormat.Resource();
+                using var res = new TestResource();
                 res.Read(new MemoryStream(bytes));
-                var hulls = ((ValveResourceFormat.ResourceTypes.Model)res.DataBlock!).GetEmbeddedPhys()!.Parts[0].Shape.Hulls;
+                var hulls = ((CompiledModel)res.DataBlock!).EmbeddedPhysics!.Parts[0].Shape.Hulls;
                 foreach (var i in vertsText.Split(',').Select(int.Parse))
                     output.WriteLine($"hullverts {i} {label}: " + string.Join(" ", hulls[i].Shape.GetVertexPositions().ToArray().Select(v => $"({v.X:R},{v.Y:R},{v.Z:R})")));
             }
@@ -693,8 +691,8 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
         // The manifest beside it: container facts, RED2's tree, DATA's bytes.
         var valveManifest = Read(p[2], files.ManifestPath);
         var manifest = new List<string>();
-        using (var a = new Resource())
-        using (var b = new Resource())
+        using (var a = new TestResource())
+        using (var b = new TestResource())
         {
             a.Read(new MemoryStream(valveManifest));
             b.Read(new MemoryStream(files.Manifest));
@@ -714,7 +712,7 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
 
     private static byte[] Block(byte[] bytes, string name)
     {
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
         var block = resource.Blocks.First(b => b.Type.ToString() == name);
         return bytes.AsSpan((int)block.Offset, (int)block.Size).ToArray();
@@ -731,16 +729,16 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
     /// <summary>Each KV3 block's decoded tree by block name.</summary>
     internal static Dictionary<string, KVObject> Trees(byte[] bytes)
     {
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
         var trees = new Dictionary<string, KVObject>();
         foreach (var block in resource.Blocks)
         {
             KVObject? tree = block switch
             {
-                KeyValuesOrNTRO k => k.Data,
-                BinaryKV3 k => k.Data.Root,
-                ResourceEditInfo2 r => r.Data?.Root,
+                TestEditInfo r => r.Data?.Root,
+                TestKv3Typed k => k.Data,
+                TestKv3Block k => k.Data.Root,
                 _ => null,
             };
             if (tree != null)
@@ -771,7 +769,7 @@ public class WorldPhysicsAuthorTests(ITestOutputHelper output)
         return report;
     }
 
-    // Resource version, then each block's name, KV3 version and compression method.
+    // TestResource version, then each block's name, KV3 version and compression method.
     internal static string Facts(byte[] bytes)
     {
         var parts = new List<string> { $"v{BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(6))}" };

@@ -3,7 +3,6 @@ using System.Text;
 using Source2.Compiler.Meshes;
 using ValvePak;
 using Xunit;
-using VrfVbib = ValveResourceFormat.Blocks.VBIB;
 using Source2.Compiler.KeyValues;
 
 namespace Source2.Compiler.Tests;
@@ -41,27 +40,14 @@ public class VertexDataTests
     }
 
     [Fact]
-    public void BinaryVbib_ReadsAsVrfReadsIt()
+    public void BinaryVbib_Reads()
     {
         uint[] normals = [0x80000000u | (512u << 12) | 1u, (1023u << 22) | (100u << 1), (300u << 22) | (700u << 12) | (2047u << 1) | 1u];
-        var block = BinaryBlock(normals);
-        var ours = Vbib.Read(block);
-        using var resource = new ValveResourceFormat.Resource();
-        var theirs = new VrfVbib { Offset = 0, Size = (uint)block.Length, Resource = resource };
-        theirs.Read(new BinaryReader(new MemoryStream(block)));
-
-        var (vb, tvb) = (ours.VertexBuffers.Single(), theirs.VertexBuffers.Single());
-        Assert.Equal(tvb.Data, vb.Data);
-        Assert.Equal(theirs.IndexBuffers.Single().Data, ours.IndexBuffers.Single().Data);
+        var ours = Vbib.Read(BinaryBlock(normals));
+        var vb = ours.VertexBuffers.Single();
         Assert.Equal([0u, 2u, 1u], Vbib.GetIndices(ours.IndexBuffers[0]));
         Assert.Equal(["POSITION", "NORMAL"], vb.InputLayoutFields.Select(f => f.SemanticName));
-
-        Assert.Equal(VrfVbib.GetVector3AttributeArray(tvb, tvb.InputLayoutFields[0]), Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields[0]));
         Assert.Equal(new Vector3(1.5f, -2f, 3f), Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields[0])[1]);
-        var (n, t) = Vbib.GetNormalTangentArray(vb, vb.InputLayoutFields[1]);
-        var (tn, tt) = VrfVbib.GetNormalTangentArray(tvb, tvb.InputLayoutFields[1]);
-        Assert.Equal(tn, n);
-        Assert.Equal(tt, t);
     }
 
     [Fact]

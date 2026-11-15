@@ -1,8 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Lighting;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -18,11 +18,7 @@ public class SceneInfoTests(ITestOutputHelper output)
 
     internal static KVObject ReadBinary(byte[] data)
     {
-        using var reader = new BinaryReader(new MemoryStream(data));
-        using var owner = new ValveResourceFormat.Resource();
-        var kv = new BinaryKV3 { Resource = owner };
-        kv.Read(reader);
-        return kv.Data.Root;
+        return Kv3Binary.Read(data).Root;
     }
 
     internal static string Render(KVObject v, int depth = 0)
@@ -55,9 +51,9 @@ public class SceneInfoTests(ITestOutputHelper output)
         var bytes = File.ReadAllBytes(path);
         var root = ReadBinary(path);
         var generic = new Guid("7412167c-06e9-4698-aff2-e63eb59037e7");
-        foreach (var method in new KV3BinaryCompressionMethod?[] { null, KV3BinaryCompressionMethod.Uncompressed, KV3BinaryCompressionMethod.Lz4, KV3BinaryCompressionMethod.Zstd })
+        foreach (var method in new Kv3Compression?[] { null, Kv3Compression.Uncompressed, Kv3Compression.Lz4, Kv3Compression.Zstd })
         {
-            var ours = Kv3V5Writer.Write(root, generic, method);
+            var ours = Kv3BlockWriter.Write(root, generic, method);
             var at = Enumerable.Range(0, Math.Min(ours.Length, bytes.Length)).FirstOrDefault(i => ours[i] != bytes[i], -1);
             output.WriteLine($"{method?.ToString() ?? "auto"}: {ours.Length} vs {bytes.Length} bytes, first difference {at}");
         }
@@ -121,15 +117,15 @@ public class SceneInfoTests(ITestOutputHelper output)
                     props.Add(record);
         var package = new ValvePak.Package();
         package.Read(Path.Combine(game, "csgo_addons", addon, "maps", Path.GetFileNameWithoutExtension(vmap) + ".vpk"));
-        Model? Load(string name)
+        CompiledModel? Load(string name)
         {
             if (!name.StartsWith("maps/", StringComparison.Ordinal))
                 return content.LoadedModel(name + "_c");
             if (package.FindEntry(name + "_c") is not { } entry)
                 return null;
-            var resource = new ValveResourceFormat.Resource();
+            var resource = new TestResource();
             resource.Read(new MemoryStream(Source2.Compiler.Io.VpkEntries.Read(package, entry)));
-            return (Model)resource.DataBlock!;
+            return (CompiledModel)resource.DataBlock!;
         }
         PathTraceProps.Add(meshes, instances, props, Load, content.Read);
         return (meshes, instances);
@@ -216,7 +212,7 @@ public class SceneInfoTests(ITestOutputHelper output)
     internal static List<(string Class, LightPrecompute.KeyReader Key)> LumpEntities(byte[] lump, string name)
     {
         using var resource = ResourceTrees.Read(lump, name);
-        var data = (ValveResourceFormat.ResourceTypes.EntityLump)resource.DataBlock!;
+        var data = (TestKv3Typed)resource.DataBlock!;
         var list = new List<(string, LightPrecompute.KeyReader)>();
         foreach (var entity in data.Data.GetArray("m_entityKeyValues"))
         {
@@ -601,18 +597,18 @@ public class SceneInfoTests(ITestOutputHelper output)
         pkg.Read(vpk);
         foreach (var entry in (pkg.Entries.GetValueOrDefault("vmdl_c") ?? []).OrderBy(e => e.GetFullPath(), StringComparer.Ordinal))
         {
-            using var resource = new ValveResourceFormat.Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(Source2.Compiler.Io.VpkEntries.Read(pkg, entry)));
-            var model = (Model)resource.DataBlock!;
+            var model = (CompiledModel)resource.DataBlock!;
             var calls = new List<string>();
-            foreach (var (mesh, _, _, lod) in model.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, lod) in model.EmbeddedMeshesAndLod())
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var call in so.GetArray("m_drawCalls"))
                         calls.Add($"{Path.GetFileNameWithoutExtension(call.GetStringProperty("m_material"))}:{call.GetInt32Property("m_nIndexCount")}:{call.GetInt32Property("m_nVertexCount")}");
-            foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD().Take(1))
-                foreach (var vb in mesh.VBIB.VertexBuffers)
+            foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod().Take(1))
+                foreach (var vb in mesh.Vbib.VertexBuffers)
                     output.WriteLine($"   vb: {string.Join(", ", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}/'{f.ShaderSemantic}'"))}");
-            output.WriteLine($"{entry.GetFullPath()} meshes={model.GetEmbeddedMeshesAndLoD().Count()} refmeshes={model.GetReferenceMeshNamesAndLoD().Count()} calls={calls.Count}: {string.Join(" ", calls.Take(12))}");
+            output.WriteLine($"{entry.GetFullPath()} meshes={model.EmbeddedMeshesAndLod().Count()} refmeshes={model.ReferenceMeshes.Count()} calls={calls.Count}: {string.Join(" ", calls.Take(12))}");
         }
         if (CS2Fixtures.StockPak() is not { } pak)
             return;
@@ -620,9 +616,9 @@ public class SceneInfoTests(ITestOutputHelper output)
         foreach (var name in new[] { "models/de_overpass/lights/flourescent/flourescent_light_2.vmdl", "models/de_overpass/lights/flourescent/flourescent_light_2_bulbs.vmdl" })
             if (content.LoadedModel(name + "_c") is { } model)
             {
-                output.WriteLine($"{name}: lodmasks {string.Join(",", model.GetEmbeddedMeshesAndLoD().Select(m => m.Item4))}");
-                foreach (var (mesh, _, _, _) in model.GetEmbeddedMeshesAndLoD())
-                    foreach (var vb in mesh.VBIB.VertexBuffers)
+                output.WriteLine($"{name}: lodmasks {string.Join(",", model.EmbeddedMeshesAndLod().Select(m => m.Item4))}");
+                foreach (var (mesh, _, _, _) in model.EmbeddedMeshesAndLod())
+                    foreach (var vb in mesh.Vbib.VertexBuffers)
                         output.WriteLine($"   vb: {string.Join(", ", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format}/'{f.ShaderSemantic}'"))}");
             }
     }
@@ -648,10 +644,10 @@ public class SceneInfoTests(ITestOutputHelper output)
         foreach (var name in new[] { "end_breakable_240", "end_breakable_475" })
         {
             var entry = pkg.Entries["vmdl_c"].First(e => e.GetFullPath().Contains(name));
-            using var resource = new ValveResourceFormat.Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(Source2.Compiler.Io.VpkEntries.Read(pkg, entry)));
-            var (mesh, _, _, _) = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First();
-            var vb = mesh.VBIB.VertexBuffers[0];
+            var (mesh, _, _, _) = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().First();
+            var vb = mesh.Vbib.VertexBuffers[0];
             var (ours, color) = NodePropEntries.Vertices(vb, 0, 2);
             for (var k = 0; k < 2; k++)
             {

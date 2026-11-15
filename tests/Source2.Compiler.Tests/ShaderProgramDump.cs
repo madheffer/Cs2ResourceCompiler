@@ -1,5 +1,5 @@
+using Source2.Compiler.Shaders.Vfx;
 using ValvePak;
-using ValveResourceFormat.CompiledShader;
 using Vortice.SpirvCross;
 using Xunit;
 using Xunit.Abstractions;
@@ -41,8 +41,7 @@ public class ShaderProgramDump(ITestOutputHelper output)
                 continue;
             }
             package.ReadEntry(entry, out var bytes);
-            using var program = new VfxProgramData();
-            program.Read($"{name}.vcs", new MemoryStream(bytes));
+            var program = VfxProgramData.Read($"{name}.vcs", bytes);
             // "*=1" in the settings: every static combo with the listed switches set, first dynamic file only.
             var wanted = new Dictionary<string, int>(settings);
             if (wanted.Remove("*", out _))

@@ -1,10 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Maps;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -51,16 +49,16 @@ public class RenderClustersProbe(ITestOutputHelper output)
             if (!entry.GetFullPath().Contains("/worldnodes/", StringComparison.Ordinal) || !m.Success)
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var mesh = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh;
+            var mesh = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().First().Mesh;
             var tris = new List<(Vector3, Vector3, Vector3)>();
             foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                 foreach (var dc in so.GetArray("m_drawCalls"))
                 {
-                    var vb = mesh.VBIB.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                    var pos = VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
-                    var ib = mesh.VBIB.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                    var vb = mesh.Vbib.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                    var pos = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
+                    var ib = mesh.Vbib.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                     var start = dc.GetInt32Property("m_nStartIndex");
                     var n = dc.GetInt32Property("m_nIndexCount");
                     var bas = dc.GetInt32Property("m_nBaseVertex");
@@ -212,15 +210,15 @@ public class RenderClustersProbe(ITestOutputHelper output)
                 if (!entry.GetFullPath().Contains("/worldnodes/", StringComparison.Ordinal) || !mm.Success)
                     continue;
                 package.ReadEntry(entry, out var bytes);
-                using var resource = new Resource();
+                using var resource = new TestResource();
                 resource.Read(new MemoryStream(bytes));
-                var mesh = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh;
+                var mesh = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().First().Mesh;
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var dc in so.GetArray("m_drawCalls"))
                     {
-                        var vb = mesh.VBIB.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
-                        var pos = VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
-                        var ib = mesh.VBIB.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                        var vb = mesh.Vbib.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                        var pos = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
+                        var ib = mesh.Vbib.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                         var st = dc.GetInt32Property("m_nStartIndex");
                         var n = dc.GetInt32Property("m_nIndexCount");
                         var bas = dc.GetInt32Property("m_nBaseVertex");
@@ -270,18 +268,18 @@ public class RenderClustersProbe(ITestOutputHelper output)
                 if (!entry.GetFullPath().Contains("/worldnodes/", StringComparison.Ordinal))
                     continue;
                 package.ReadEntry(entry, out var bytes);
-                using var resource = new Resource();
+                using var resource = new TestResource();
                 resource.Read(new MemoryStream(bytes));
-                var mesh = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh;
+                var mesh = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().First().Mesh;
                 var tris = new List<(Vector3, Vector3, Vector3)>();
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var dc in so.GetArray("m_drawCalls"))
                     {
-                        var vb = mesh.VBIB.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                        var vb = mesh.Vbib.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
                         if (!vb.InputLayoutFields.Any(f => f.SemanticName is "POSITION" or "position"))
                             continue;
-                        var pos = VBIB.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
-                        var ib = mesh.VBIB.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                        var pos = Vbib.GetVector3AttributeArray(vb, vb.InputLayoutFields.First(f => f.SemanticName is "POSITION" or "position"));
+                        var ib = mesh.Vbib.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                         var start = dc.GetInt32Property("m_nStartIndex");
                         var n = dc.GetInt32Property("m_nIndexCount");
                         int I(int at) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, at * 2) : BitConverter.ToInt32(ib.Data, at * 4);

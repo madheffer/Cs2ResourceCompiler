@@ -364,7 +364,7 @@ internal static class MapFixtures
                 if (entry is not null)
                 {
                     using var resource = ResourceTrees.Read(Io.VpkEntries.Read(_pak, entry), path);
-                    if (resource.DataBlock is ValveResourceFormat.ResourceTypes.BinaryKV3 kv)
+                    if (resource.DataBlock is TestKv3Block kv)
                         count = SmartProps.LocatorsOf(kv.Data);
                 }
             }

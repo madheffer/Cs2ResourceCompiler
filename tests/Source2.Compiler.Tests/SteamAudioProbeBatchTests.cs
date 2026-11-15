@@ -1,6 +1,4 @@
 using Source2.Compiler.SteamAudio;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -18,12 +16,7 @@ public class SteamAudioProbeBatchTests(ITestOutputHelper output)
     /// <summary>A Valve .sareverb / .sapaths: its KV3 root.</summary>
     internal static ValveKeyValue.KVObject Root(string path)
     {
-        var bytes = File.ReadAllBytes(path);
-        using var holder = new Resource();
-        var kv3 = new BinaryKV3 { Resource = holder, Offset = 0, Size = (uint)bytes.Length };
-        using var reader = new BinaryReader(new MemoryStream(bytes));
-        kv3.Read(reader);
-        return kv3.Data.Root;
+        return Kv3Binary.Read(File.ReadAllBytes(path)).Root;
     }
 
     internal static byte[] Batch(ValveKeyValue.KVObject root)

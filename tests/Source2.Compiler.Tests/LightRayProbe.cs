@@ -1,5 +1,6 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
-using ValveResourceFormat.Serialization.KeyValues;
 using Source2.Compiler.Maps;
 using Xunit;
 using Xunit.Abstractions;
@@ -472,11 +473,11 @@ public class LightRayProbe(ITestOutputHelper output)
                 }
             if (models.Read(model + "_c") is { } bytes)
             {
-                using var res = new ValveResourceFormat.Resource();
+                using var res = new TestResource();
                 res.Read(new MemoryStream(bytes));
-                var vm = (ValveResourceFormat.ResourceTypes.Model)res.DataBlock!;
+                var vm = (CompiledModel)res.DataBlock!;
                 output.WriteLine($"  default group mask {(vm.Data.ContainsKey("m_nDefaultMeshGroupMask") ? vm.Data.GetUnsignedIntegerProperty("m_nDefaultMeshGroupMask") : 0)}");
-                foreach (var (mesh, index, name, lod) in vm.GetEmbeddedMeshesAndLoD())
+                foreach (var (mesh, index, name, lod) in vm.EmbeddedMeshesAndLod())
                 {
                     var tris = mesh.Data.GetArray("m_sceneObjects").SelectMany(o => o.GetArray("m_drawCalls")).Sum(c => c.GetInt32Property("m_nIndexCount") / 3);
                     output.WriteLine($"  embedded mesh {index} {name} lod {lod} tris {tris} group {(vm.Data.ContainsKey("m_refMeshGroupMasks") ? string.Join(",", vm.Data.GetIntegerArray("m_refMeshGroupMasks")) : "-")}");

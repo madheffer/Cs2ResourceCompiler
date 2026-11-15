@@ -1,15 +1,12 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 
 namespace Source2.Compiler.Tests;
 
 /// <summary>
-/// Container-correctness pins for <see cref="ResourceBuilder.BuildMaterial"/>,
+/// Container-correctness pins for <see cref="PackageResourceBuilder.BuildMaterial"/>,
 /// the from-scratch vmat authoring path behind <c>POST /models/build-material</c>.
 ///
 /// Nothing covered this path before 2026-08-10, which is how a flagless texture
@@ -36,13 +33,13 @@ public class ResourceBuilderMaterialTests
 
     private static string? FindStockVmat() => CS2Fixtures.TemplatePath(".vmat_c");
 
-    private static KVObject DataRoot(Resource res)
+    private static KVObject DataRoot(TestResource res)
     {
-        var data = res.GetBlockByType(BlockType.DATA);
-        return data is KeyValuesOrNTRO kvn ? kvn.Data : data!.AsKeyValueCollection();
+        var data = res.GetBlockByType("DATA");
+        return data is TestKv3Typed kvn ? kvn.Data : data!.AsKeyValueCollection();
     }
 
-    private static IEnumerable<KVObject> TextureParams(Resource res)
+    private static IEnumerable<KVObject> TextureParams(TestResource res)
     {
         var arr = DataRoot(res)["m_textureParams"];
         Assert.NotNull(arr);
@@ -66,7 +63,7 @@ public class ResourceBuilderMaterialTests
             return;
         }
 
-        using var res = new Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(File.ReadAllBytes(fixture)));
 
         var seen = 0;
@@ -97,7 +94,7 @@ public class ResourceBuilderMaterialTests
             return;
         }
 
-        var def = new ResourceBuilder.MaterialDef
+        var def = new PackageResourceBuilder.MaterialDef
         {
             Name = "materials/vpkedit/smoke_material.vmat",
             Shader = "csgo_complex.vfx",
@@ -106,10 +103,10 @@ public class ResourceBuilderMaterialTests
         def.TextureParams["g_tNormal"] = "materials/vpkedit/smoke_normal.vtex";
         def.IntParams["F_TRANSLUCENT"] = 0;
 
-        var compiled = ResourceBuilder.BuildMaterial(File.ReadAllBytes(fixture), def);
+        var compiled = PackageResourceBuilder.BuildMaterial(File.ReadAllBytes(fixture), def);
         Assert.NotEmpty(compiled);
 
-        using var res = new Resource { FileName = "smoke_material.vmat_c" };
+        using var res = new TestResource { FileName = "smoke_material.vmat_c" };
         res.Read(new MemoryStream(compiled));
 
         var authored = TextureParams(res)
@@ -125,7 +122,7 @@ public class ResourceBuilderMaterialTests
         // The flag alone isn't enough - CS2 resolves the ref through the RERL,
         // so the authored paths must appear there too (ApplyMaterial rebuilds it
         // from def.TextureParams, no stock leftovers).
-        var rerl = res.GetBlockByType(BlockType.RERL) as ResourceExtRefList;
+        var rerl = res.GetBlockByType("RERL") as TestRefList;
         Assert.NotNull(rerl);
         var refs = rerl!.ResourceRefInfoList.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Assert.Contains("materials/vpkedit/smoke_color.vtex", refs);
@@ -146,7 +143,7 @@ public class ResourceBuilderMaterialTests
 
     private static bool HasMaterialGroups(byte[] vmdlC)
     {
-        using var res = new Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(vmdlC));
         return (DataRoot(res)["m_materialGroups"]?.Values ?? [])
             .SelectMany(g => g["m_materials"]?.Values ?? [])
@@ -173,7 +170,7 @@ public class ResourceBuilderMaterialTests
         var stockBytes = File.ReadAllBytes(fixture);
 
         // GROUND TRUTH: the stock model's own material groups are Resource-flagged.
-        using (var stock = new Resource())
+        using (var stock = new TestResource())
         {
             stock.Read(new MemoryStream(stockBytes));
             var stockMats = (DataRoot(stock)["m_materialGroups"]?.Values ?? [])
@@ -183,13 +180,13 @@ public class ResourceBuilderMaterialTests
             Assert.All(stockMats, m => Assert.Equal(KVFlag.Resource, m.Flag));
         }
 
-        var def = new ResourceBuilder.ModelDef { Name = "models/vpkedit/smoke_model.vmdl" };
+        var def = new PackageResourceBuilder.ModelDef { Name = "models/vpkedit/smoke_model.vmdl" };
         def.MaterialGroups.Add(("default", ["materials/vpkedit/smoke_material.vmat"]));
 
-        var compiled = ResourceBuilder.BuildModel(stockBytes, def);
+        var compiled = PackageResourceBuilder.BuildModel(stockBytes, def);
         Assert.NotEmpty(compiled);
 
-        using var res = new Resource { FileName = "smoke_model.vmdl_c" };
+        using var res = new TestResource { FileName = "smoke_model.vmdl_c" };
         res.Read(new MemoryStream(compiled));
 
         var authored = (DataRoot(res)["m_materialGroups"]?.Values ?? [])

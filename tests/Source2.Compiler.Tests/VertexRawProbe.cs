@@ -1,7 +1,5 @@
+using Source2.Compiler.Meshes;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -19,14 +17,14 @@ public class VertexRawProbe(ITestOutputHelper output)
     {
         if (Environment.GetEnvironmentVariable("VTXRAW") is not { Length: > 0 } spec || spec.Split('|') is not [var a, var b, var path])
             return;
-        List<VBIB.OnDiskBufferData[]> Read(string vpk)
+        List<OnDiskBufferData[]> Read(string vpk)
         {
             using var pkg = new Package();
             pkg.Read(vpk);
             pkg.ReadEntry(pkg.FindEntry(path)!, out var bytes);
-            using var r = new Resource();
+            using var r = new TestResource();
             r.Read(new MemoryStream(bytes));
-            return [.. ((Model)r.DataBlock!).GetEmbeddedMeshesAndLoD().Select(m => m.Mesh.VBIB.VertexBuffers.ToArray())];
+            return [.. ((CompiledModel)r.DataBlock!).EmbeddedMeshesAndLod().Select(m => m.Mesh.Vbib.VertexBuffers.ToArray())];
         }
         var x = Read(a);
         var y = Read(b);
@@ -41,7 +39,7 @@ public class VertexRawProbe(ITestOutputHelper output)
                 }
                 foreach (var f in p.InputLayoutFields)
                 {
-                    var size = VBIB.GetFormatInfo(f).ElementSize * VBIB.GetFormatInfo(f).ElementCount;
+                    var size = Vbib.GetFormatInfo(f.Format).ElementSize * Vbib.GetFormatInfo(f.Format).ElementCount;
                     int differ = 0;
                     string first = "";
                     for (var e = 0; e < p.ElementCount; e++)

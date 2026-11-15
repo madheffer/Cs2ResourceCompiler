@@ -1,6 +1,4 @@
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -87,7 +85,7 @@ public class WorldNodeModelAuthorTests(ITestOutputHelper output)
 
     internal static List<string> References(byte[] bytes)
     {
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
         return resource.ExternalReferences?.ResourceRefInfoList.Select(r => r.Name).ToList() ?? [];
     }

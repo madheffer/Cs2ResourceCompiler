@@ -182,7 +182,7 @@ public class BuildNodeEndToEnd(ITestOutputHelper output)
         var addon = Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(vmap)))!;
         using var content = new GameContent(pak, Path.Combine(game, "csgo_addons", addon));
         IReadOnlyCollection<string> Signature(string material) => content.Read(material + "_c") is { } b
-            ? [.. MaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
+            ? [.. PackageMaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
         var ours = NodeMeshEntries.FromWorld(DmxBinary.ReadFile(vmap), signature: Signature, rendersAsWorld: NodeEntriesFromVmap.RendersAsWorld(game));
         Assert.Equal(valveIn.Count, ours.Count);
 

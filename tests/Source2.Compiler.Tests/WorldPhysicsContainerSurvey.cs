@@ -1,3 +1,4 @@
+using Source2.Compiler.Meshes;
 using System.Buffers.Binary;
 using ValvePak;
 using Xunit;
@@ -64,9 +65,9 @@ public class WorldPhysicsContainerSurvey(ITestOutputHelper output)
                     if (entry == null)
                         continue;
                     package.ReadEntry(entry, out var bytes);
-                    using var res = new ValveResourceFormat.Resource();
+                    using var res = new TestResource();
                     res.Read(new MemoryStream(bytes));
-                    var phys = ((ValveResourceFormat.ResourceTypes.Model)res.DataBlock!).GetEmbeddedPhys()!;
+                    var phys = ((CompiledModel)res.DataBlock!).EmbeddedPhysics!;
                     var spheres = phys.Parts.Sum(p => p.Shape.Spheres.Length);
                     var capsules = phys.Parts.Sum(p => p.Shape.Capsules.Length);
                     var map = Path.GetFileNameWithoutExtension(vpk);
@@ -96,9 +97,9 @@ public class WorldPhysicsContainerSurvey(ITestOutputHelper output)
         {
             try
             {
-                using var res = new ValveResourceFormat.Resource();
+                using var res = new TestResource();
                 res.Read(new MemoryStream(bytes));
-                var phys = ((ValveResourceFormat.ResourceTypes.Model)res.DataBlock!).GetEmbeddedPhys()!;
+                var phys = ((CompiledModel)res.DataBlock!).EmbeddedPhysics!;
                 var spheres = phys.Parts.Sum(p => p.Shape.Spheres.Length);
                 var capsules = phys.Parts.Sum(p => p.Shape.Capsules.Length);
                 output.WriteLine($"{map}: spheres {spheres} capsules {capsules} hulls {phys.Parts.Sum(p => p.Shape.Hulls.Length)} source {(vmaps.ContainsKey(map) ? "yes" : "no")}");
@@ -136,9 +137,9 @@ public class WorldPhysicsContainerSurvey(ITestOutputHelper output)
             {
                 try
                 {
-                    using var res = new ValveResourceFormat.Resource();
+                    using var res = new TestResource();
                     res.Read(new MemoryStream(bytes()));
-                    if ((res.DataBlock as ValveResourceFormat.ResourceTypes.Model)?.GetEmbeddedPhys() is not { } phys)
+                    if ((res.DataBlock as CompiledModel)?.EmbeddedPhysics is not { } phys)
                         continue;
                     var spheres = phys.Parts.Sum(p => p.Shape.Spheres.Length);
                     var capsules = phys.Parts.Sum(p => p.Shape.Capsules.Length);

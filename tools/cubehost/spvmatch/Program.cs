@@ -4,7 +4,7 @@
 //   dotnet run -c Release -- <dir of .spv> <max compressed vcs bytes> <shaders_vulkan_dir.vpk>...
 using System.Security.Cryptography;
 using ValvePak;
-using ValveResourceFormat.CompiledShader;
+using Source2.Compiler.Shaders.Vfx;
 
 // --expr <vpk> <vcs path> <variable substring>: each matching variable's source and compiled expression decompiled.
 if (args[0] == "--expr")
@@ -12,13 +12,12 @@ if (args[0] == "--expr")
     using var pak = new Package();
     pak.Read(args[1]);
     pak.ReadEntry(pak.FindEntry(args[2])!, out var bytes);
-    using var p = new VfxProgramData();
-    p.Read(Path.GetFileName(args[2]), new MemoryStream(bytes));
+    var p = VfxProgramData.Read(Path.GetFileName(args[2]), bytes);
     foreach (var v in p.VariableDescriptions.Where(v => v.Name.Contains(args[3], StringComparison.Ordinal)))
     {
         Console.WriteLine($"{v.Name} {v.VfxType} source {v.VariableSource} '{v.SourceString}' expression {v.CompiledExpression.Length} bytes");
         if (v.CompiledExpression.Length > 0)
-            Console.WriteLine("    " + new ValveResourceFormat.Serialization.VfxEval.VfxEval(v.CompiledExpression, true).DynamicExpressionResult.Replace("\n", "\n    "));
+            Console.WriteLine("    " + new Source2.Compiler.Shaders.VfxEval(v.CompiledExpression, true).DynamicExpressionResult.Replace("\n", "\n    "));
     }
     return;
 }
@@ -28,15 +27,12 @@ if (args[0] == "--res")
 {
     foreach (var path in args.Skip(1))
     {
-        using var res = new ValveResourceFormat.Resource();
-        res.Read(path);
+        var res = Source2.Compiler.CompiledResource.Read(File.ReadAllBytes(path));
         Console.WriteLine($"== {path}");
-        foreach (var block in res.Blocks)
+        foreach (var block in res.File.Blocks)
         {
             Console.WriteLine($"-- {block.Type}");
-            using var iw = new ValveResourceFormat.Utils.IndentedTextWriter();
-            block.WriteText(iw);
-            Console.WriteLine(iw.ToString());
+            Console.WriteLine(Source2.Compiler.ResourceText.BlockToKv3(res, block.Type, out var why) ?? $"({block.Data.Length} bytes: {why})");
         }
     }
     return;
@@ -67,8 +63,7 @@ if (args[0] == "--bytecode")
     using var pak = new Package();
     pak.Read(args[1]);
     pak.ReadEntry(pak.FindEntry(args[2])!, out var bytes);
-    using var p = new VfxProgramData();
-    p.Read(Path.GetFileName(args[2]), new MemoryStream(bytes));
+    var p = VfxProgramData.Read(Path.GetFileName(args[2]), bytes);
     var combo = p.GetStaticCombo(long.Parse(args[3]));
     var index = combo.GetDynamicComboIndex(long.Parse(args[4]));
     var fileId = combo.DynamicComboRenderStates[index].ShaderFileId;
@@ -86,8 +81,7 @@ if (args[0] == "--glsl")
     using var pak = new Package();
     pak.Read(args[1]);
     pak.ReadEntry(pak.FindEntry(args[2])!, out var bytes);
-    using var p = new VfxProgramData();
-    p.Read(Path.GetFileName(args[2]), new MemoryStream(bytes));
+    var p = VfxProgramData.Read(Path.GetFileName(args[2]), bytes);
     var combo = p.GetStaticCombo(long.Parse(args[3]));
     var index = combo.GetDynamicComboIndex(long.Parse(args[4]));
     var fileId = combo.DynamicComboRenderStates[index].ShaderFileId;
@@ -112,8 +106,7 @@ if (args[0] == "--allbytecode")
         try
         {
             pak.ReadEntry(entry, out var bytes);
-            using var p = new VfxProgramData();
-            p.Read(entry.FileName + ".vcs", new MemoryStream(bytes));
+            var p = VfxProgramData.Read(entry.FileName + ".vcs", bytes);
             foreach (var id in p.StaticComboEntries.Keys.Order().Take(1))
             {
                 var combo = p.GetStaticCombo(id);
@@ -136,8 +129,7 @@ if (args[0] == "--vcsinfo")
     using var pak = new Package();
     pak.Read(args[1]);
     pak.ReadEntry(pak.FindEntry(args[2])!, out var bytes);
-    using var p = new VfxProgramData();
-    p.Read(Path.GetFileName(args[2]), new MemoryStream(bytes));
+    var p = VfxProgramData.Read(Path.GetFileName(args[2]), bytes);
     foreach (var prop in p.GetType().GetProperties())
     {
         var v = prop.GetValue(p);
@@ -155,14 +147,10 @@ if (args[0] == "--cbuffers")
     foreach (var path in args.Skip(2))
     {
         pak.ReadEntry(pak.FindEntry(path)!, out var bytes);
-        using var p = new VfxProgramData();
-        p.Read(Path.GetFileName(path), new MemoryStream(bytes));
-        foreach (var b in p.ExtConstantBufferDescriptions)
-        {
-            Console.WriteLine($"{path}: {b.Name} size {b.BufferSize} push {b.IsPushConstantBuffer} type {b.Type} crc {b.BlockCrc:x8}");
-            foreach (var v in b.Variables)
-                Console.WriteLine($"    +{v.Offset * 4,-5} {v.Name} vec{v.VectorSize} rows {v.RowCount} x{v.ElementCount}");
-        }
+        var p = VfxProgramData.Read(Path.GetFileName(path), bytes);
+        // A VCS 72 file's resource (KV3) layout reads no external constant buffer descriptions (the reader this tool
+        // used before filled them from the older binary layout only), so there is nothing to list.
+        Console.WriteLine($"{path}: {p.VariableDescriptions.Length} variables; no external constant buffer descriptions in VCS {p.VcsVersion}");
     }
     return;
 }
@@ -183,8 +171,7 @@ foreach (var vpk in args.Skip(2))
         try
         {
             pak.ReadEntry(e, out var bytes);
-            using var p = new VfxProgramData();
-            p.Read(Path.GetFileName(name), new MemoryStream(bytes));
+            var p = VfxProgramData.Read(Path.GetFileName(name), bytes);
             foreach (var sid in p.StaticComboEntries.Keys)
             {
                 var combo = p.GetStaticCombo(sid);

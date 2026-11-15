@@ -1,3 +1,4 @@
+using Source2.Compiler.Textures;
 using System.Buffers.Binary;
 using System.Text.Json;
 using Source2.Compiler.Compression;
@@ -132,9 +133,9 @@ public sealed class CubemapOracleTests(ITestOutputHelper output)
         File.WriteAllBytes(Path.Combine(dir, "ours.vtex_c"), file);
         var t = Read(file);
         output.WriteLine($"{inputs.Count} cubes of {size}: {file.Length} bytes in {(DateTime.UtcNow - started).TotalSeconds:F1} s; {t.Mips} mips, flags 0x{t.Flags:x}, SH {t.Sh.Length}, reflectivity {string.Join(" ", t.Reflectivity)}");
-        using var resource = new ValveResourceFormat.Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(file));
-        var texture = (ValveResourceFormat.ResourceTypes.Texture)resource.DataBlock!;
+        var texture = (CompiledTexture)resource.DataBlock!;
         output.WriteLine($"VRF: {texture.Width} x {texture.Height} x {texture.Depth}, {texture.Format}, {texture.NumMipLevels} mips, {texture.Flags}");
     }
 

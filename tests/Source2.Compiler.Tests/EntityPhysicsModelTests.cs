@@ -1,6 +1,6 @@
+using Source2.Compiler.Meshes;
 using System.Numerics;
 using ValvePak;
-using ValveResourceFormat;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -114,9 +114,9 @@ public class EntityPhysicsModelTests(ITestOutputHelper output)
                 continue;
             }
             package.ReadEntry(entry, out var bytes);
-            using var res = new Resource();
+            using var res = new TestResource();
             res.Read(new MemoryStream(bytes));
-            var valvePhysicsOnly = !res.Blocks.Any(b => b.Type == ValveResourceFormat.BlockType.MDAT);
+            var valvePhysicsOnly = !res.Blocks.Any(b => b.Type == "MDAT");
             if (valvePhysicsOnly != model.PhysicsOnly)
             {
                 kindWrong++;
@@ -133,7 +133,7 @@ public class EntityPhysicsModelTests(ITestOutputHelper output)
             // vertex set; the ones only one side has, with their size and box.
             if (Environment.GetEnvironmentVariable("ENTBUILD_HULLMATCH") is { Length: > 0 } hm && model.Path.Contains(hm, StringComparison.Ordinal))
             {
-                var theirHulls = ((ValveResourceFormat.ResourceTypes.Model)res.DataBlock!).GetEmbeddedPhys()!.Parts[0].Shape.Hulls
+                var theirHulls = ((CompiledModel)res.DataBlock!).EmbeddedPhysics!.Parts[0].Shape.Hulls
                     .Select(h => h.Shape.GetVertexPositions().ToArray()).ToList();
                 var ourHulls = model.Physics.Hulls.Select(h => h.Hull!.VertexPositions.ToArray()).ToList();
                 static string Key(IEnumerable<Vector3> v) => string.Join(";", v.Select(p => $"{p.X:R},{p.Y:R},{p.Z:R}").Order(StringComparer.Ordinal));

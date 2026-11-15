@@ -1,6 +1,6 @@
+using Source2.Compiler.Materials;
+using Source2.Compiler.Shaders.Vfx;
 using Source2.Compiler.Gpu;
-using ValveResourceFormat.CompiledShader;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -19,9 +19,9 @@ public sealed class CubemapComboProbe(ITestOutputHelper output)
         using var pak = new ValvePak.Package();
         pak.Read(Path.Combine(game, "csgo", "pak01_dir.vpk"));
         pak.ReadEntry(pak.FindEntry(parts[0] + "_c")!, out var mb);
-        using var mr = new ValveResourceFormat.Resource();
+        using var mr = new TestResource();
         mr.Read(new MemoryStream(mb));
-        var material = (Material)mr.DataBlock!;
+        var material = (CompiledMaterial)mr.DataBlock!;
         output.WriteLine($"shader {material.ShaderName}; F_ params: {string.Join(" ", material.IntParams.Where(p => p.Key.StartsWith("F_", StringComparison.Ordinal)).Select(p => $"{p.Key}={p.Value}"))}");
         using var shaders = new ValvePak.Package();
         shaders.Read(Path.Combine(game, "csgo", "shaders_vulkan_dir.vpk"));
@@ -29,12 +29,10 @@ public sealed class CubemapComboProbe(ITestOutputHelper output)
         var statics = parts[2].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Split('=')).ToDictionary(x => x[0], x => int.Parse(x[1], System.Globalization.CultureInfo.InvariantCulture));
         var entry = shaders.FindEntry($"shaders/vfx/{shader}_vulkan_50_{parts[1]}.vcs")!;
         shaders.ReadEntry(entry, out var bytes);
-        using var program = new VfxProgramData();
-        program.Read(entry.FileName + ".vcs", new MemoryStream(bytes));
+        var program = VfxProgramData.Read(entry.FileName + ".vcs", bytes);
         var fe = shaders.FindEntry($"shaders/vfx/{shader}_vulkan_50_features.vcs")!;
         shaders.ReadEntry(fe, out var fb);
-        using var features = new VfxProgramData();
-        features.Read(fe.FileName + ".vcs", new MemoryStream(fb));
+        var features = VfxProgramData.Read(fe.FileName + ".vcs", fb);
         long id = 0;
         foreach (var c in program.StaticComboArray)
         {

@@ -201,7 +201,7 @@ public class MergerInputStreamsTests(ITestOutputHelper output)
         {
             var kept = Enumerable.Range(0, streams.Count).ToList();
             if (content.Read(material + "_c") is { } bytes)
-                kept = MaterialStreams.Kept(streams, MaterialStreams.Inputs(Source2.Compiler.MaterialAuthor.ExtractInputSignature(bytes).Select(x => x.Semantic)), false);
+                kept = MaterialStreams.Kept(streams, MaterialStreams.Inputs(PackageMaterialAuthor.ExtractInputSignature(bytes).Select(x => x.Semantic)), false);
             return string.Join(" ", kept.Select(i => $"{streams[i].Name}/{streams.Take(i).Count(s => s.Name == streams[i].Name)}"));
         }
         var lists = MeshLists.Merged.ToDictionary(k => k, _ => new List<(string, string)>());

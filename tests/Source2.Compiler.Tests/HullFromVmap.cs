@@ -1,9 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Physics;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -207,9 +206,9 @@ public class HullFromVmap(ITestOutputHelper output)
             if (skip)
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var shipped = resource.DataBlock is Model model && model.GetEmbeddedPhys() is { } phys
+            var shipped = resource.DataBlock is CompiledModel model && model.EmbeddedPhysics is { } phys
                 ? phys.Parts.SelectMany(p => p.Shape.Hulls).Select(h => h.Shape).ToList()
                 : [];
             if (shipped.Count != ours.Count)
@@ -218,7 +217,7 @@ public class HullFromVmap(ITestOutputHelper output)
                 if (shown++ < show)
                 {
                     output.WriteLine($"{entry.GetFullPath()} ({className}): shipped {shipped.Count} hulls, ours {ours.Count}; shipped parts " +
-                        string.Join(" ", (resource.DataBlock as Model)?.GetEmbeddedPhys()?.Parts.Select(p => $"[{p.Shape.Hulls.Length} hulls {p.Shape.Meshes.Length} meshes {p.Shape.Spheres.Length} spheres {p.Shape.Capsules.Length} capsules]") ?? []));
+                        string.Join(" ", (resource.DataBlock as CompiledModel)?.EmbeddedPhysics?.Parts.Select(p => $"[{p.Shape.Hulls.Length} hulls {p.Shape.Meshes.Length} meshes {p.Shape.Spheres.Length} spheres {p.Shape.Capsules.Length} capsules]") ?? []));
                     foreach (var mesh in Meshes(entity))
                     {
                         mesh.Attributes.TryGetValue("physicsType", out var pt);
@@ -227,7 +226,7 @@ public class HullFromVmap(ITestOutputHelper output)
                         var mats = string.Join(",", (mesh.Get<DmxBinary.Element>("meshData")?.Get<object?[]>("materials") ?? []).Select(x => Path.GetFileNameWithoutExtension(x as string ?? "")));
                         output.WriteLine($"  mesh {mesh.GetValue<int>("nodeID")} [{mats}] physicsType={pt ?? "(absent)"} ({pt?.GetType().Name}) verts {positions.Length} faces {faces.Length} groups [{string.Join(",", inputs.Select(i => i.Length))}]");
                     }
-                    if (resource.DataBlock is Model m2 && m2.GetEmbeddedPhys() is { } p2)
+                    if (resource.DataBlock is CompiledModel m2 && m2.EmbeddedPhysics is { } p2)
                         foreach (var part in p2.Parts)
                             foreach (var hd in part.Shape.Hulls)
                                 output.WriteLine($"  shipped part hull verts {hd.Shape.GetVertexPositions().Length} min {hd.Shape.Min} max {hd.Shape.Max} attr {hd.CollisionAttributeIndex} surf {hd.SurfacePropertyIndex} name {hd.UserFriendlyName}");
@@ -444,9 +443,9 @@ public class HullFromVmap(ITestOutputHelper output)
         if (_bruteShown >= (int.TryParse(Environment.GetEnvironmentVariable("HULL_BRUTE_MAX"), out var bm) ? bm : 6))
             return;
         package.ReadEntry(entry, out var bytes);
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
-        if (resource.DataBlock is not Model model || model.GetEmbeddedPhys() is not { } phys)
+        if (resource.DataBlock is not CompiledModel model || model.EmbeddedPhysics is not { } phys)
             return;
         var shipped = phys.Parts.SelectMany(p => p.Shape.Hulls).Select(h => h.Shape).ToList();
         foreach (var input in BrushHulls.Inputs(positions, piece, type, local))
@@ -633,7 +632,7 @@ public class HullFromVmap(ITestOutputHelper output)
     }
 
     // The region SVM against Valve's: null when every plane float and node matches.
-    internal static string? SvmDifference(ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Hull valve, RnHull ours)
+    internal static string? SvmDifference(Source2.Compiler.Rubikon.Shapes.Hull valve, RnHull ours)
     {
         if (valve.RegionSVM is not { } svm)
             return ours.RegionSvm == null ? null : "extra (valve has none)";
@@ -662,7 +661,7 @@ public class HullFromVmap(ITestOutputHelper output)
         return null;
     }
 
-    internal static List<string> Differences(ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Hull valve, RnHull? ours)
+    internal static List<string> Differences(Source2.Compiler.Rubikon.Shapes.Hull valve, RnHull? ours)
     {
         if (ours == null)
             return [$"failed (no hull of ours with these {valve.GetVertexPositions().Length} positions)"];

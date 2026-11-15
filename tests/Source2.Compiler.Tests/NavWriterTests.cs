@@ -1,5 +1,4 @@
 using Source2.Compiler.Maps.NavGen;
-using ValveResourceFormat.NavMesh;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -101,7 +100,7 @@ public class NavWriterTests(ITestOutputHelper output)
     {
         if (Environment.GetEnvironmentVariable("NAVKV3") is not { Length: > 0 } path)
             return;
-        var nav = new NavMeshFile();
+        var nav = new Source2.Compiler.Maps.NavMesh.NavMeshFile();
         nav.Read(path);
         void Dump(string name, ValveKeyValue.KVDocument? kv)
         {

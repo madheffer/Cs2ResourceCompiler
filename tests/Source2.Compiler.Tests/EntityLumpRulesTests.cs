@@ -1,7 +1,6 @@
 using System.Numerics;
 using Source2.Compiler;
 using ValveKeyValue;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 
 namespace Source2.Compiler.Tests;
@@ -439,7 +438,7 @@ public sealed class EntityLumpRulesTests : IDisposable
         => lumps.ToDictionary(l => l.Name, l =>
         {
             using var resource = ResourceTrees.Read(l.Bytes, l.Path);
-            return ((EntityLump)resource.DataBlock!).Data;
+            return ((TestKv3Typed)resource.DataBlock!).Data;
         });
 
     private static List<KVObject> EntitiesOf(KVObject lump) => [.. lump["m_entityKeyValues"].Values];

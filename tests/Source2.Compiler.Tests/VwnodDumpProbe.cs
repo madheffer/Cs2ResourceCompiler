@@ -1,7 +1,5 @@
+using Source2.Compiler.KeyValues;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -27,16 +25,16 @@ public class VwnodDumpProbe(ITestOutputHelper output)
             package.Read(vpk);
             var entry = package.FindEntry(p[2]) ?? throw new FileNotFoundException(p[2]);
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
             if (p[2].EndsWith(".vwrld_c", StringComparison.Ordinal))
             {
-                var world = ((World)resource.DataBlock!).Data;
+                var world = ((TestKv3Typed)resource.DataBlock!).Data;
                 foreach (var n in world.GetArray("m_worldNodes") ?? [])
                     output.WriteLine($"{label} node {string.Join(" | ", n.Children.Select(c => $"{c.Key}={Show(c.Value)}"))}");
                 continue;
             }
-            var data = ((WorldNode)resource.DataBlock!).Data;
+            var data = ((TestKv3Typed)resource.DataBlock!).Data;
             output.WriteLine($"== {label}: keys {string.Join(",", data.Children.Select(c => c.Key))}");
             foreach (var key in new[] { "m_aggregateInstanceStreams", "m_extraVertexStreams", "m_vertexAlbedoStreams" })
                 output.WriteLine($"{label} {key} count {(data.Children.FirstOrDefault(c => c.Key == key).Value is { IsArray: true } arr ? arr.Values.Count() : -1)}");

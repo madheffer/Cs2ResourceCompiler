@@ -1,5 +1,5 @@
+using Source2.Compiler.KeyValues;
 using ValveKeyValue;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Tests;
 

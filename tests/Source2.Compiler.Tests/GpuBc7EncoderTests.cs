@@ -1,5 +1,4 @@
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
+using Source2.Compiler.Textures;
 using Xunit;
 using Source2.Compiler.KeyValues;
 
@@ -38,9 +37,9 @@ public sealed class GpuBc7EncoderTests : IDisposable
 
         Assert.Equal([(16, 16), (8, 8), (4, 4)], calls);
         Assert.Equal("fakegpu1", PackageResourceBuilder.Bc7CacheTag(PackageResourceBuilder.Bc7EncoderMode.Gpu));
-        using var res = new Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(vtex));
-        var tex = (Texture)res.DataBlock!;
+        var tex = (CompiledTexture)res.DataBlock!;
         var mip0 = new byte[tex.CalculateBufferSizeForMipLevel(0)];
         tex.ReadTextureMipLevel(mip0, 0);
         Assert.All(mip0, b => Assert.Equal(0xA5, b));

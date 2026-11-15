@@ -1,6 +1,5 @@
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -33,16 +32,16 @@ public class VertexOrderProbe(ITestOutputHelper output)
             if (!entry.DirectoryName.Contains("worldnodes", StringComparison.OrdinalIgnoreCase))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
             var kind = entry.FileName.Contains("agg_prop") ? "agg_prop" : entry.FileName.Contains("agg_") ? "aggregate" : entry.FileName.Contains("overlay") ? "overlay" : "plain";
-            foreach (var (mesh, _, _, _) in ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, _) in ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod())
             {
                 // Per model: TEXCOORD0's formats across its vertex buffers beside the model's largest value.
                 {
                     var formats = new SortedSet<string>();
                     var modelMax = 0f;
-                    foreach (var vb in mesh.VBIB.VertexBuffers)
+                    foreach (var vb in mesh.Vbib.VertexBuffers)
                         foreach (var f in vb.InputLayoutFields.Where(f => f.SemanticName == "TEXCOORD" && f.SemanticIndex == 0))
                         {
                             formats.Add(f.Format.ToString());
@@ -59,7 +58,7 @@ public class VertexOrderProbe(ITestOutputHelper output)
                     }
                 }
                 // Texcoord streams per vertex buffer: the format beside the values' reach and how a half or snorm would hold them.
-                foreach (var vb in mesh.VBIB.VertexBuffers)
+                foreach (var vb in mesh.Vbib.VertexBuffers)
                     foreach (var f in vb.InputLayoutFields.Where(f => f.SemanticName == "TEXCOORD" && (f.Format.ToString().Contains("G16") || f.Format.ToString() == "R32G32_FLOAT")))
                     {
                         float max = 0, halfErr = 0, snormErr = 0;
@@ -84,7 +83,7 @@ public class VertexOrderProbe(ITestOutputHelper output)
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var dc in so.GetArray("m_drawCalls"))
                     {
-                        var vb = mesh.VBIB.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                        var vb = mesh.Vbib.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
                         var material = dc.GetStringProperty("m_material") ?? "";
                         var shader = Path.GetFileNameWithoutExtension(content.Material(material)?.Shader ?? "?");
                         var layout = string.Join(" ", vb.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.Format.ToString().Replace("_FLOAT", "F").Replace("_UNORM", "U").Replace("_SNORM", "S").Replace("_UINT", "I")}"));
@@ -92,7 +91,7 @@ public class VertexOrderProbe(ITestOutputHelper output)
                         tally[key] = tally.GetValueOrDefault(key) + 1;
                         if (kind != "agg_prop")
                         {
-                            var tc = string.Join(" ", dc.GetArray("m_vertexBuffers").Select(b => mesh.VBIB.VertexBuffers[b.GetInt32Property("m_hBuffer")])
+                            var tc = string.Join(" ", dc.GetArray("m_vertexBuffers").Select(b => mesh.Vbib.VertexBuffers[b.GetInt32Property("m_hBuffer")])
                                 .SelectMany(b => b.InputLayoutFields).Where(f => f.SemanticName == "TEXCOORD" && f.SemanticIndex < 2).Select(f => f.Format.ToString()));
                             var origin = material.StartsWith("materials/models/", StringComparison.OrdinalIgnoreCase) ? "model material" : "map material";
                             var wk = $"WORLD {kind,-9} {origin,-14} {shader,-28} {tc}";
@@ -119,14 +118,14 @@ public class VertexOrderProbe(ITestOutputHelper output)
             if (!entry.DirectoryName.Contains("worldnodes", StringComparison.OrdinalIgnoreCase))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
             var kind = entry.FileName.Contains("agg_prop") ? "agg_prop" : entry.FileName.Contains("agg_") ? "aggregate" : "plain";
-            foreach (var (mesh, _, _, _) in ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, _) in ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod())
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var dc in so.GetArray("m_drawCalls"))
                     {
-                        var ib = mesh.VBIB.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                        var ib = mesh.Vbib.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                         int I(int i) => ib.ElementSizeInBytes == 2 ? BitConverter.ToUInt16(ib.Data, i * 2) : BitConverter.ToInt32(ib.Data, i * 4);
                         var start = dc.GetInt32Property("m_nStartIndex");
                         var count = dc.GetInt32Property("m_nIndexCount");

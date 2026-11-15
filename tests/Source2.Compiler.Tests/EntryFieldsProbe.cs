@@ -1,3 +1,4 @@
+using Source2.Compiler.Shaders.Vfx;
 using Source2.Compiler.Maps;
 using Xunit;
 using Xunit.Abstractions;
@@ -32,7 +33,7 @@ public class EntryFieldsProbe(ITestOutputHelper output)
         var tally = new SortedDictionary<string, int>();
         var doc = DmxBinary.ReadFile(vmap);
         IReadOnlyCollection<string> Signature(string material) => content.Read(material + "_c") is { } b
-            ? [.. MaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
+            ? [.. PackageMaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
         var ours = NodeMeshEntries.FromWorld(doc, signature: Signature, rendersAsWorld: NodeEntriesFromVmap.RendersAsWorld(game));
         ours.AddRange(NodePropEntries.FromWorld(doc, content));
         var useRecords = ours.Count == entries.Count;
@@ -62,14 +63,14 @@ public class EntryFieldsProbe(ITestOutputHelper output)
                     foreach (var program in set.Programs)
                     {
                         var features = info.Params!.Where(p => p.Key.StartsWith("F_")).ToDictionary(p => p.Key, p => (byte)p.Value);
-                        var (_, id) = ValveResourceFormat.IO.ShaderDataProvider.GetStaticConfiguration_ForFeatureState(set.Features, program, features);
+                        var (_, id) = VfxCombos.GetStaticConfiguration_ForFeatureState(set.Features, program, features);
                         if (!program.StaticComboEntries.ContainsKey(id))
                         {
                             output.WriteLine($"  {program.VcsProgramType}: combo {id} missing");
                             continue;
                         }
                         var combo = program.GetStaticCombo(id);
-                        var culls = combo.DynamicComboRenderStates.OfType<ValveResourceFormat.CompiledShader.VfxRenderStateInfoPixelShader>()
+                        var culls = combo.DynamicComboRenderStates.OfType<VfxRenderStateInfoPixelShader>()
                             .Select(r => r.RasterizerStateDesc?.CullMode.ToString() ?? "-").Distinct();
                         output.WriteLine($"  {program.VcsProgramType}: combo {id}, {combo.Attributes.Length} attributes, cull [{string.Join(",", culls)}]");
                     }
@@ -132,7 +133,7 @@ public class EntryFieldsProbe(ITestOutputHelper output)
         using var content = new GameContent(pak, Path.Combine(game, "csgo_addons", addon));
         var doc = DmxBinary.ReadFile(vmap);
         IReadOnlyCollection<string> Signature(string material) => content.Read(material + "_c") is { } b
-            ? [.. MaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
+            ? [.. PackageMaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
         var ours = NodeMeshEntries.FromWorld(doc, signature: Signature, rendersAsWorld: NodeEntriesFromVmap.RendersAsWorld(game));
         ours.AddRange(NodePropEntries.FromWorld(doc, content));
         Assert.Equal(entries.Count, ours.Count);

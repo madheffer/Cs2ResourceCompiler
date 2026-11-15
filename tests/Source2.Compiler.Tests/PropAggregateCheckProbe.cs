@@ -1,5 +1,6 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Maps;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -28,12 +29,12 @@ public class PropAggregateCheckProbe(ITestOutputHelper output)
                 output.WriteLine($"{modelName}: not found");
                 continue;
             }
-            foreach (var (mesh, _, _, lod) in model.GetEmbeddedMeshesAndLoD())
+            foreach (var (mesh, _, _, lod) in model.EmbeddedMeshesAndLod())
                 foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                     foreach (var call in so.GetArray("m_drawCalls"))
                     {
                         var material = call.GetStringProperty("m_material") ?? "";
-                        var vb = mesh.VBIB.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                        var vb = mesh.Vbib.VertexBuffers[call.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
                         var attributes = content.Material(material) is { } info ? MaterialAttributes.Of(info, shaders, content.TextureSize) : MaterialAttributes.Empty;
                         var flags = MeshEntryFlags.Compute(attributes, default);
                         var input = new MeshLists.Input(flags.Flags, 8, 0, 0f, false, false);

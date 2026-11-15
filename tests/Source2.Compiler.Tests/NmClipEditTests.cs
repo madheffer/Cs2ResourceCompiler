@@ -2,8 +2,6 @@ using System.Numerics;
 using Source2.Compiler.Anim;
 using Source2.Compiler.Kv3;
 using ValvePak;
-using ValveResourceFormat;
-using VrfClip = ValveResourceFormat.ResourceTypes.ModelAnimation2.AnimationClip;
 using Xunit;
 using Source2.Compiler.KeyValues;
 
@@ -30,9 +28,9 @@ public class NmClipEditTests
 
     private static byte[] Data(byte[] vnmclipC)
     {
-        using var res = new Resource();
+        using var res = new TestResource();
         res.Read(new MemoryStream(vnmclipC));
-        var b = res.GetBlockByType(BlockType.DATA)!;
+        var b = res.GetBlockByType("DATA")!;
         return vnmclipC.AsSpan((int)b.Offset, (int)b.Size).ToArray();
     }
 
@@ -106,26 +104,26 @@ public class NmClipEditTests
     }
 
     [Fact]
-    public void Rewritten_file_loads_in_vrf_with_other_blocks_untouched()
+    public void Rewritten_file_reads_back_with_other_blocks_untouched()
     {
         if (Stock(DrawM4a4) is not { } bytes) { CS2Fixtures.Skip(DrawM4a4); return; }
         var edited = NmClipEdit.Rewrite(bytes, t => NmClipEdit.Retime(t, 0.75));
-        using var res = new Resource { FileName = DrawM4a4 };
+        using var res = new TestResource { FileName = DrawM4a4 };
         res.Read(new MemoryStream(edited));
-        var clip = Assert.IsType<VrfClip>(res.DataBlock);
+        var clip = Source2.Compiler.Anim.AnimationClip.Read(edited, DrawM4a4);
         Assert.Equal(0.75f, clip.Duration, 4);
         Assert.Equal(35, clip.NumFrames);
-        using var orig = new Resource();
+        using var orig = new TestResource();
         orig.Read(new MemoryStream(bytes));
-        var dataAt = (int)orig.GetBlockByType(BlockType.DATA)!.Offset;
-        Assert.Equal(dataAt, (int)res.GetBlockByType(BlockType.DATA)!.Offset);
+        var dataAt = (int)orig.GetBlockByType("DATA")!.Offset;
+        Assert.Equal(dataAt, (int)res.GetBlockByType("DATA")!.Offset);
         // Only the DATA entry's size may differ before DATA; restore it and the rest must be Valve's bytes.
         var head = edited[..dataAt];
         for (var i = 16; i + 12 <= dataAt; i += 12)
             if (head.AsSpan(i, 4).SequenceEqual("DATA"u8)) bytes.AsSpan(i + 8, 4).CopyTo(head.AsSpan(i + 8));
         Assert.True(bytes.AsSpan(4, dataAt - 4).SequenceEqual(head.AsSpan(4)), "header or block table changed");
         Assert.Equal(edited.Length, BitConverter.ToInt32(edited, 0));
-        foreach (var b in orig.Blocks.Where(b => b.Type != BlockType.DATA))
+        foreach (var b in orig.Blocks.Where(b => b.Type != "DATA"))
         {
             var mine = res.GetBlockByType(b.Type)!;
             Assert.True(bytes.AsSpan((int)b.Offset, (int)b.Size).SequenceEqual(edited.AsSpan((int)mine.Offset, (int)mine.Size)), $"{b.Type} changed");

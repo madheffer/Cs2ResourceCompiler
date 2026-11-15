@@ -1,6 +1,5 @@
+using Source2.Compiler.Materials;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -37,9 +36,9 @@ public class MaterialShaderSurvey(ITestOutputHelper output)
                 output.WriteLine($"MAT {Path.GetFileNameWithoutExtension(name)} | missing");
                 continue;
             }
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            if (resource.DataBlock is not Material mat)
+            if (resource.DataBlock is not CompiledMaterial mat)
                 continue;
             var flags = string.Join(",", mat.IntParams.Where(p => p.Key.StartsWith("F_", StringComparison.Ordinal) && p.Value != 0).Select(p => $"{p.Key}={p.Value}"));
             output.WriteLine($"MAT {Path.GetFileNameWithoutExtension(name)} | {mat.ShaderName} | {flags}");

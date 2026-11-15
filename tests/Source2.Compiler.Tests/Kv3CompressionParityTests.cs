@@ -91,6 +91,6 @@ public class Kv3CompressionParityTests
         // tier0 stores a binary_auto block raw below 256 bytes of buffer plus
         // blobs; the corpus (largest raw 252 B, smallest compressed 279 B over
         // ~3,600 Valve-compiled v5 blocks) agrees with it.
-        Assert.InRange(AuthoredKv3.RawBelow, 253, 279);
+        Assert.InRange(Kv3BlockWriter.RawBelow, 253, 279);
     }
 }

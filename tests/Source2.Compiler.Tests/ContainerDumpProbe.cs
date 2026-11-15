@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using ValvePak;
-using ValveResourceFormat;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -40,7 +39,7 @@ public class ContainerDumpProbe(ITestOutputHelper output)
             var head = bytes.AsSpan(offset, Math.Min(size, 64)).ToArray();
             lines.Add($"block {b} {fourCc} at {offset} size {size}: {Convert.ToHexString(head)}");
         }
-        using var resource = new Resource();
+        using var resource = new TestResource();
         resource.Read(new MemoryStream(bytes));
         foreach (var block in resource.Blocks)
         {
@@ -48,9 +47,9 @@ public class ContainerDumpProbe(ITestOutputHelper output)
             File.WriteAllText(Path.Combine(p[2], $"{block.Type}.txt"), text);
             ValveKeyValue.KVObject? tree = block switch
             {
-                ValveResourceFormat.ResourceTypes.KeyValuesOrNTRO k => k.Data,
-                ValveResourceFormat.ResourceTypes.BinaryKV3 k => k.Data.Root,
-                ValveResourceFormat.Blocks.ResourceEditInfo2 r => r.Data?.Root,
+                TestEditInfo r => r.Data?.Root,
+                TestKv3Typed k => k.Data,
+                TestKv3Block k => k.Data.Root,
                 _ => null,
             };
             if (tree != null)

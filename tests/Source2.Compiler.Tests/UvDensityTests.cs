@@ -1,10 +1,8 @@
+using Source2.Compiler.Meshes;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Maps;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -40,13 +38,13 @@ public class UvDensityTests(ITestOutputHelper output)
             if (!path.Contains("/worldnodes/", StringComparison.Ordinal))
                 continue;
             package.ReadEntry(entry, out var bytes);
-            using var resource = new Resource();
+            using var resource = new TestResource();
             resource.Read(new MemoryStream(bytes));
-            var mesh = ((Model)resource.DataBlock!).GetEmbeddedMeshesAndLoD().First().Mesh;
+            var mesh = ((CompiledModel)resource.DataBlock!).EmbeddedMeshesAndLod().First().Mesh;
             foreach (var so in mesh.Data.GetArray("m_sceneObjects"))
                 foreach (var dc in so.GetArray("m_drawCalls"))
                 {
-                    var vb = mesh.VBIB.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
+                    var vb = mesh.Vbib.VertexBuffers[dc.GetArray("m_vertexBuffers")[0].GetInt32Property("m_hBuffer")];
                     var posField = vb.InputLayoutFields.FirstOrDefault(f => f.SemanticName == "POSITION");
                     var uvField = vb.InputLayoutFields.FirstOrDefault(f => f.SemanticName == "TEXCOORD" && f.SemanticIndex == 0);
                     if (posField.SemanticName == null || uvField.SemanticName == null || uvField.Format != DXGI_FORMAT.R32G32_FLOAT)
@@ -54,9 +52,9 @@ public class UvDensityTests(ITestOutputHelper output)
                         skipped++;
                         continue;
                     }
-                    var positions = VBIB.GetVector3AttributeArray(vb, posField);
-                    var uvs = VBIB.GetVector2AttributeArray(vb, uvField);
-                    var ib = mesh.VBIB.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
+                    var positions = Vbib.GetVector3AttributeArray(vb, posField);
+                    var uvs = Vbib.GetVector2AttributeArray(vb, uvField);
+                    var ib = mesh.Vbib.IndexBuffers[dc.GetSubCollection("m_indexBuffer").GetInt32Property("m_hBuffer")];
                     var start = dc.GetInt32Property("m_nStartIndex");
                     var count = dc.GetInt32Property("m_nIndexCount");
                     var baseVertex = dc.GetInt32Property("m_nBaseVertex");

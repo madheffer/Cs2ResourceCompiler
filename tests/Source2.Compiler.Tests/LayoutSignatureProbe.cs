@@ -1,8 +1,6 @@
+using Source2.Compiler.Meshes;
 using Source2.Compiler.Maps;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -28,19 +26,19 @@ public class LayoutSignatureProbe(ITestOutputHelper output)
                      .OrderBy(e => e.GetFullPath(), StringComparer.Ordinal))
         {
             package.ReadEntry(e, out var bytes);
-            using var r = new Resource();
+            using var r = new TestResource();
             r.Read(new MemoryStream(bytes));
-            if (r.DataBlock is Model model)
-                foreach (var mesh in model.GetEmbeddedMeshesAndLoD().Select(x => x.Mesh))
-                    output.WriteLine($"{e.GetFileName()}: " + string.Join(" / ", mesh.VBIB.VertexBuffers.Select(vbuf =>
+            if (r.DataBlock is CompiledModel model)
+                foreach (var mesh in model.EmbeddedMeshesAndLod().Select(x => x.Mesh))
+                    output.WriteLine($"{e.GetFileName()}: " + string.Join(" / ", mesh.Vbib.VertexBuffers.Select(vbuf =>
                         string.Join(",", vbuf.InputLayoutFields.Select(f => $"{f.SemanticName}{f.SemanticIndex}:{f.ShaderSemantic}")))));
-            if (r.EditInfo is ResourceEditInfo2 { Data: { } red2 } && red2.Root["m_ArgumentDependencies"] is { IsArray: true } args)
+            if (r.EditInfo is TestEditInfo { Data: { } red2 } && red2.Root["m_ArgumentDependencies"] is { IsArray: true } args)
                 output.WriteLine("  args " + string.Join(" ", args.Values.Select(a => $"{a["m_ParameterName"]}={a["m_nFingerprint"]}")));
             foreach (var m in r.ExternalReferences!.ResourceRefInfoList.Select(x => x.Name).Where(n => n.EndsWith(".vmat", StringComparison.OrdinalIgnoreCase)))
             {
                 var raw = content.Read(m + "_c");
                 output.WriteLine(raw == null ? $"  {m}: absent"
-                    : $"  {m}: elems {string.Join(",", MaterialAuthor.ExtractInputSignature(raw).Select(x => x.Semantic))}; depth {string.Join(",", MaterialAuthor.ExtractDepthSignature(raw).Select(x => x.Semantic))}");
+                    : $"  {m}: elems {string.Join(",", PackageMaterialAuthor.ExtractInputSignature(raw).Select(x => x.Semantic))}; depth {string.Join(",", PackageMaterialAuthor.ExtractDepthSignature(raw).Select(x => x.Semantic))}");
             }
         }
     }
