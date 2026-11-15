@@ -224,7 +224,7 @@ public static class MapMeshes
                     overlays.Add(new Mesh(child.GetValue<int>("nodeID") ?? -1, parent.Type, null,
                                           child.GetValue<Vector3>("origin") ?? Vector3.Zero, child.GetValue<Vector3>("angles") ?? Vector3.Zero,
                                           child.GetValue<Vector3>("scales") ?? Vector3.One, [])
-                                 { Element = child, Instances = instances, World = at, Path = path, Sequence = sequence, Hidden = hides, Prefabs = prefabs, PrefabChain = prefabChain, Layer = layer });
+                                 { Element = child, Instances = instances, Through = through, World = at, Path = path, Sequence = sequence, Hidden = hides, Prefabs = prefabs, PrefabChain = prefabChain, Layer = layer });
                     break;
                 }
                 case "CMapPrefab":

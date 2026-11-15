@@ -32,9 +32,15 @@ internal static class NodeOverlays
         public byte[] TintColor { get; init; } = [255, 255, 255, 255];
     }
 
-    public static List<Descriptor> FromWorld(DmxBinary.Document doc)
+    /// <param name="content">When given, an overlay inside an instance takes its copy's node id
+    /// (<see cref="NodePropEntries.CopyIds"/>), as the export of the expanded map gives it: its entries'
+    /// id (+0x40) and so its world layer, the layer of the instance that places the copy (Mako's
+    /// logo decals under instance templates at the world root: Valve's ids 34815 on, two copies in
+    /// LevelLayer_ReactorUtilityAccess). Without it, the template's id.</param>
+    public static List<Descriptor> FromWorld(DmxBinary.Document doc, GameContent? content = null)
     {
         var found = new List<Descriptor>();
+        var copyIds = content is null ? null : NodePropEntries.CopyIds(doc, content);
         foreach (var overlay in MapMeshes.ReadOverlays(doc))
         {
             if (overlay.Hidden || overlay.Element is not { } e || e.Get<DmxBinary.Element>("meshData") is not { } data)
@@ -68,9 +74,11 @@ internal static class NodeOverlays
                 faces.Add(new Face([.. pts], Recentre(uvs)));
             }
             var targets = (e.Get<object?[]>("projectionTargets") ?? []).OfType<int>().ToArray();
+            var nodeId = copyIds is null || overlay.Through.Count == 0 ? overlay.NodeId
+                : copyIds.GetValueOrDefault(NodePropEntries.Key(e, overlay.Through.Select(t => t.GetValue<int>("nodeID") ?? -1)), overlay.NodeId);
             var integer = Pack(e.Get<DmxBinary.Element>("MaterialAdjustmentParamsStruct"));
             foreach (var (m, faces) in byMaterial)
-                found.Add(new Descriptor(overlay.NodeId, m < materials.Length ? materials[m] : "", e.GetValue<int>("projectionMode") ?? 0,
+                found.Add(new Descriptor(nodeId, m < materials.Length ? materials[m] : "", e.GetValue<int>("projectionMode") ?? 0,
                                          e.GetValue<float>("projectionFar") ?? 0f, e.GetValue<int>("renderOrder") ?? 0, e.GetValue<bool>("projectOnBackFaces") ?? false,
                                          e.GetValue<float>("backFacingAngle") ?? 90f, 0, targets, [.. faces])
                 {

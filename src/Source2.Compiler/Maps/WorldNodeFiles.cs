@@ -56,7 +56,7 @@ public static class WorldNodeFiles
         var bakes = baked is not null;
         var world = WorldNodeBuild.WorldEntries(document, content, shaders, RendersAsWorld, buildBakes: bakes);
         var props = WorldNodeBuild.PropEntries(document, content, shaders, notes, buildBakes: bakes, schema: schema);
-        var descriptors = NodeOverlays.FromWorld(document);
+        var descriptors = NodeOverlays.FromWorld(document, content);
         Func<List<WorldNodeBuild.Built>, List<WorldNodeBuild.Built>>? bake = null;
         if (bakes)
         {

@@ -6833,3 +6833,20 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        texcoord stream is R32G32 in Valve's (format 16), R16G16 in ours: WRB_LoadPropMeshes marks the texcoord
        stream high precision when the geometry info's draw record +0x66 is set (+0x67 for tangent), not traced;
        the two walkway aggregates differ in MIDX only.
+
+307. **An overlay inside an instance takes its copy's node id, so the instance's layer** (2026-11-15, CS2 open:
+     rc 0923 decompiles of WRBNode_GenerateOverlayMeshes 18025ece0 (the projected entry's +0x38 name and +0x40 id
+     from the overlay record's +0x78 / +0x80), WRB_CollectMeshEntries 18023f6d0 (WRBNode_AddOverlay 180254480
+     with the caller's layer name), EntityLump_ExportDriver 180244d30 (the layer name passed down the tree,
+     replaced where vf 0x1b8 answers); Valve's merger inputs from the 11-15 capture, mako2.bin). READ + MEASURED.
+     - The export walks the expanded map, so an overlay under an instance template is exported once per copy, with
+       the copy's id and the layer of the instance that places it. Mako's shinralogo decals sit in two templates at
+       the world root: Valve's entries carry ids 34815 on and 36770 on (two copies in
+       LevelLayer_ReactorUtilityAccess); ours carried the templates' ids (17565, 25890), so all copies landed in one
+       layer. MapMeshes kept no instance path on an overlay at all (Through was never set for CMapStaticOverlay).
+       Ported: MapMeshes' overlay Through, NodeOverlays.FromWorld's copy id (NodePropEntries.CopyIds).
+     - Merger inputs now equal Valve's in count on every Mako layer and list but layer 2's base list (one
+       nuke_ceiling_02 face of mesh 27196 in ours; its mesh has cubeMapName, and the face's csgo_lightmappedgeneric
+       F_LAYERS 0 material is not env-mapped in our attributes; not traced). Meshes 7,051 of 7,084 exact.
+     - Result: Mako -world 1,448 of 1,782 (was 1,211); every layer's render cluster count is Valve's (lr1 117).
+       probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2, shaurma unchanged.

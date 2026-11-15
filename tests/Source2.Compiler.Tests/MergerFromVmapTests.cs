@@ -82,7 +82,7 @@ public class MergerFromVmapTests(ITestOutputHelper output)
                              MapEntities.FixupEntityNames(doc), doc, MapFixtures.SmartPropLocators, lighting: l => lighting = l);
         var world = WorldNodeBuild.WorldEntries(doc, content, shaders, NodeEntriesFromVmap.RendersAsWorld(game));
         var props = WorldNodeBuild.PropEntries(doc, content, shaders);
-        var descriptors = NodeOverlays.FromWorld(doc);
+        var descriptors = NodeOverlays.FromWorld(doc, content);
         var (built, overlays) = WorldNodeBuild.BuildNode(world, props, descriptors);
         var envMaps = WorldNodeBuild.EnvMaps(built, lighting!.Volumes);
 
@@ -109,6 +109,14 @@ public class MergerFromVmapTests(ITestOutputHelper output)
                 var keys = om.Keys.Union(vm.Keys).Where(k => om.GetValueOrDefault(k) != vm.GetValueOrDefault(k))
                     .OrderByDescending(k => Math.Abs(om.GetValueOrDefault(k) - vm.GetValueOrDefault(k))).Take(10);
                 output.WriteLine("    by material (ours/valve): " + string.Join(", ", keys.Select(k => $"{k} {om.GetValueOrDefault(k)}/{vm.GetValueOrDefault(k)}")));
+                if (Environment.GetEnvironmentVariable("MERGEVMAP_NODES") == "1")
+                    foreach (var k in keys.Take(2))
+                    {
+                        output.WriteLine($"      {k} ours nodes: " + string.Join(" ", ours.Where(o => Path.GetFileName(o.Material) == k)
+                            .Select(o => $"{o.Facts.NodeId}/{o.Facts.LayerNode}@{o.Vertices[0]:0},{o.Vertices[1]:0},{o.Vertices[2]:0}")));
+                        output.WriteLine($"      {k} valve nodes: " + string.Join(" ", valve.Inputs.Where(v => Path.GetFileName(v.Material) == k)
+                            .Select(v => $"{v.Facts?.NodeId}@{v.Vertices[0]:0},{v.Vertices[1]:0},{v.Vertices[2]:0}")));
+                    }
             }
             var count = Math.Min(ours.Count, valve.Inputs.Count);
             for (var j = 0; j < count; j++)
