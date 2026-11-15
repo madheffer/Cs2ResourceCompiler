@@ -227,10 +227,18 @@ internal static class NodePropEntries
                         }
                     PropTransform.Apply(vertices, stride, 0, 3, 6, 10, 16, matrix, PropTransform.AxesOf(info?.Shader, info?.Params), flags);
                     var indices = Enumerable.Range(start, count).Select(i => Index(i) + bas - lo).ToArray();
-                    yield return new NodeMeshEntries.Entry(id, material, stride, loaded.Streams, vertices, indices) { Record = RecordOf(keys), Source = keys, Placement = flags, LodSwitch = lodSwitch, Matrix = (flags & PropTransform.Place) == 0 ? matrix : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0] };
+                    yield return new NodeMeshEntries.Entry(id, material, stride, loaded.Streams, vertices, indices) { Record = RecordOf(keys), Source = keys, Placement = flags, LodSwitch = lodSwitch, PreciseTexcoords = FloatTexcoords(vb), Matrix = (flags & PropTransform.Place) == 0 ? matrix : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0] };
                 }
         }
     }
+
+    /// <summary>
+    /// WRB_LoadPropMeshes (1801d30d0) marks every stream named texcoord high precision (+0x1d) when the draw's
+    /// geometry record has +0x66 set; that flag is a float texcoord in the model's buffer (R32G32_FLOAT), the rule
+    /// the prop aggregates measured (NodePropAggregates.Calls). Mako's baked sofas: Valve's R32G32 texcoords.
+    /// </summary>
+    internal static bool FloatTexcoords(ValveResourceFormat.Blocks.VBIB.OnDiskBufferData vb)
+        => vb.InputLayoutFields.Any(f => f.SemanticName == "TEXCOORD" && f.Format.ToString() == "R32G32_FLOAT");
 
     // The skin key, a group's name: each material of the first group becomes the
     // same slot of the chosen one (WRBNode_PropMaterials through the prop's +0x188).

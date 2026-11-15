@@ -6865,3 +6865,19 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        the descriptor carries them (its params 7 and 8).
      - Result: Mako -world 1,651 of 1,782 (was 1,448). probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2, shaurma
        unchanged.
+
+309. **A baked prop's texcoords stay float when its model's are** (2026-11-15, CS2 open: WRB_LoadPropMeshes
+     1801d30d0's +0x66 test, read in ledger 306; the prop aggregates' measured rule; Mako against
+     Valve's -world package). READ + MEASURED.
+     - WRB_LoadPropMeshes marks every stream named texcoord high precision when the draw's geometry record has +0x66
+       set, and NodePropAggregates already took that flag as an R32G32_FLOAT TEXCOORD in the model's buffer. Baked
+       prop entries never carried it (NodeMeshEntries.Entry.PreciseTexcoords false). cs_office/sofa (R32G32_FLOAT
+       texcoords) gave Valve's R32G32 texcoord stream against our R16G16; the flag also reaches every mesh merged
+       with such an entry (floodlighton, crane_*, chainlink_fence_*, industriallight01 ...). Ported:
+       NodePropEntries.FloatTexcoords on both paths.
+     - Left, not traced (needs a capture with CS2 closed): de_nuke/light_red1 and light_yellow1's glass draw
+       (R8G8B8A8 normals, baked, yaw 270) differs only in the NORMAL word's tangent angle, by 2 to 8 of 2047 on most
+       vertices; the normal bits and every other stream are Valve's, and wall_lamp_glass's baked nomerge objects
+       are exact.
+     - Result: Mako -world 1,673 of 1,782 (was 1,651); probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2, shaurma
+       unchanged.

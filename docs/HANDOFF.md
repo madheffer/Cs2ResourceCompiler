@@ -273,7 +273,10 @@ Valve's own package of the same .vmap (outputs in %TEMP%/s2c_realmaps/<map>, rec
   layer. Mako -world 1,448/1,782; cluster counts match on every layer. Left: lr1 mesh_overlay objects differ in
   MVTX1 only (~100), the nuke_ceiling_02 base entry in lr2, a few sofa/light_red_glass nomerge cuts.
 - Ledger 308: an overlay's PerVertexLighting is decoded, blended and encoded (black -> w 43/255). Mako -world
-  1,651/1,782. Next ledger 309.
+  1,651/1,782.
+- Ledger 309: baked props keep float texcoords when the model's are (sofa, floodlighton). Mako -world 1,673/1,782.
+  Left: light_red1/yellow1 glass tangent angle (needs CS2 closed), metalpipe008a aggregate split, lr2 nuke_ceiling_02
+  base entry, entity models. Next ledger 310.
 - Regressions after every change (%TEMP%/s2c_realmaps/regress/run.sh): probe01 12/13, cardtest 13/14,
   ze_hold_em_p 44/45, atixref 548/553 (Valve variance), the four exact real maps above unchanged.
 - Branch state at the end: research/map-authoring is 7+ commits ahead of box, not pushed. The decompiler-split

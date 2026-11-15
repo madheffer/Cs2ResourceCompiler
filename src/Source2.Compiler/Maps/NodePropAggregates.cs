@@ -633,7 +633,7 @@ internal static class NodePropAggregates
                         max = Vector3.Max(max, p);
                     }
                     // A float texcoord in the model is what WRB_LoadPropMeshes' geometry flag (+0x66) marks: kept float.
-                    var floatTexcoords = vb.InputLayoutFields.Any(f => f.SemanticName == "TEXCOORD" && f.Format.ToString() == "R32G32_FLOAT");
+                    var floatTexcoords = NodePropEntries.FloatTexcoords(vb);
                     yield return (own, vertices, stride, loaded.Streams, [.. Enumerable.Range(start, count).Select(i => Index(i) + bas - lo)], min, max, (int)lod, floatTexcoords);
                 }
         }
