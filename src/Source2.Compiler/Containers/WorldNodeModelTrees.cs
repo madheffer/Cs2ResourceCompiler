@@ -77,7 +77,7 @@ public static class WorldNodeModelTrees
         var o = KVObject.Collection();
         o.Add("m_flUvDensity", new KVObject((double)d.UvDensity));
         o.Add("m_vTintColor", Floats(d.Tint.X, d.Tint.Y, d.Tint.Z));
-        o.Add("m_flAlpha", new KVObject(1.0));
+        o.Add("m_flAlpha", new KVObject((double)d.Alpha));
         o.Add("m_nNumMeshlets", U32(d.MeshletCount));
         o.Add("m_nFirstMeshlet", U32(d.FirstMeshlet));
         o.Add("m_nAppliedIndexOffset", U32(d.AppliedIndexOffset));

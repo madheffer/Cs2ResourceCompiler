@@ -60,6 +60,12 @@ public sealed record WorldNodeModel(
         /// objects' position-only depth draws keep it.
         /// </summary>
         public bool CompressedNormalTangent { get; init; } = true;
+
+        /// <summary>
+        /// m_flAlpha: CResourceCompilerMesh_AddDrawDescriptors (1802ed7f0) copies the CMesh's tint alpha (+0x160)
+        /// as it is when the mesh has a tint (+0x14f), else 1 (Mako's overlay 7527, renderAmt 212: 0.83137256).
+        /// </summary>
+        public float Alpha { get; init; } = 1f;
     }
 
     /// <summary>A scene object: its bounds, draw calls, per-draw bounds and meshlets.</summary>

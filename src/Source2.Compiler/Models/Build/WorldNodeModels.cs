@@ -277,6 +277,8 @@ public static class WorldNodeModels
                 {
                     BakedLightingFromLightMap = d.Streams.Any(s => s.Name.Equals("LightmapUV", StringComparison.OrdinalIgnoreCase)),
                     CompressedNormalTangent = d.Streams.Any(s => s.Name.Equals("normal", StringComparison.OrdinalIgnoreCase)),
+                    // The tint's alpha, not gamma-expanded (1802ed7f0 copies CMesh +0x160 as it is); 1 untinted.
+                    Alpha = tint.W,
                 };
                 vertexBase += g.VertexCount;
             }

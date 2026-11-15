@@ -3,6 +3,13 @@
 The `Source2.Compiler` package. Versions are `0.1.<commit count of main>`; one entry per published
 version that changes something a host sees.
 
+## Unreleased (draw alpha)
+
+### Fixed
+- A world node or entity model draw writes `m_flAlpha` from its mesh's tint alpha (`WorldNodeModel.Draw.Alpha`)
+  instead of always 1, as CResourceCompilerMesh_AddDrawDescriptors copies it (ledger 316; Mako's overlay 7527,
+  renderAmt 212, in the decal_prison03a aggregate).
+
 ## Unreleased (zstd tools buffers)
 
 ### Added
