@@ -252,8 +252,22 @@ Valve's own package of the same .vmap (outputs in %TEMP%/s2c_realmaps/<map>, rec
   splits (lr2's metaltrain001c), not the layer split.
 - Ledger 303: a mesh's cubeMapName is its entry's lighting origin (static env map, no aggregate). Mako 966/1,782;
   the rest is the per-layer render cluster boxes (CS2_CLOSED_QUEUE A.17, needs Frida).
-- Open, queued as CS2_CLOSED_QUEUE A.15: ze_shaurma_v3_b07_t5 (626/1,004; our no-vis merger joins fewer meshes
-  than Valve's, so 54 extra aggregates; needs a Frida trace of Valve's merger).
+- Ledger 304 (81d4a16, CS2 closed, tools/re/capture_texcoordrange.py): HammerMesh_TexcoordsOutOfRange checks every
+  two-float face-vertex stream after the island shift (MapMeshCorners.TexcoordsOutOfRange), not texcoord:0 alone.
+  The merger itself was already Valve's (capture_meshmerge.py --no-pairs). ze_shaurma_v3_b07_t5 968/1,004 (was
+  626); CS2_CLOSED_QUEUE A.15 done. Left on shaurma: 36 small aggregate model differences, not traced yet.
+- Ledger 305 (6ab5b08, CS2 closed): CMesh_Append (1812d6c70) remaps the appended mesh's streams by semantic index
+  and name, zero-filling missing ones (VisibilityMeshMerger.Mesh.Streams), and instance copies drop stored
+  PerVertexLighting (MapMeshCorners.Build keepStoredLighting). Valve's merger equals ours on all 15 Mako calls
+  (MergerFromVmapTests now compares layer by layer through WorldNodeFiles.LayerTable). Mako -world 1,131/1,782.
+- Open, CS2_CLOSED_QUEUE A.17: which props Valve bakes into Mako's world merge lists (Valve's lists have
+  train_steel_walkways_01 and ac_unit_wall_mounted_01_tintable pieces, ours industrial_lights pieces); start
+  from MergerFromVmapTests' per-material counts, then the decompile of what makes a prop_static a world mesh.
+- Regressions after every change (%TEMP%/s2c_realmaps/regress/run.sh): probe01 12/13, cardtest 13/14,
+  ze_hold_em_p 44/45, atixref 548/553 (Valve variance), the four exact real maps above unchanged.
+- Branch state at the end: research/map-authoring is 7+ commits ahead of box, not pushed. The decompiler-split
+  session (local_d783909c) was to merge onto 6ab5b08 and push to box; before committing here again run
+  `git fetch box && git merge box/research/map-authoring`. Next free ledger number: 306.
 - Recipe: copy Valve's package to `<out>/csgo_addons/<addon>/maps/`, run `s2c compile-map -i <vmap> -outroot <out>
   -world [--gpu]` (the builders Valve's package shows), then `s2c map-diff <valve.vpk> -c <ours.vpk>`.
 - heavy.py: a waiter without --allow-cs2 holds the lock while it waits for CS2 to close, which blocks every
