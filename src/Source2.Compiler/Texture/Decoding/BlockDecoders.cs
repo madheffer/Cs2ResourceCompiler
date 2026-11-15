@@ -6,18 +6,6 @@ namespace Source2.Compiler.Textures.Decoding;
 /// <summary>The block-compressed formats <see cref="BlockDecoders"/> decodes.</summary>
 internal enum BlockFormat
 {
-    /// <summary>BC1 (DXT1), alpha forced opaque.</summary>
-    Bc1NoAlpha,
-
-    /// <summary>BC3 (DXT5).</summary>
-    Bc3,
-
-    /// <summary>BC4 unsigned (ATI1N): one channel.</summary>
-    Bc4U,
-
-    /// <summary>BC5 unsigned (ATI2N): two channels.</summary>
-    Bc5U,
-
     /// <summary>BC6H unsigned half floats.</summary>
     Bc6HU,
 
@@ -26,7 +14,9 @@ internal enum BlockFormat
 }
 
 /// <summary>
-/// Software decoders for the D3D11 block-compressed formats, written from the specification. A
+/// Software decoders for BC6H and BC7, written from the specification; both equal the GPU's decode texel for
+/// texel on pak01 (TextureDecodeGpuProbe). BC1-BC5 are not decoded from a formula: vendors interpolate them
+/// differently, so <see cref="BcGpuDecode"/> uses the GPU's measured decode. A
 /// texture of <c>width x height</c> is stored as <c>ceil(width/4) x ceil(height/4)</c> blocks; the
 /// decoders write the pixels that fall inside <c>outWidth x outHeight</c> (a texture's display
 /// rect may be smaller than its stored size) as RGBA, 4 bytes a pixel, or for BC6H as 4 half
@@ -35,7 +25,7 @@ internal enum BlockFormat
 internal static class BlockDecoders
 {
     /// <summary>The bytes one 4x4 block of <paramref name="format"/> takes.</summary>
-    public static int BlockBytes(BlockFormat format) => format is BlockFormat.Bc1NoAlpha or BlockFormat.Bc4U ? 8 : 16;
+    public static int BlockBytes(BlockFormat format) => 16;
 
     /// <summary>The bytes a <paramref name="width"/> x <paramref name="height"/> image of blocks takes.</summary>
     public static long SourceSize(int width, int height, BlockFormat format)
@@ -58,36 +48,7 @@ internal static class BlockDecoders
             for (var bx = 0; bx * 4 < outWidth; bx++)
             {
                 var input = source.Slice((by * blocksWide + bx) * blockBytes, blockBytes);
-                switch (format)
-                {
-                    case BlockFormat.Bc1NoAlpha:
-                        Bc1(input, block, threeColorMode: true);
-                        break;
-                    case BlockFormat.Bc3:
-                        Bc1(input[8..], block, threeColorMode: false);
-                        Bc4(input, block, 3);
-                        break;
-                    case BlockFormat.Bc4U:
-                        Bc4(input, block, 0);
-                        for (var i = 0; i < 16; i++)
-                        {
-                            block[i * 4 + 1] = block[i * 4 + 2] = block[i * 4];
-                            block[i * 4 + 3] = 255;
-                        }
-                        break;
-                    case BlockFormat.Bc5U:
-                        Bc4(input, block, 0);
-                        Bc4(input[8..], block, 1);
-                        for (var i = 0; i < 16; i++)
-                        {
-                            block[i * 4 + 2] = 0;
-                            block[i * 4 + 3] = 255;
-                        }
-                        break;
-                    default:
-                        Bc7(input, block);
-                        break;
-                }
+                Bc7(input, block);
                 CopyBlock(block, 4, rgba, bx, by, outWidth, outHeight);
             }
         }
@@ -125,67 +86,6 @@ internal static class BlockDecoders
         var columns = Math.Min(4, outWidth - bx * 4);
         for (var y = 0; y < 4 && by * 4 + y < outHeight; y++)
             block.Slice(y * 4 * channels, columns * channels).CopyTo(output[((((by * 4 + y) * outWidth) + bx * 4) * channels)..]);
-    }
-
-    // BC1's colour block: two RGB565 endpoints and 2-bit indices. In the block's own format a first
-    // endpoint not above the second selects three colours and black; BC2/BC3 always use four. Each
-    // palette colour is interpolated on the 5- or 6-bit values and rounded once to 8 bits.
-    private static void Bc1(ReadOnlySpan<byte> input, Span<byte> block, bool threeColorMode)
-    {
-        var c0 = BinaryPrimitives.ReadUInt16LittleEndian(input);
-        var c1 = BinaryPrimitives.ReadUInt16LittleEndian(input[2..]);
-        var indices = BinaryPrimitives.ReadUInt32LittleEndian(input[4..]);
-        Span<byte> palette = stackalloc byte[16];
-        for (var c = 0; c < 3; c++)
-        {
-            var (shift, max) = c switch { 0 => (11, 31), 1 => (5, 63), _ => (0, 31) };
-            int a = (c0 >> shift) & max, b = (c1 >> shift) & max;
-            palette[c] = Scale(a, 1, max);
-            palette[4 + c] = Scale(b, 1, max);
-            if (!threeColorMode || c0 > c1)
-            {
-                palette[8 + c] = Scale(2 * a + b, 3, max);
-                palette[12 + c] = Scale(a + 2 * b, 3, max);
-            }
-            else
-            {
-                palette[8 + c] = Scale(a + b, 2, max);
-                palette[12 + c] = 0;
-            }
-        }
-        palette[3] = palette[7] = palette[11] = palette[15] = 255;
-        for (var i = 0; i < 16; i++)
-            palette.Slice((int)((indices >> (2 * i)) & 3) * 4, 4).CopyTo(block[(i * 4)..]);
-    }
-
-    // round(sum / count * 255 / max)
-    private static byte Scale(int sum, int count, int max) => (byte)((sum * 510 + count * max) / (2 * count * max));
-
-    // BC4's single channel: two 8-bit endpoints and 3-bit indices; endpoint 0 above endpoint 1 gives
-    // six interpolated values, otherwise four plus 0 and 255. Written into channel `channel`.
-    private static void Bc4(ReadOnlySpan<byte> input, Span<byte> block, int channel)
-    {
-        int a0 = input[0], a1 = input[1];
-        Span<byte> palette = stackalloc byte[8];
-        palette[0] = (byte)a0;
-        palette[1] = (byte)a1;
-        if (a0 > a1)
-        {
-            for (var i = 1; i < 7; i++)
-                palette[i + 1] = (byte)(((7 - i) * a0 + i * a1 + 3) / 7);
-        }
-        else
-        {
-            for (var i = 1; i < 5; i++)
-                palette[i + 1] = (byte)(((5 - i) * a0 + i * a1 + 2) / 5);
-            palette[6] = 0;
-            palette[7] = 255;
-        }
-        ulong indices = 0;
-        for (var i = 0; i < 6; i++)
-            indices |= (ulong)input[2 + i] << (8 * i);
-        for (var i = 0; i < 16; i++)
-            block[i * 4 + channel] = palette[(int)((indices >> (3 * i)) & 7)];
     }
 
     // A 128-bit block read least significant bit first.
