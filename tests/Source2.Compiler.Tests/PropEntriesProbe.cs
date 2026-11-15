@@ -316,7 +316,7 @@ public class PropEntriesProbe(ITestOutputHelper output)
             var streams = head.GetProperty("streams").EnumerateArray().Select(x => (Name: x.GetProperty("name").GetString()!, First: x.GetProperty("first").GetInt32())).ToList();
             if (!calls.TryGetValue((material, nv), out var candidates))
             {
-                T("no draw call");
+                T("no draw call"); if (Environment.GetEnvironmentVariable("PROPMESHES_OURS") == "1") output.WriteLine($"  no draw call: {material} {nv}");
                 continue;
             }
             var hit = false;

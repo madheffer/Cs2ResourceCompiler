@@ -22,7 +22,7 @@ public static class EntityModelAuthor
     /// <summary>One embedded mesh: its CTRL name, description and encoded buffers in block order.</summary>
     public sealed record Mesh(string Name, WorldNodeModel Model, IReadOnlyList<(BlockType Type, byte[] Bytes)> Buffers, IReadOnlyList<string> Materials);
 
-    public static KVObject Ctrl(IReadOnlyList<Mesh> meshes, int physBlock)
+    public static KVObject Ctrl(IReadOnlyList<Mesh> meshes, int? physBlock)
     {
         var list = KVObject.Array();
         var block = 0;
@@ -31,11 +31,14 @@ public static class EntityModelAuthor
             list.Add(WorldNodeModelTrees.CtrlMesh(meshes[i].Model, meshes[i].Name, i, block));
             block += meshes[i].Buffers.Count + 1;
         }
-        var physics = KVObject.Collection();
-        physics.Add("phys_data_block", new KVObject(physBlock));
         var root = KVObject.Collection();
         root.Add("embedded_meshes", list);
-        root.Add("embedded_physics", physics);
+        if (physBlock is { } at)
+        {
+            var physics = KVObject.Collection();
+            physics.Add("phys_data_block", new KVObject(at));
+            root.Add("embedded_physics", physics);
+        }
         return root;
     }
 
@@ -112,7 +115,11 @@ public static class EntityModelAuthor
         return root;
     }
 
-    public static byte[] Container(IReadOnlyList<Mesh> meshes, KVObject phys, KVObject physicsRed2)
+    /// <param name="phys">The PHYS tree, or null for a model whose physics is empty: the model compile
+    /// (rc 18032f06f) writes PHYS, and CTRL's embedded_physics (+0x420, 18032b3e0), only when the physics
+    /// data is not empty (180c23d50 / 180c23ca0: no parts, joints or other lists); Mako's physicsType
+    /// none brushes (func_rotating Fan1, the func_door Wall_Engine_*, func_brush Finale_Tp_Zm_Arrow).</param>
+    public static byte[] Container(IReadOnlyList<Mesh> meshes, KVObject? phys, KVObject physicsRed2)
     {
         var generic = KV3IDLookup.Get("generic");
         using var resource = new Resource();
@@ -123,8 +130,9 @@ public static class EntityModelAuthor
                 resource.Blocks.Add(ResourceBuilder.RawBlock(type, bytes, resource));
             resource.Blocks.Add(AuthoredKv3.Block(WorldNodeModelTrees.Mdat(m.Model), generic, BlockType.MDAT, resource));
         }
-        var physBlock = resource.Blocks.Count;
-        resource.Blocks.Add(AuthoredKv3.Block(phys, generic, BlockType.PHYS, resource));
+        int? physBlock = phys is null ? null : resource.Blocks.Count;
+        if (phys is not null)
+            resource.Blocks.Add(AuthoredKv3.Block(phys, generic, BlockType.PHYS, resource));
         resource.Blocks.Add(AuthoredKv3.Block(Ctrl(meshes, physBlock), generic, BlockType.CTRL, resource));
         var rerl = new ResourceExtRefList { Resource = resource };
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

@@ -6881,3 +6881,25 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
        are exact.
      - Result: Mako -world 1,673 of 1,782 (was 1,651); probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2, shaurma
        unchanged.
+
+311. **Entity models: no PHYS for empty physics; a non-map mesh's tools buffer** (2026-11-15, CS2 closed: rc 0923
+     decompiles of CModelDocCompileInstance's compile (the physics block at 18032f06f), the CTRL writer
+     18032b3e0, 180c23d50 / 180c23ca0, ModelCompile_MeshInputLayouts 1802f5680 with its disassembly
+     (1802f5a5f-1802f5c0c) for the dropped string arguments, the embedded_map_mesh read at 1802fa006, the
+     m_toolsBuffers schema 1817b2400; Mako's entity models against Valve's -world package). READ + MEASURED.
+     - The model compile writes PHYS, and CTRL's embedded_physics (its +0x420, set beside the PHYS block), only
+       when the physics data is not empty (180c23d50: no parts, joints or other lists). Mako's physicsType none
+       brushes (func_rotating Fan1, func_door Wall_Engine_01-04, func_brush Finale_Tp_Zm_Arrow x3) have no PHYS.
+       Ported: EntityModelAuthor.Container's null PHYS, EntityRenderModels (no shapes, no PHYS).
+     - ModelCompile_MeshInputLayouts builds a fourth layout for a mesh whose material has a signature (+0x144)
+       when the compile's embedded_map_mesh bool (18307e218, read by vf 0x50 at 1802fa006) is off: the mesh's
+       streams in their order that the main layout did not take, named position, texcoord, color, normal,
+       tangent, blendweight, blendweights or blendindices or starting with VertexPaint. The model writes it as a
+       tools buffer (CTRL m_toolsBuffers, its block after the mesh's vertex and index buffers, MDAT after it).
+       World node models are map meshes and have none; brush entity models do (Mako's func_breakable crates and
+       doors: texcoord 1 R32G32_FLOAT, VertexPaintTintColor and VertexPaintBlendParams R8G8B8A8_UNORM). The
+       tools layout's formats are measured on those (texcoord 1 float as a non-map mesh's texcoords are).
+       Ported: WorldNodeModels.ToolsLayout, WorldNodeModel.ToolsBuffers, WorldNodeModelTrees.CtrlMesh;
+       EntityRenderModels keeps the tool-eligible streams on the piece.
+     - Result: Mako -world 1,692 of 1,782 (was 1,673); probe01, cardtest, ze_hold_em_p, atixref, ze_doom_p2,
+       shaurma unchanged.

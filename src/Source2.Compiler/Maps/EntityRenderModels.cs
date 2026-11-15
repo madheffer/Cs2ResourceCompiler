@@ -43,7 +43,7 @@ internal static class EntityRenderModels
             var b = WorldNodeModels.Build(model.Path, [p.Entry], false, Material, mapMesh: false, layout: new WorldNodeModels.MaterialFacts(p.Layout, []));
             return new EntityModelAuthor.Mesh(p.Name, b.Model with { EntityClass = model.ClassName }, b.Buffers, b.References);
         }).ToList();
-        return EntityModelAuthor.Container(meshes, Physics.WorldPhysicsTrees.Phys(model.Physics),
+        return EntityModelAuthor.Container(meshes, model.Physics.AllShapes.Any() ? Physics.WorldPhysicsTrees.Phys(model.Physics) : null,
                                            Physics.WorldPhysicsTrees.Red2(model.Physics, content.SurfaceName, model.ClassName));
     }
 
@@ -156,7 +156,11 @@ internal static class EntityRenderModels
         var tangents = MeshTangents.Corners(positions, normals, uvs, piece.Indices);
         // The streams the material reads, the recomputed tangent after the normal.
         // A brush entity's mesh carries no baked per-vertex lighting (end_breakable_240 in ze_hold_em_p).
-        var kept = MaterialStreams.Kept(piece.Streams, MaterialStreams.Inputs(signature.Select(x => x.Semantic)), false)
+        // With a signature, the streams it does not read stay too when the model compile's tools layout takes
+        // them (WorldNodeModels.ToolsLayout: texcoord, color ... VertexPaint*); the main layout drops them.
+        var read = MaterialStreams.Kept(piece.Streams, MaterialStreams.Inputs(signature.Select(x => x.Semantic)), false).ToHashSet();
+        var kept = Enumerable.Range(0, piece.Streams.Count)
+            .Where(i => read.Contains(i) || (signature.Count > 0 && WorldNodeModels.ToolsStream(piece.Streams[i].Name)))
             .Where(i => !Io.Tier0Strings.EqualsIgnoreCase(piece.Streams[i].Name, "PerVertexLighting")).ToList();
         var layout = new List<(string Name, int First, int Count, bool Tangent)>();
         foreach (var i in kept)

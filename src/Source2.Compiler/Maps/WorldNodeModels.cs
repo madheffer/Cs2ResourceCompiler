@@ -194,6 +194,7 @@ internal static class WorldNodeModels
         var described = new Dictionary<DrawInput, WorldNodeModel.Draw>(ReferenceEqualityComparer.Instance);
         var drawBounds = new Dictionary<DrawInput, (Vector3, Vector3)>(ReferenceEqualityComparer.Instance);
         var meshlets = new List<WorldNodeModel.Meshlet>();
+        var toolsBuffers = new List<(WorldNodeModel.VertexBuffer Buffer, byte[] Bytes)>();
         var (min, max) = (new Vector3(float.MaxValue), new Vector3(float.MinValue));
         sets = [.. sets.Where(x => x.Draws[0].Facts.NoCollapse), .. sets.Where(x => !x.Draws[0].Facts.NoCollapse)];
         foreach (var (slots, setDraws) in sets)
@@ -293,14 +294,32 @@ internal static class WorldNodeModels
             }
             indexBuffers.Add(new WorldNodeModel.IndexBuffer(ib.Count, elementSize, ibMeshopt, aggregate));
             buffers.Add((BlockType.MIDX, ibBytes));
+            if (!mapMesh && factsOf(setDraws[0]).Signature.Count > 0 && ToolsLayout(setDraws[0], slots) is { Count: > 0 } toolSlots)
+            {
+                var stride = toolSlots.Sum(f => FormatSize(f.Field.Format));
+                var tb = new byte[totalVertices * stride];
+                var at = 0;
+                foreach (var d in setDraws)
+                {
+                    var offsets = d.Offsets ?? StreamOffsets(d.Streams);
+                    for (var v = 0; v < d.Geometry.VertexCount; v++)
+                        Pack(tb.AsSpan((at + v) * stride, stride), d.Geometry.Vertices.AsSpan(v * d.Stride, d.Stride), offsets, toolSlots);
+                    at += d.Geometry.VertexCount;
+                }
+                var tbBytes = totalVertices > 0 ? MeshoptEncoder.EncodeVertexBuffer(tb, totalVertices, stride) : [];
+                var tbMeshopt = tbBytes.Length < totalVertices * stride;
+                toolsBuffers.Add((new WorldNodeModel.VertexBuffer(totalVertices, stride, tbMeshopt, [.. toolSlots.Select(l => l.Field)]), tbMeshopt ? tbBytes : tb));
+            }
         }
+        foreach (var (_, bytes) in toolsBuffers)
+            buffers.Add((BlockType.MVTX, bytes));
         // The draws set by set (ModelCompile_BuildDrawSets 1802f69f0 appends each mesh to the first
         // 400-byte set whose layouts match, and the sets' meshes are compiled set by set): atixref's
         // blocklight8 and 10 shadow objects end with their second vertex buffer's draw.
         var ordered = sets.SelectMany(s => s.Draws).ToList();
         var model = new WorldNodeModel(name, vertexBuffers, indexBuffers,
             [new WorldNodeModel.SceneObject(min, max, [.. ordered.Select(d => described[d])], aggregate ? [.. ordered.Select(d => drawBounds[d])] : [], meshlets)],
-            aggregate, warnings);
+            aggregate, warnings) { ToolsBuffers = [.. toolsBuffers.Select(t => t.Buffer)] };
         return new Built(model, buffers, [.. draws.Select(d => d.Material).Distinct(StringComparer.OrdinalIgnoreCase)], [])
         {
             RawVertexBuffers = [.. raw], Order = [.. ordered.Select(d => draws.IndexOf(d))],
@@ -693,6 +712,47 @@ internal static class WorldNodeModels
         }
         return slots;
     }
+
+    /// <summary>
+    /// ModelCompile_MeshInputLayouts' fourth layout (1802f5680, read with its disassembly for the names), made for a
+    /// mesh whose material has a signature when the compile is not embedded_map_mesh (18307e218, the compile's
+    /// "embedded_map_mesh" bool, 1802fa006): the mesh's streams in their order that the main layout did not take,
+    /// those named position, texcoord, color, normal, tangent, blendweight, blendweights or blendindices or starting
+    /// with VertexPaint (V_StringAfterPrefix), laid out by 181365760 with the main layout's formats. Mako's
+    /// func_breakable crates keep texcoord 1, VertexPaintTintColor and VertexPaintBlendParams there.
+    /// The tangent rides in the normal field, so the main layout's normal takes it.
+    /// </summary>
+    private static List<Slot> ToolsLayout(DrawInput d, List<Slot> main)
+    {
+        var used = main.Select(l => l.Stream).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var tools = new List<Slot>();
+        var offset = 0;
+        foreach (var s in d.Streams)
+        {
+            var key = $"{s.Name}:{s.Index}";
+            if (used.Contains(key) || (s.Name.Equals("tangent", StringComparison.OrdinalIgnoreCase) && used.Contains("normal:0")))
+                continue;
+            if (!ToolsStream(s.Name))
+                continue;
+            uint format = s.Name.ToLowerInvariant() switch
+            {
+                "position" => R32G32B32Float,
+                "texcoord" => R32G32Float,
+                "normal" => R32Uint,
+                _ => TableFormat(s.Name, s.Index, s.Count) is var f and not 0 ? f : R8G8B8A8Unorm,
+            };
+            var (stream, index) = Key(s);
+            tools.Add(new Slot(new WorldNodeModel.LayoutField(stream, index, format, offset, ""), 0, key, s.Count));
+            offset += FormatSize(format);
+        }
+        return tools;
+    }
+
+    /// <summary>A stream name the tools layout takes when the main layout leaves it.</summary>
+    internal static bool ToolsStream(string name) => ToolsNames.Contains(name) || name.StartsWith("VertexPaint", StringComparison.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> ToolsNames = new(
+        ["position", "texcoord", "color", "normal", "tangent", "blendweight", "blendweights", "blendindices"], StringComparer.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> KeptUnmatched = new(
         ["PerVertexLighting", "LightmapUV", "PropWorldOrigin", "curvature", "bentnormal", "blendindices", "blendweights", "blendweight"], StringComparer.OrdinalIgnoreCase);

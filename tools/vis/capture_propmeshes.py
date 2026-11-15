@@ -120,14 +120,16 @@ def main():
     p.add_argument("map")
     p.add_argument("--out")
     p.add_argument("--full", action="store_true", help="a full compile rather than -world -fshallow")
+    p.add_argument("--min-free-gb", type=float, default=10, help="free space the game drive must have (default 10)")
     a = p.parse_args()
     if running("cs2.exe"):
         raise SystemExit("CS2 is running; not starting")
     if running("resourcecompiler.exe"):
         raise SystemExit("another resourcecompiler is running; not starting")
-    if shutil.disk_usage(os.path.splitdrive(CS2)[0] + "\\").free < 10 * 1024 ** 3:
-        raise SystemExit("under 10 GB free on the game drive; not starting")
-    check_hooks()
+    if shutil.disk_usage(os.path.splitdrive(CS2)[0] + "\\").free < a.min_free_gb * 1024 ** 3:
+        raise SystemExit("under %g GB free on the game drive; not starting" % a.min_free_gb)
+    # The installed build's RVA, found and byte-compared by rva_map (the build moves with CS2 updates).
+    HOOKS["load"] = (HOOKS["load"][0], installed("resourcecompiler", HOOKS["load"][0] - 0x180000000, "20260923"))
 
     out_path = a.out or os.path.join(os.environ.get("TEMP", "."), "propmesh_capture", a.map + ".bin")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)

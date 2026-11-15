@@ -163,34 +163,23 @@ public static class WorldNodeModelTrees
         var mesh = KVObject.Collection();
         mesh.Add("m_Name", new KVObject(name));
         mesh.Add("m_nMeshIndex", I32(index));
-        mesh.Add("m_nDataBlock", I32(blockBase + model.VertexBuffers.Count + model.IndexBuffers.Count));
+        mesh.Add("m_nDataBlock", I32(blockBase + model.VertexBuffers.Count + model.IndexBuffers.Count + model.ToolsBuffers.Count));
         mesh.Add("m_nMorphBlock", I32(-1));
         var vbs = KVObject.Array();
         var vbAt = 0;
         foreach (var vb in model.VertexBuffers)
-        {
-            var layout = KVObject.Array();
-            foreach (var f in vb.Layout)
-            {
-                var o = KVObject.Collection();
-                o.Add("m_pSemanticName", new KVObject(f.Semantic));
-                o.Add("m_nSemanticIndex", I32(f.SemanticIndex));
-                o.Add("m_Format", U32(f.Format));
-                o.Add("m_nOffset", I32(f.Offset));
-                o.Add("m_nSlot", I32(0));
-                o.Add("m_nSlotType", new KVObject("RENDER_SLOT_PER_VERTEX"));
-                o.Add("m_szShaderSemantic", new KVObject(f.ShaderSemantic));
-                layout.Add(o);
-            }
-            vbs.Add(Buffer(vbBlocks[vbAt++], vb.Count, vb.Stride, vb.Meshopt, false, U32(1), layout));
-        }
+            vbs.Add(Buffer(vbBlocks[vbAt++], vb.Count, vb.Stride, vb.Meshopt, false, U32(1), Layout(vb.Layout)));
         mesh.Add("m_vertexBuffers", vbs);
         var ibs = KVObject.Array();
         var ibAt = 0;
         foreach (var ib in model.IndexBuffers)
             ibs.Add(Buffer(ibBlocks[ibAt++], ib.Count, ib.ElementSize, ib.Meshopt, ib.Pooled, U32(2), KVObject.Array()));
         mesh.Add("m_indexBuffers", ibs);
-        mesh.Add("m_toolsBuffers", KVObject.Array());
+        var tools = KVObject.Array();
+        var toolsBlock = blockBase + model.VertexBuffers.Count + model.IndexBuffers.Count;
+        foreach (var tb in model.ToolsBuffers)
+            tools.Add(Buffer(toolsBlock++, tb.Count, tb.Stride, tb.Meshopt, false, U32(1), Layout(tb.Layout)));
+        mesh.Add("m_toolsBuffers", tools);
         mesh.Add("m_nVBIBBlock", I32(-1));
         mesh.Add("m_nToolsVBBlock", I32(-1));
         return mesh;
@@ -219,6 +208,24 @@ public static class WorldNodeModelTrees
             if (vb[h] < 0)
                 vb[h] = block++;
         return (vb, ib);
+    }
+
+    private static KVObject Layout(IReadOnlyList<WorldNodeModel.LayoutField> fields)
+    {
+        var layout = KVObject.Array();
+        foreach (var f in fields)
+        {
+            var o = KVObject.Collection();
+            o.Add("m_pSemanticName", new KVObject(f.Semantic));
+            o.Add("m_nSemanticIndex", I32(f.SemanticIndex));
+            o.Add("m_Format", U32(f.Format));
+            o.Add("m_nOffset", I32(f.Offset));
+            o.Add("m_nSlot", I32(0));
+            o.Add("m_nSlotType", new KVObject("RENDER_SLOT_PER_VERTEX"));
+            o.Add("m_szShaderSemantic", new KVObject(f.ShaderSemantic));
+            layout.Add(o);
+        }
+        return layout;
     }
 
     private static KVObject Buffer(int block, int count, int size, bool meshopt, bool pooled, KVObject usage, KVObject layout)

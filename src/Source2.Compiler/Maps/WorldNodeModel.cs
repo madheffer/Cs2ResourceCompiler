@@ -21,6 +21,13 @@ public sealed record WorldNodeModel(
     /// <summary>One input layout field of a vertex buffer.</summary>
     public sealed record LayoutField(string Semantic, int SemanticIndex, uint Format, int Offset, string ShaderSemantic);
 
+    /// <summary>
+    /// The tools buffers (CTRL m_toolsBuffers): a non-map mesh's streams its material's layout did not take
+    /// (<see cref="WorldNodeModels"/>, ModelCompile_MeshInputLayouts' fourth layout), written after its
+    /// vertex and index buffers.
+    /// </summary>
+    public IReadOnlyList<VertexBuffer> ToolsBuffers { get; init; } = [];
+
     /// <summary>A vertex buffer: element count and size, meshopt or raw, its layout.</summary>
     public sealed record VertexBuffer(int Count, int Stride, bool Meshopt, IReadOnlyList<LayoutField> Layout);
 
