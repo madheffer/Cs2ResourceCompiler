@@ -11,6 +11,7 @@ tables on random blocks. This writes them as the library embeds them, losslessly
                                                              endpoint pair the mode cannot hold, never read)
   <vendor>_bc3_alpha.bin                                     256 x 256 pairs x 8 indices, one byte (k/255)
   <vendor>_bc4.bin                                           256 x 256 pairs x 8 indices, uint16 LE (k/65535)
+  <vendor>_srgb.bin                                          sRGB to linear by UNORM byte, 256 float32 LE (BcSrgbDecodeProbe)
 
 each gzipped. It refuses a table whose values are not exactly k/255 or k/65535 in float32, so nothing is
 rounded on the way. Destination: src/Source2.Compiler/Texture/Decoding/Gpu.
@@ -52,6 +53,13 @@ a = np.fromfile(os.path.join(src, f"{vendor}_bc3_alpha.f32"), dtype="<f4")
 write("bc3_alpha", exact(a, 255, "bc3_alpha").astype(np.uint8).tobytes())
 a = np.fromfile(os.path.join(src, f"{vendor}_bc4.f32"), dtype="<f4")
 write("bc4", exact(a, 65535, "bc4").astype("<u2").tobytes())
+# sRGB (BcSrgbDecodeProbe): the colour decoded in 8 bits, then this table by UNORM byte; float32 kept as measured.
+srgb = os.path.join(src, f"{vendor}_srgb.f32")
+if os.path.exists(srgb):
+    a = np.fromfile(srgb, dtype="<f4")
+    if a.size != 256 or np.isnan(a).any():
+        raise SystemExit("srgb: expected 256 measured entries")
+    write("srgb", a.astype("<f4").tobytes())
 open(os.path.join(dest, f"{vendor}_source.txt"), "w").write(open(os.path.join(src, f"{vendor}_manifest.txt")).read())
 for f in sorted(os.listdir(dest)):
     print(f, os.path.getsize(os.path.join(dest, f)))
