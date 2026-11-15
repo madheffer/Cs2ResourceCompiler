@@ -19,7 +19,7 @@ internal static class EntityRenderModels
 {
     /// <summary>One embedded mesh: its name and the entry it draws.</summary>
     /// <summary>One embedded mesh: its name, the entry it draws and the signature its layout follows.</summary>
-    public sealed record Piece(string Name, WorldNodeCompile.Entry Entry, IReadOnlyList<Source2ContainerAuthor.MaterialAuthoring.InputSignatureElement> Layout);
+    public sealed record Piece(string Name, WorldNodeEntry Entry, IReadOnlyList<Source2ContainerAuthor.MaterialAuthoring.InputSignatureElement> Layout);
 
     /// <summary>
     /// A brush entity's whole model with its render meshes (<see cref="EntityModelAuthor"/>):
@@ -123,7 +123,7 @@ internal static class EntityRenderModels
     }
 
     // The piece in the entity's space with tangents recomputed, reduced to the streams its material reads.
-    private static WorldNodeCompile.Entry Entry(MapMeshCorners.Piece piece, string material, float[] toWorld, float[] toEntity, bool precise,
+    private static WorldNodeEntry Entry(MapMeshCorners.Piece piece, string material, float[] toWorld, float[] toEntity, bool precise,
                                                 IReadOnlyList<Source2ContainerAuthor.MaterialAuthoring.InputSignatureElement> signature)
     {
         var count = piece.Vertices.Length / piece.Stride;
@@ -191,6 +191,6 @@ internal static class EntityRenderModels
         foreach (var (name, _, n, _) in layout)
             streams.Add(new WrbMeshEntry.Stream(name, streams.Count(s => s.Name == name), n, (byte)(precise && name == "texcoord" ? 1 : 0), 39 + n));
         var facts = new WrbMeshEntry { Material = material, Field28 = Vector4.One, Stride = stride, Streams = streams };
-        return new WorldNodeCompile.Entry(material, stride, vertices, piece.Indices, facts);
+        return new WorldNodeEntry(material, stride, vertices, piece.Indices, facts);
     }
 }

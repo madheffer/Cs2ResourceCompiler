@@ -101,7 +101,7 @@ public static partial class Source2ContainerAuthor
         ?? throw new InvalidOperationException("Resource.Version property missing - VRF API changed?");
 
     /// <summary>Set a resource's container version (VRF keeps the setter private).</summary>
-    internal static void SetResourceVersion(Resource resource, ushort version) => ResourceVersionProp.SetValue(resource, version);
+    public static void SetResourceVersion(Resource resource, ushort version) => ResourceVersionProp.SetValue(resource, version);
 
     /// <summary>
     /// Author a compiled container for the parsed KV3 source <paramref name="userDoc"/>.
@@ -534,7 +534,8 @@ public static partial class Source2ContainerAuthor
         new("Vector Graphic Version", "CompileVectorGraphic", 2),
     ];
 
-    private static KVObject InputDependency(string relativeFilename, uint crc, bool optional, bool exists, string searchPath = "csgo")
+    /// <summary>One <c>m_InputDependencies</c> row: the file, its CRC32, whether it is optional and whether it exists.</summary>
+    public static KVObject InputDependency(string relativeFilename, uint crc, bool optional, bool exists, string searchPath = "csgo")
     {
         var d = KVObject.Collection();
         d.Add("m_RelativeFilename", new KVObject(relativeFilename));

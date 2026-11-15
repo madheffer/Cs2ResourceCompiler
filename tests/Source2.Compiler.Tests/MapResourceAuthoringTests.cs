@@ -100,7 +100,7 @@ public class MapResourceAuthoringTests
             .Select(r => r.Name)
             .Except(children, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var ours = Source2ContainerAuthor.AuthorMapRoot(
+        var ours = MapRootAuthor.AuthorMapRoot(
             source.ContentRelativeFilename, source.FileCRC, children, external);
         using var mine = ResourceTrees.Read(ours, "map.vmap_c");
 

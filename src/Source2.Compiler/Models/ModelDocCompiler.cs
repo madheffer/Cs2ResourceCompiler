@@ -111,7 +111,7 @@ public sealed class ModelDocCompiler : IResourceCompiler
     }
 
     // 0: some texcoord past +-16 (high precision); 1: every texcoord within [-1, 1]; 2: otherwise.
-    private static int TexcoordKind(WorldNodeCompile.Entry e)
+    private static int TexcoordKind(WorldNodeEntry e)
     {
         var offset = 0;
         var kind = 1;

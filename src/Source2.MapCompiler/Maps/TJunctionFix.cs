@@ -128,20 +128,7 @@ internal static class TJunctionFix
     static bool Same(Vector3 a, Vector3 b) => a.X == b.X && a.Y == b.Y && a.Z == b.Z;
 
     /// <summary>FUN_18013e340: squares summed y, z, x; outside 1e-17 to 1e17 the double path, zero stays zero.</summary>
-    internal static Vector3 Normalise(Vector3 d)
-    {
-        var len = MathF.Sqrt(d.Y * d.Y + d.Z * d.Z + d.X * d.X);
-        if (1e-17f <= len && len <= 1e17f)
-        {
-            var inv = 1f / len;
-            return new Vector3(inv * d.X, inv * d.Y, inv * d.Z);
-        }
-        if (len == 0f)
-            return Vector3.Zero;
-        double x = d.X, y = d.Y, z = d.Z;
-        var l = Math.Sqrt(y * y + x * x + z * z);
-        return new Vector3((float)(x / l), (float)(y / l), (float)(z / l));
-    }
+    internal static Vector3 Normalise(Vector3 d) => MeshVectors.NormaliseYzx(d);
 
     /// <summary>
     /// 1812d91c0: each corner's edge (corner k to k + 1) as the other triangle on it, -1 without. The edges are

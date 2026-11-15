@@ -330,10 +330,7 @@ public static class MapMeshes
     // HammerMesh_TransformToWorld 1810c4e50 and HalfEdge_FacePositionsTransformed
     // 18139b130 place mesh positions through it). Each add here is the same
     // pair, so the bits are Valve's (ledger 276).
-    internal static Vector3 Transform(float[] m, Vector3 v)
-        => new(((m[0] * v.X) + (m[2] * v.Z)) + ((m[1] * v.Y) + m[3]),
-               ((m[4] * v.X) + (m[6] * v.Z)) + ((m[5] * v.Y) + m[7]),
-               ((m[8] * v.X) + (m[10] * v.Z)) + ((m[9] * v.Y) + m[11]));
+    internal static Vector3 Transform(float[] m, Vector3 v) => MeshVectors.TransformPoint(m, v);
 
     // A node's own matrix (vtable slot 0xa0, FUN_181255fb0): AngleMatrix of its
     // angles with its origin as the translation.

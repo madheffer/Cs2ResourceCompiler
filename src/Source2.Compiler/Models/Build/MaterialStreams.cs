@@ -18,7 +18,7 @@ namespace Source2.Compiler.Maps;
 /// removed (FUN_1812e2d50), last to first.</item>
 /// </list>
 /// </summary>
-internal static class MaterialStreams
+public static class MaterialStreams
 {
     // FUN_181366d90's table: shader semantic, stream name, stream index. The
     // one row with no semantic (texcoord 3) is only found by stream name.

@@ -690,14 +690,7 @@ public static partial class SettleWorld
     }
 
     /// <summary>FUN_180fdeda0: any angle under 0.001 becomes 0, and a negative yaw gains 360 until it is not.</summary>
-    internal static Vector3 SetAngles(Vector3 a)
-    {
-        float pitch = MathF.Abs(a.X) < 0.001f ? 0f : a.X, yaw = MathF.Abs(a.Y) < 0.001f ? 0f : a.Y;
-        var roll = MathF.Abs(a.Z) < 0.001f ? 0f : a.Z;
-        while (yaw < 0f)
-            yaw += 360f;
-        return new Vector3(pitch, yaw, roll);
-    }
+    internal static Vector3 SetAngles(Vector3 a) => MeshVectors.SetAngles(a);
 
     /// <summary>
     /// FUN_18125cba0 (MatrixAngles): yaw from the first column, pitch from its

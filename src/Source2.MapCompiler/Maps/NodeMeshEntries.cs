@@ -233,8 +233,7 @@ internal static class NodeMeshEntries
     /// GROUND_TRUTH, "signed zeros in node entry normals".
     /// </summary>
     /// <summary>Matrix3x4_Rotate (18125d1b0): (x r0 + y r1) + z r2, the translation left out.</summary>
-    internal static Vector3 Rotate(float[] m, Vector3 d)
-        => new(m[0] * d.X + m[1] * d.Y + m[2] * d.Z, m[4] * d.X + m[5] * d.Y + m[6] * d.Z, m[8] * d.X + m[9] * d.Y + m[10] * d.Z);
+    internal static Vector3 Rotate(float[] m, Vector3 d) => MeshVectors.Rotate(m, d);
 
     private static readonly float[] Identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
 
@@ -249,7 +248,7 @@ internal static class NodeMeshEntries
     internal static Vector3 Turn(float[] node, Vector3 d) => Normalise(Rotate(Identity, Rotate(node, d)));
 
     /// <summary>180d46590 on its own with the identity: a direction as DmeMeshToCMesh copies it into a CMesh.</summary>
-    internal static Vector3 Copy(Vector3 d) => Normalise(Rotate(Identity, d));
+    internal static Vector3 Copy(Vector3 d) => MeshVectors.Copy(d);
 
     /// <summary>
     /// 180d46590's renormalisation: squares summed z, y, x; between 1e-17 and
@@ -257,16 +256,7 @@ internal static class NodeMeshEntries
     /// gives +0 components, smaller or larger lengths go through
     /// VectorNormalize_Slow.
     /// </summary>
-    internal static Vector3 Normalise(Vector3 d)
-    {
-        var len = MathF.Sqrt(d.Z * d.Z + d.Y * d.Y + d.X * d.X);
-        if (len == 0f)
-            return Vector3.Zero;
-        if (len < 1e-17f || 1e17f < len)
-            return VectorNormalizeSlow.Normalise(d);
-        var inv = 1f / len;
-        return new Vector3(d.X * inv, d.Y * inv, d.Z * inv);
-    }
+    internal static Vector3 Normalise(Vector3 d) => MeshVectors.Normalise(d);
     /// <summary>
     /// The last bake's per-vertex lighting the .vmap keeps beside its meshes:
     /// a CDmeNodeInstanceData per mesh instance, named by its node path (the

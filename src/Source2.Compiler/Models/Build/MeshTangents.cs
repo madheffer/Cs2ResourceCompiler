@@ -20,7 +20,7 @@ namespace Source2.Compiler.Maps;
 /// w is +1 or -1 from the triangle's handedness group.</item>
 /// </list>
 /// </summary>
-internal static class MeshTangents
+public static class MeshTangents
 {
     /// <summary>One tangent per corner of <paramref name="indices"/>.</summary>
     public static Vector4[] Corners(IReadOnlyList<Vector3> positions, IReadOnlyList<Vector3> normals, IReadOnlyList<Vector2> texcoords, IReadOnlyList<int> indices)

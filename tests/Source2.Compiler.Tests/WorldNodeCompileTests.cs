@@ -57,7 +57,7 @@ public class WorldNodeCompileTests(ITestOutputHelper output)
             log($"bounds overlays {Box(overlays.Select(o => (o.Mesh.Vertices, o.Mesh.Stride)))}");
         }
         var lists = WorldNodeBuild.MergerInputs(built, overlays, descriptors, envMaps, content, shaders, kinds: [.. MeshLists.Order.Select(o => o.Kind)])
-            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(m => new WorldNodeCompile.Entry(m.Material, m.Stride, m.Vertices, m.Indices, m.Facts)).ToList());
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Select(m => new WorldNodeEntry(m.Material, m.Stride, m.Vertices, m.Indices, m.Facts)).ToList());
         foreach (var (kind, l) in lists.Where(kv => kv.Value.Count > 0))
             log?.Invoke($"list {kind}: {l.Count} entries, {l.Sum(e => e.TriangleCount)} triangles");
 
@@ -204,7 +204,7 @@ public class WorldNodeCompileTests(ITestOutputHelper output)
     private static string Key(Vector3 a, Vector3 b, Vector3 c)
         => string.Join("|", new[] { a, b, c }.Select(v => $"{v.X:R},{v.Y:R},{v.Z:R}").Order(StringComparer.Ordinal));
 
-    private static IEnumerable<string> Triangles(WorldNodeCompile.Entry e)
+    private static IEnumerable<string> Triangles(WorldNodeEntry e)
     {
         var at = 0;
         foreach (var s in e.Facts.Streams)

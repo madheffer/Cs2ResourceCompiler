@@ -88,7 +88,7 @@ public static class TangentFrame
     }
 
     /// <summary>Vector_Basis (18125a6c0): two axes perpendicular to a unit normal.</summary>
-    internal static (Vector3 First, Vector3 Second) Basis(Vector3 n)
+    public static (Vector3 First, Vector3 Second) Basis(Vector3 n)
     {
         var s = n.Z < 0f ? -1f : 1f;
         var k = -1f / (n.Z + s);
