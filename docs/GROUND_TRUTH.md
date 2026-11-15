@@ -7430,3 +7430,24 @@ reference was compiled on 2026-11-03 by the installed 1.41.9.5 resourcecompiler 
      - Result: s2c_prefabprobe2's entity round trip 0 differences with world meshes on and off; ze_hold_em_p's
        86 props take 86 of its 114 placeholders and its world physics through our forward is unchanged (PHYS 18,
        RED2 0, ledger 301).
+
+310. **BC1-BC5 decode is the GPU's, measured per vendor; BC6H and BC7 are the specification's** (2026-11-15, CS2
+     open, no game process; GPU RTX 4070, driver 610.88, Vulkan; tests' BcVendorDecodeProbe and
+     TextureDecodeGpuProbe). MEASURED.
+     - Why the GPU: CS2 and vrad3 sample BC textures on the GPU, and vendors interpolate BC1-BC5 endpoints
+       differently. Our old decoder (VRF's formula port) matched the RTX 4070 on 61% of DXT1 texels (up to 5
+       off), 81% of DXT5 (up to 6), 61% of ATI1N and 24% of ATI2N (the GPU decodes BC4/BC5 to non-integer
+       values). BC6H, BC7 and the uncompressed formats matched texel for texel.
+     - Measured: every BC1 colour endpoint pair and selector per channel (R and B 5-bit, G 6-bit) in the four-
+       colour (c0 > c1) and three-colour modes, BC3's colour block (four colours for every pair), every BC4 and
+       BC3-alpha endpoint pair and index, as synthetic blocks decoded on the GPU (nearest blit to R32G32B32A32).
+       The tables then predicted 4,194,304 texels of random BC1, BC3, BC4 and BC5 blocks each bit for bit, so a
+       channel depends only on its own endpoints and mode.
+     - Facts: BC1/BC3 colour and BC3 alpha come out as k/255; BC4 (and BC5) as k/65535, not rounded to 8 bits;
+       BC3's alpha is not BC4 rounded (461,444 of 524,288 entries agree), so it has its own table. BC1's three-
+       colour selector 3 is transparent black, BC4 is (r, 0, 0, 1), BC5 (r, g, 0, 1). D3D11 (CS2's default
+       renderer) has only BC1_UNORM, which decodes alpha, so the alpha-0 case is what CS2 shows.
+     - Now: `Textures.Decoding.BcGpuDecode` with the packed tables (Texture/Decoding/Gpu, tools/re/bc_gpu_tables.py);
+       `CompiledTexture.DecodeTexels` gives the exact floats, `GenerateBitmap` the same rounded to bytes. On 200
+       pak01 textures a format (235 million texels) every format's floats equal the GPU's bit for bit.
+     - Not measured: AMD (needs an AMD GPU), the D3D11 path itself (same hardware, other API), sRGB formats.

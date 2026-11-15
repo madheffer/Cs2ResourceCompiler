@@ -25,12 +25,19 @@ internal static class PixelDecoders
         var bytes = bitmap.GetPixelSpan();
         var floats = hdr ? MemoryMarshal.Cast<byte, float>(bytes) : default;
 
+        // BC1-BC5 as the GPU decodes them (BcGpuDecode, measured); in 8 bits BC1 and BC3 are exact, BC4 and BC5
+        // the GPU's value rounded to the nearest byte (CompiledTexture.DecodeTexels has them exact).
+        if (BcGpuDecode.Handles(format))
+        {
+            var texels = new float[width * height * 4];
+            BcGpuDecode.Decode(format, input, storedWidth, storedHeight, texels, width, height, BcGpuDecode.Default);
+            for (var i = 0; i < texels.Length; i++)
+                bytes[i] = (byte)Math.Round(texels[i] * 255.0, MidpointRounding.AwayFromZero);
+            SwapRB(bytes);
+            return;
+        }
         BlockFormat? block = format switch
         {
-            VTexFormat.DXT1 => BlockFormat.Bc1NoAlpha,
-            VTexFormat.DXT5 => BlockFormat.Bc3,
-            VTexFormat.ATI1N => BlockFormat.Bc4U,
-            VTexFormat.ATI2N => BlockFormat.Bc5U,
             VTexFormat.BC7 => BlockFormat.Bc7,
             _ => null,
         };

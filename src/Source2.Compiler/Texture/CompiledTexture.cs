@@ -531,6 +531,49 @@ public sealed class CompiledTexture
     /// <exception cref="ArgumentException">A face of a texture that is not a cube.</exception>
     /// <exception cref="NotSupportedException">An ETC2/EAC or unknown format.</exception>
     /// <exception cref="InvalidDataException">The texture's data is malformed.</exception>
+    /// <summary>
+    /// One face of a mip as RGBA floats in row order, the values the GPU samples (no codec applied): BC1-BC5
+    /// exact as the measured GPU decodes them (<see cref="Decoding.BcGpuDecode"/>, <paramref name="vendor"/> or
+    /// the default), every other format through <see cref="GenerateBitmap"/> (HDR formats as floats, the rest as
+    /// bytes / 255).
+    /// </summary>
+    public float[] DecodeTexels(uint depth = 0, CubemapFace face = 0, uint mipLevel = 0, Decoding.GpuVendor? vendor = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(mipLevel, (uint)NumMipLevels);
+        if (!Decoding.BcGpuDecode.Handles(Format))
+        {
+            using var bitmap = GenerateBitmap(depth, face, mipLevel, TextureCodec.None);
+            var result = new float[bitmap.Width * bitmap.Height * 4];
+            var px = bitmap.GetPixelSpan();
+            if (bitmap.ColorType == SKColorType.RgbaF32)
+                System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(px)[..result.Length].CopyTo(result);
+            else
+                for (var i = 0; i < result.Length; i += 4)
+                    (result[i], result[i + 1], result[i + 2], result[i + 3]) = (px[i + 2] / 255f, px[i + 1] / 255f, px[i] / 255f, px[i + 3] / 255f);
+            return result;
+        }
+        var slices = (Flags & VTexFlags.VOLUME_TEXTURE) == 0 ? Depth : MipLevelSize(Depth, mipLevel);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(depth, (uint)slices);
+        var width = MipLevelSize(ActualWidth, mipLevel);
+        var height = MipLevelSize(ActualHeight, mipLevel);
+        var mip = ReadMip(mipLevel);
+        var span = mip.AsSpan();
+        if ((Flags & VTexFlags.CUBE_TEXTURE) != 0)
+        {
+            var faceSize = mip.Length / (6 * Depth);
+            span = span.Slice(faceSize * ((int)depth * 6 + (int)face), faceSize);
+        }
+        else if (depth > 0)
+        {
+            var sliceSize = mip.Length / slices;
+            span = span.Slice(sliceSize * (int)depth, sliceSize);
+        }
+        var texels = new float[width * height * 4];
+        Decoding.BcGpuDecode.Decode(Format, span, MipLevelSize(Width, mipLevel), MipLevelSize(Height, mipLevel), texels, width, height,
+                                    vendor ?? Decoding.BcGpuDecode.Default);
+        return texels;
+    }
+
     public SKBitmap GenerateBitmap(uint depth = 0, CubemapFace face = 0, uint mipLevel = 0, TextureCodec codec = TextureCodec.Auto)
     {
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(mipLevel, (uint)NumMipLevels);

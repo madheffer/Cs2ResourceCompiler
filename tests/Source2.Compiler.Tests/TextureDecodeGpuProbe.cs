@@ -60,7 +60,7 @@ public sealed unsafe class TextureDecodeGpuProbe(ITestOutputHelper output)
         }
 
         output.WriteLine($"GPU: {gpu.Name}");
-        output.WriteLine($"{"format",-16} {"textures",8} {"texels",10} {"exact",10} {"off by 1",9} {"worse",7} {"max diff",10}");
+        output.WriteLine($"{"format",-16} {"textures",8} {"texels",10} {"exact",10} {"off by 1",9} {"worse",7} {"max diff",10} {"floats exact",13}");
         foreach (var (format, vkFormat) in Formats)
         {
             if (!byFormat.TryGetValue(format, out var list))
@@ -71,7 +71,7 @@ public sealed unsafe class TextureDecodeGpuProbe(ITestOutputHelper output)
                 output.WriteLine($"{format,-16} the GPU cannot blit from {vkFormat}");
                 continue;
             }
-            long texels = 0, exact = 0, offByOne = 0, worse = 0;
+            long texels = 0, exact = 0, offByOne = 0, worse = 0, bitExact = 0;
             double maxDiff = 0;
             var examples = new List<string>();
             foreach (var (path, tex) in list)
@@ -81,6 +81,8 @@ public sealed unsafe class TextureDecodeGpuProbe(ITestOutputHelper output)
                     mip++;
                 using var cpu = tex.GenerateBitmap(0, 0, mip, TextureCodec.None);
                 var gpuTexels = GpuDecode(gpu, vkFormat, tex.ReadMip(mip), Math.Max(1, tex.Width >> (int)mip), Math.Max(1, tex.Height >> (int)mip));
+                // The exact floats (CompiledTexture.DecodeTexels): all four channels bit for bit with the GPU's.
+                var ours = tex.DecodeTexels(0, 0, mip);
                 var hdr = cpu.ColorType == SKColorType.RgbaF32;
                 var w = cpu.Width;
                 for (var y = 0; y < cpu.Height; y++)
@@ -109,6 +111,11 @@ public sealed unsafe class TextureDecodeGpuProbe(ITestOutputHelper output)
                             worst = Math.Max(worst, diff);
                         }
                         texels++;
+                        var o = ours.AsSpan((y * w + x) * 4, 4);
+                        var all = true;
+                        for (var k = 0; k < 4; k++)
+                            all &= !channels[k] || BitConverter.SingleToInt32Bits(o[k]) == BitConverter.SingleToInt32Bits(g[k]);
+                        if (all) bitExact++;
                         maxDiff = Math.Max(maxDiff, worst);
                         if (worst == 0 || (!hdr && worst < 1e-3)) exact++;
                         else if (!hdr && worst <= 1.0 + 1e-3) offByOne++;
@@ -120,7 +127,7 @@ public sealed unsafe class TextureDecodeGpuProbe(ITestOutputHelper output)
                         }
                     }
             }
-            output.WriteLine($"{format,-16} {list.Count,8} {texels,10} {exact,10} {offByOne,9} {worse,7} {maxDiff,10:0.######}");
+            output.WriteLine($"{format,-16} {list.Count,8} {texels,10} {exact,10} {offByOne,9} {worse,7} {maxDiff,10:0.######} {bitExact,13}");
             foreach (var ex in examples)
                 output.WriteLine(ex);
         }
@@ -136,7 +143,7 @@ public sealed unsafe class TextureDecodeGpuProbe(ITestOutputHelper output)
         _ => [true, true, true, true],
     };
 
-    private static float[] GpuDecode(GpuDevice gpu, Format format, byte[] blocks, int width, int height)
+    internal static float[] GpuDecode(GpuDevice gpu, Format format, byte[] blocks, int width, int height)
     {
         var src = gpu.CreateImage((uint)width, (uint)height, 1, format, ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.SampledBit);
         var dst = gpu.CreateImage((uint)width, (uint)height, 1, Format.R32G32B32A32Sfloat, ImageUsageFlags.TransferDstBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.SampledBit);
