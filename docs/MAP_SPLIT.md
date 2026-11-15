@@ -1,5 +1,13 @@
 # Map split: resource compiler and map tools as two repos (plan, 2026-11-15)
 
+> **Done 2026-11-16.** The split is made: rc-standalone (box `repos/rc-standalone.git`, branch `main`) is the
+> resource compiler alone, released as the `Source2.Compiler` package; cs2-map-compiler (box
+> `repos/cs2-map-compiler.git`, branch `main`) holds the map compiler and the decompiler with their history and
+> pins that package in `packages/`; the RE tooling is source2-re-tools (box `repos/source2-re-tools.git`).
+> Nothing in either repository references ValveResourceFormat (ledger 314). What follows is the plan as it was
+> made; open items: compile-service still references the compiler by path, and s2port and vpkstuff move to the
+> package when they are next updated.
+
 Agreed with the user on 2026-11-15:
 
 | Repo | Contents | Depends on |
