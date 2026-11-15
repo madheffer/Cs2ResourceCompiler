@@ -1,6 +1,4 @@
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using Source2.Compiler.Kv3;
 using Source2.Compiler.KeyValues;
 
@@ -10,7 +8,7 @@ namespace Source2.Compiler.Cli;
 /// <c>kv3-parity &lt;pak01_dir.vpk&gt; &lt;ext&gt;... [--limit N] [--write] [--bytes]</c>: re-encodes every KV3 v5
 /// block of the given compiled types through <see cref="Kv3Tree"/> and compares the uncompressed
 /// sections and every header field it computes with Valve's. <c>--write</c> also runs the full
-/// writer and requires that both our reader and VRF's decode the result to the original.
+/// writer and requires that our reader decodes the result to the original.
 /// <c>--bytes</c> requires the whole written block, compression included, to equal Valve's, and
 /// tallies the misses by extension and stored method.
 /// See docs/RC_PARITY.md, "KV3 v5 lossless".
@@ -54,14 +52,14 @@ internal static class Kv3Parity
                 if (files >= limit) break;
                 files++;
                 pak.ReadEntry(e, out var bytes);
-                using var res = new Resource();
-                try { res.Read(new MemoryStream(bytes)); }
-                catch { failed++; continue; }
+                ResourceFile res;
+                try { res = ResourceFile.Read(bytes); }
+                catch (InvalidDataException) { failed++; continue; }
                 foreach (var b in res.Blocks)
                 {
-                    if (b.Size < 120 || BitConverter.ToUInt32(bytes, (int)b.Offset) != 0x4B563305) continue;
+                    if (b.Data.Length < 120 || BitConverter.ToUInt32(b.Data) != 0x4B563305) continue;
                     blocks++;
-                    var raw = bytes.AsSpan((int)b.Offset, (int)b.Size).ToArray();
+                    var raw = b.Data;
                     var where = $"{e.GetFullPath()} {b.Type}";
                     Kv3Tree t;
                     try { t = Kv3Tree.Read(raw); }
@@ -85,7 +83,7 @@ internal static class Kv3Parity
                             || !wbl.AsSpan().SequenceEqual(t.ReadSections.Blobs))
                             Miss("write re-read", where);
                         if (t.Compression == 0 && !back.ReadHeader.AsSpan().SequenceEqual(t.ReadHeader)) Miss("write header", where);
-                        if (VrfText(raw) != VrfText(written)) Miss("write VRF text", where);
+                        if (Text(raw) != Text(written)) Miss("write text", where);
                     }
                     if (bytesCheck)
                     {
@@ -112,11 +110,9 @@ internal static class Kv3Parity
         return identical == blocks && failed == 0 ? 0 : 1;
     }
 
-    private static string VrfText(byte[] block)
+    private static string Text(byte[] block)
     {
-        var kv3 = new BinaryKV3(BlockType.DATA) { Resource = null!, Size = (uint)block.Length };
-        using var r = new BinaryReader(new MemoryStream(block));
-        kv3.Read(r);
-        return kv3.ToString();
+        var document = Kv3Binary.Read(block);
+        return document.Root.ToKV3String(document.Header?.Format);
     }
 }

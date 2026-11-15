@@ -1,8 +1,6 @@
+using Source2.Compiler.KeyValues;
 using ValveKeyValue;
 using ValveKeyValue.KeyValues3;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler;
 
@@ -43,18 +41,16 @@ public static class WorldPhysicsAuthor
     {
         ArgumentNullException.ThrowIfNull(red2);
         ArgumentNullException.ThrowIfNull(data);
-        var generic = KV3IDLookup.Get("generic");
-        using var resource = new Resource();
-        LegacyContainer.SetResourceVersion(resource, ResourceVersion);
-        var physBlock = phys == null ? null : AuthoredKv3.Block(phys, generic, BlockType.PHYS, resource);
-        if (physBlock != null)
+        var generic = Kv3Formats.Get("generic");
+        var file = new ResourceFile { Version = ResourceVersion };
+        if (phys != null)
         {
-            resource.Blocks.Add(physBlock);
-            resource.Blocks.Add(AuthoredKv3.Block(Ctrl(), generic, BlockType.CTRL, resource));
+            file.Blocks.Add(new ResourceBlock("PHYS", Kv3Binary.Write(phys, generic)));
+            file.Blocks.Add(new ResourceBlock("CTRL", Kv3Binary.Write(Ctrl(), generic)));
         }
-        resource.Blocks.Add(AuthoredKv3.Block(red2, generic, BlockType.RED2, resource));
-        resource.Blocks.Add(AuthoredKv3.Block(data, generic, BlockType.DATA, resource));
-        // Zero padding between blocks, as Valve's files have it (VRF's writer pads with "S2V").
-        return ValveLayout.Serialize(resource);
+        file.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(red2, generic)));
+        file.Blocks.Add(new ResourceBlock("DATA", Kv3Binary.Write(data, generic)));
+        // Zero padding between blocks, as Valve's files have it.
+        return file.Write();
     }
 }

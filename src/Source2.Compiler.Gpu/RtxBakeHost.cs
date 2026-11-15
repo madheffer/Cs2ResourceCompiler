@@ -1,3 +1,5 @@
+using Source2.Compiler.Textures;
+using Source2.Compiler.Shaders.Vfx;
 using System.Buffers.Binary;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -6,8 +8,6 @@ using Silk.NET.Vulkan;
 using Source2.Compiler.Lighting.Bake;
 using Source2.Compiler.Lighting.Bake.Glsl;
 using Source2.Compiler.Lighting.Bake.Glsl.Raygen;
-using ValveResourceFormat.CompiledShader;
-using ValveResourceFormat.ResourceTypes;
 
 namespace Source2.Compiler.Gpu;
 
@@ -209,17 +209,15 @@ public sealed unsafe partial class RtxBakeHost : ILightmapDevice, IDisposable
                 _textureImages.Add(image);
                 continue;
             }
-            using var res = new ValveResourceFormat.Resource();
-            res.Read(new MemoryStream(read(source.Path + "_c") ?? throw new FileNotFoundException(source.Path)));
-            var uploaded = Keep(GpuTextures.Upload(gpu, (Texture)res.DataBlock!, source.Srgb, RtxScene.TextureCap));
+            var res = CompiledTexture.Read(read(source.Path + "_c") ?? throw new FileNotFoundException(source.Path));
+            var uploaded = Keep(GpuTextures.Upload(gpu, res, source.Srgb, RtxScene.TextureCap));
             views.Add(uploaded.View);
             _textureImages.Add(uploaded);
         }
         if (scene.Global.IblCubeMap != null)
         {
-            using var sky = new ValveResourceFormat.Resource();
-            sky.Read(new MemoryStream(read(iblTexture + "_c") ?? throw new FileNotFoundException(iblTexture)));
-            var cube = Keep(GpuTextures.UploadCube(gpu, (Texture)sky.DataBlock!, false, RtxScene.TextureCap));
+            var sky = CompiledTexture.Read(read(iblTexture + "_c") ?? throw new FileNotFoundException(iblTexture));
+            var cube = Keep(GpuTextures.UploadCube(gpu, sky, false, RtxScene.TextureCap));
             views.Add(cube.View);
             _textureImages.Add(cube);
         }

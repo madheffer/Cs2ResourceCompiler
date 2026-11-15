@@ -33,7 +33,7 @@ internal static class WorldNodeBuild
                                           bool buildBakes = false)
     {
         IReadOnlyCollection<string> Signature(string material) => content.Read(material + "_c") is { } b
-            ? [.. Source2.Compiler.MaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
+            ? [.. PackageMaterialAuthor.ExtractInputSignature(b).Select(x => x.Semantic)] : [];
         // ConvertMeshForBuilder's shift test (rc 20261103 1810e11f0 .. 1810e126c) runs once per mesh for every
         // builder, the world renderer's too: a material with HasTexcoordTransform 1 keeps the mesh's texcoords
         // (captured 11-03 for italy_cobblestone_01, ledger 210).
@@ -194,7 +194,7 @@ internal static class WorldNodeBuild
             // before MergeMeshes): the instanced, no-split and baked prop lists keep every stream (Mako's light_red1
             // glass keeps its tangent, which the model compile then preserves; ledger 312).
             if (MeshLists.Merged.Contains(kind) && (attributes & 0x801) == 0 && content.Read(material + "_c") is { } bytes)
-                kept = MaterialStreams.Kept(streams, MaterialStreams.Inputs(Source2.Compiler.MaterialAuthor.ExtractInputSignature(bytes).Select(x => x.Semantic)),
+                kept = MaterialStreams.Kept(streams, MaterialStreams.Inputs(PackageMaterialAuthor.ExtractInputSignature(bytes).Select(x => x.Semantic)),
                                             keepLighting && (attributes & 0x20000000) != 0);
             var newStride = kept.Sum(i => streams[i].Count);
             var count = vertices.Length / stride;

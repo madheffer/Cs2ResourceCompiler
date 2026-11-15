@@ -1,8 +1,8 @@
+using Source2.Compiler.Rubikon;
 using System.Globalization;
 using System.Numerics;
 using System.Text;
 using Source2.Compiler.Simulation;
-using ValveResourceFormat.ResourceTypes;
 
 namespace Source2.Compiler.Maps;
 

@@ -1,11 +1,9 @@
+using Source2.Compiler.KeyValues;
 using System.Buffers.Binary;
 using Source2.Compiler.Compression;
 using Source2.Compiler.RcTexture;
 using ValveKeyValue;
 using ValveKeyValue.KeyValues3;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Lighting;
 
@@ -365,11 +363,10 @@ public static class LightmapTextures
         var volume = slices.Length == 1 ? slices[0][last]
             : new RcMipChain.Level(slices[0][last].Width, slices[0][last].Height * slices.Length, slices.SelectMany(slice => slice[last].Rgba).ToArray());
         var data = Data(width, height, slices.Length, mipCount, flags, VtexFormat(format), Reflectivity(volume), sizes ? [.. stored.Select(x => x.Length)] : null, lz4);
-        using var resource = new Resource();
-        LegacyContainer.SetResourceVersion(resource, 1);
-        resource.Blocks.Add(AuthoredKv3.Block(editInfo, KV3IDLookup.Get("generic"), BlockType.RED2, resource));
-        resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.DATA, data, resource));
-        var container = ValveLayout.Serialize(resource);
+        var resource = new ResourceFile { Version = 1 };
+        resource.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(editInfo, Kv3Formats.Get("generic"))));
+        resource.Blocks.Add(new ResourceBlock("DATA", data));
+        var container = resource.Write();
         var file = new List<byte>(container.Length + stored.Sum(x => x.Length));
         file.AddRange(container);
         for (var m = mipCount - 1; m >= 0; m--)

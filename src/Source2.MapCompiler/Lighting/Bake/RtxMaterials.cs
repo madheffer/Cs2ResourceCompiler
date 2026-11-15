@@ -1,3 +1,5 @@
+using Source2.Compiler.Shaders.Vfx;
+using Source2.Compiler.Textures;
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Numerics;
@@ -5,7 +7,6 @@ using Source2.Compiler.Lighting.Bake.Glsl;
 using Source2.Compiler.Lighting.Bake.Glsl.Shaders;
 using Source2.Compiler.Maps;
 using ValvePak;
-using ValveResourceFormat.CompiledShader;
 
 namespace Source2.Compiler.Lighting.Bake;
 
@@ -39,8 +40,7 @@ public sealed class RtxShaderLibrary(params string[] packages) : IDisposable
                     if (pak.FindEntry($"shaders/vfx/{name}_vulkan_60_{suffix}.vcs") is { } entry)
                     {
                         pak.ReadEntry(entry, out var bytes);
-                        var p = new VfxProgramData();
-                        p.Read($"{name}_vulkan_60_{suffix}.vcs", new MemoryStream(bytes));
+                        var p = VfxProgramData.Read($"{name}_vulkan_60_{suffix}.vcs", bytes);
                         return p;
                     }
                 return null;
@@ -72,8 +72,7 @@ public sealed class RtxShaderLibrary(params string[] packages) : IDisposable
             if (pak.FindEntry($"shaders/vfx/{name}_vulkan_{level}_{suffix}.vcs") is { } entry)
             {
                 pak.ReadEntry(entry, out var bytes);
-                var p = new VfxProgramData();
-                p.Read($"{name}_vulkan_{level}_{suffix}.vcs", new MemoryStream(bytes));
+                var p = VfxProgramData.Read($"{name}_vulkan_{level}_{suffix}.vcs", bytes);
                 return p;
             }
         return null;
@@ -88,8 +87,7 @@ public sealed class RtxShaderLibrary(params string[] packages) : IDisposable
                 if (pak.FindEntry($"shaders/vfx/{name}_vulkan_{level}_features.vcs") is { } entry)
                 {
                     pak.ReadEntry(entry, out var bytes);
-                    var p = new VfxProgramData();
-                    p.Read($"{name}_vulkan_{level}_features.vcs", new MemoryStream(bytes));
+                    var p = VfxProgramData.Read($"{name}_vulkan_{level}_features.vcs", bytes);
                     return p;
                 }
         return null;
@@ -101,11 +99,11 @@ public sealed class RtxShaderLibrary(params string[] packages) : IDisposable
         if (Get(info.Shader) is not { } p)
             return null;
         var f = info.Params.Where(x => x.Key.StartsWith("F_", StringComparison.Ordinal)).ToDictionary(x => x.Key, x => (byte)x.Value);
-        var (config, id) = ValveResourceFormat.IO.ShaderDataProvider.GetStaticConfiguration_ForFeatureState(p.Features, p.Rtx, f);
+        var (config, id) = VfxCombos.GetStaticConfiguration_ForFeatureState(p.Features, p.Rtx, f);
         // A configuration the file does not carry is reduced as MaterialAttributes reduces the pc programs' (the
         // trace flags built on that equal Valve's .rte); the material blocks then check it against vrad3's.
-        if (!p.Rtx.StaticComboEntries.ContainsKey(id) && ValveResourceFormat.IO.ShaderDataProvider.TryReduceStaticConfiguration(p.Rtx, config, out var reduced))
-            id = new ValveResourceFormat.CompiledShader.ComboConfigMapping(p.Rtx).CalcComboIdFromValues(reduced);
+        if (!p.Rtx.StaticComboEntries.ContainsKey(id) && VfxCombos.TryReduceStaticConfiguration(p.Rtx, config, out var reduced))
+            id = VfxCombos.ComboId(p.Rtx, reduced);
         return (p, id);
     }
 
@@ -132,8 +130,7 @@ public sealed class RtxShaderLibrary(params string[] packages) : IDisposable
                         if (pak.FindEntry($"shaders/vfx/{name}_vulkan_{level}_{suffix}.vcs") is { } entry)
                         {
                             pak.ReadEntry(entry, out var bytes);
-                            var p = new VfxProgramData();
-                            p.Read($"{name}_vulkan_{level}_{suffix}.vcs", new MemoryStream(bytes));
+                            var p = VfxProgramData.Read($"{name}_vulkan_{level}_{suffix}.vcs", bytes);
                             return p;
                         }
                     return null;
@@ -154,9 +151,9 @@ public sealed class RtxShaderLibrary(params string[] packages) : IDisposable
         var result = new List<Attribute>();
         foreach (var program in programs)
         {
-            var (config, id) = ValveResourceFormat.IO.ShaderDataProvider.GetStaticConfiguration_ForFeatureState(feats, program, f);
-            if (!program.StaticComboEntries.ContainsKey(id) && ValveResourceFormat.IO.ShaderDataProvider.TryReduceStaticConfiguration(program, config, out var reduced))
-                id = new ValveResourceFormat.CompiledShader.ComboConfigMapping(program).CalcComboIdFromValues(reduced);
+            var (config, id) = VfxCombos.GetStaticConfiguration_ForFeatureState(feats, program, f);
+            if (!program.StaticComboEntries.ContainsKey(id) && VfxCombos.TryReduceStaticConfiguration(program, config, out var reduced))
+                id = VfxCombos.ComboId(program, reduced);
             if (!program.StaticComboEntries.ContainsKey(id))
                 continue;
             foreach (var a in program.GetStaticCombo(id).Attributes)
@@ -165,7 +162,7 @@ public sealed class RtxShaderLibrary(params string[] packages) : IDisposable
                     continue;
                 var desc = a.VariableBinding >= 0 && a.VariableBinding < program.VariableDescriptions.Length ? program.VariableDescriptions[a.VariableBinding] : null;
                 result.Add(new Attribute(a.Name, a.Murmur32, a.ConstValue,
-                    a.DynExpression is { } e ? ValveResourceFormat.CompiledShader.ShaderUtilHelpers.ParseDynamicExpression(e) : null, desc?.Name, desc?.SrgbRead ?? false));
+                    a.DynExpression is { } e ? VfxCombos.ParseDynamicExpression(e) : null, desc?.Name, desc?.SrgbRead ?? false));
             }
         }
         return result;
@@ -173,25 +170,13 @@ public sealed class RtxShaderLibrary(params string[] packages) : IDisposable
 
     public void Dispose()
     {
-        foreach (var (features, programs) in _sets.Values.OfType<(VfxProgramData, VfxProgramData[])>())
-        {
-            features.Dispose();
-            foreach (var program in programs)
-                program.Dispose();
-        }
-        foreach (var p in _programs.Values)
-            if (p != null)
-            {
-                p.Features.Dispose();
-                p.Rtx.Dispose();
-            }
         foreach (var pak in _paks)
             pak.Dispose();
     }
 }
 
 /// <summary>
-/// VfxEval as VRF prints it (ShaderUtilHelpers.ParseDynamicExpression): locals
+/// VfxEval as VRF prints it (VfxCombos.ParseDynamicExpression): locals
 /// (<c>v0 = ...;</c>), FEAT[i], variables, numbers, unary ! and -, * / + -,
 /// comparisons, &amp;&amp; ||, ?:, swizzles, float2-4 constructors and
 /// materialsystem2's functions (the table at 1800fa000: SrgbGammaToLinear
@@ -626,7 +611,7 @@ public sealed class RtxScene
                 signature = null;
                 if (read(mesh.Material + "_c") is { } vmat)
                 {
-                    try { signature = MaterialAuthor.ExtractInputSignature(vmat); }
+                    try { signature = PackageMaterialAuthor.ExtractInputSignature(vmat); }
                     catch (InvalidOperationException) { }
                 }
                 signatures[mesh.Material] = signature;
@@ -927,11 +912,11 @@ public sealed class RtxScene
             switch (d.VariableSource)
             {
                 case VfxVariableSourceType.__Expression__:
-                    return VfxEval.Evaluate(ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression), n => Value(n), features, TextureAverage);
+                    return VfxEval.Evaluate(VfxCombos.ParseDynamicExpression(d.CompiledExpression), n => Value(n), features, TextureAverage);
                 case VfxVariableSourceType.__SetByArtistAndExpression__:
                 {
                     var artist = Artist(d) ?? Default(d);
-                    return VfxEval.Evaluate(ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression), n => Value(n, d.Name, artist), features, TextureAverage);
+                    return VfxEval.Evaluate(VfxCombos.ParseDynamicExpression(d.CompiledExpression), n => Value(n, d.Name, artist), features, TextureAverage);
                 }
                 case VfxVariableSourceType.__SetByArtist__:
                     return Artist(d) is { } set ? ArtistInRange(d, set) : Default(d);
@@ -974,7 +959,7 @@ public sealed class RtxScene
         {
             var d = vars[f.VariableIndex];
             var value = d.VariableSource == VfxVariableSourceType.__Expression__ && d.CompiledExpression.Length > 0
-                ? (int)(VfxEval.Evaluate(ShaderUtilHelpers.ParseDynamicExpression(d.CompiledExpression), n => Value(n), features, TextureAverage)?[0] ?? 0f)
+                ? (int)(VfxEval.Evaluate(VfxCombos.ParseDynamicExpression(d.CompiledExpression), n => Value(n), features, TextureAverage)?[0] ?? 0f)
                 : d.IntDefs[0];
             if (!states.TryGetValue(f.RegisterOffset, out var st))
                 states[f.RegisterOffset] = st = [];
@@ -1089,25 +1074,21 @@ public sealed class RtxScene
     {
         if (bytes is null)
             return null;
-        using var res = new ValveResourceFormat.Resource();
-        res.Read(new MemoryStream(bytes));
-        return res.DataBlock is ValveResourceFormat.ResourceTypes.Texture tex ? [tex.Reflectivity.X, tex.Reflectivity.Y, tex.Reflectivity.Z, tex.Reflectivity.W] : null;
+        var tex = CompiledTexture.Read(bytes);
+        return [tex.Reflectivity.X, tex.Reflectivity.Y, tex.Reflectivity.Z, tex.Reflectivity.W];
     }
 
     public static BindlessTexture? LoadTexture(byte[]? bytes, bool srgb)
     {
         if (bytes is null)
             return null;
-        using var res = new ValveResourceFormat.Resource();
-        res.Read(new MemoryStream(bytes));
-        if (res.DataBlock is not ValveResourceFormat.ResourceTypes.Texture tex)
-            return null;
+        var tex = CompiledTexture.Read(bytes);
         var count = Math.Max(1, (int)tex.NumMipLevels);
         var first = ResidentLevel(tex.Width, tex.Height, count);
         var mips = new vec4[count - first][];
         for (var m = 0; m < mips.Length; m++)
         {
-            using var bmp = tex.GenerateBitmap(0, 0, (uint)(m + first), ValveResourceFormat.TextureDecoders.TextureCodec.None);
+            using var bmp = tex.GenerateBitmap(0, 0, (uint)(m + first), TextureCodec.None);
             var texels = new vec4[bmp.Width * bmp.Height];
             if (bmp.ColorType is SkiaSharp.SKColorType.RgbaF32)
             {

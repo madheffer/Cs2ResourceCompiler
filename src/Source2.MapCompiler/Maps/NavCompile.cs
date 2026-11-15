@@ -1,3 +1,4 @@
+using Source2.Compiler.Meshes;
 using System.Globalization;
 using System.Numerics;
 using Source2.Compiler.Maps.NavGen;
@@ -77,7 +78,7 @@ public static class NavCompile
     /// <summary>A .nav's areas read back (a package's nav this build did not generate).</summary>
     public static List<BombDamage.Area> Areas(byte[] nav)
     {
-        var file = new ValveResourceFormat.NavMesh.NavMeshFile();
+        var file = new NavMesh.NavMeshFile();
         file.Read(new MemoryStream(nav));
         return [.. file.Areas.Values.Select(a => new BombDamage.Area(a.Corners))];
     }
@@ -123,9 +124,7 @@ public static class NavCompile
     /// <summary>The world's collision the bake casts against: the meshes of world_physics.vmdl_c (hulls are not ported).</summary>
     public static BombDamage.MeshWorld World(byte[] worldPhysics)
     {
-        using var resource = new ValveResourceFormat.Resource();
-        resource.Read(new MemoryStream(worldPhysics));
-        var phys = ((ValveResourceFormat.ResourceTypes.Model)resource.DataBlock!).GetEmbeddedPhys()
+        var phys = CompiledModel.Read(worldPhysics).EmbeddedPhysics
                    ?? throw new InvalidOperationException("world_physics has no physics");
         if (phys.Parts.Any(p => p.Shape.Hulls.Length > 0 || p.Shape.Spheres.Length > 0 || p.Shape.Capsules.Length > 0))
             throw new NotSupportedException("bomb damage over a world with hulls, spheres or capsules (the hull cast and ray) is not ported");

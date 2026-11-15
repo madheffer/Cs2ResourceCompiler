@@ -1,11 +1,9 @@
+using Source2.Compiler.KeyValues;
 using System.Buffers.Binary;
 using Source2.Compiler.Compression;
 using Source2.Compiler.Lighting;
 using Source2.Compiler.RcTexture;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
 using ImageFormat = Source2.Compiler.Lighting.LightmapTextures.ImageFormat;
 
 namespace Source2.Compiler.Cubemaps;
@@ -140,13 +138,12 @@ public static class CubemapArrayVtex
         var reflectivity = Reflectivity(lastMips);
         var data = Data(size, cubes.Count, mipCount, reflectivity, [.. stored.Select(x => x.Length)], lz4, sh);
 
-        using var resource = new Resource();
-        LegacyContainer.SetResourceVersion(resource, 1);
+        var resource = new ResourceFile { Version = 1 };
         var exrs = cubes.Select(c => (c.RelativePath, System.IO.Hashing.Crc32.HashToUInt32(c.ExrBytes))).ToList();
-        resource.Blocks.Add(AuthoredKv3.Block(EditInfo(exrs, vtexRelativePath, System.IO.Hashing.Crc32.HashToUInt32(vtexBytes), searchPath, arguments ?? DefaultArguments),
-            KV3IDLookup.Get("generic"), BlockType.RED2, resource));
-        resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.DATA, data, resource));
-        var container = ValveLayout.Serialize(resource);
+        resource.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(EditInfo(exrs, vtexRelativePath, System.IO.Hashing.Crc32.HashToUInt32(vtexBytes), searchPath, arguments ?? DefaultArguments),
+            Kv3Formats.Get("generic"))));
+        resource.Blocks.Add(new ResourceBlock("DATA", data));
+        var container = resource.Write();
         var file = new List<byte>(container.Length + stored.Sum(x => x.Length));
         file.AddRange(container);
         for (var m = mipCount - 1; m >= 0; m--)

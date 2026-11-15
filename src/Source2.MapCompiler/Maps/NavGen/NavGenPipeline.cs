@@ -63,9 +63,7 @@ public static class NavGenPipeline
         KVObject Root(string name)
         {
             var bytes = read(name) ?? throw new FileNotFoundException(name);
-            using var resource = new ValveResourceFormat.Resource();
-            resource.Read(new MemoryStream(bytes));
-            return ((ValveResourceFormat.ResourceTypes.BinaryKV3)resource.DataBlock!).Data.Root;
+            return CompiledResource.Read(bytes).Kv3("DATA") ?? throw new InvalidDataException($"{name} has no KV3 DATA block.");
         }
         static object Scalar(KVObject v) => v.ValueType == KVValueType.Boolean ? (bool)v : (double)v;
         var hulls = new Dictionary<string, IReadOnlyDictionary<string, object>>();

@@ -1,7 +1,5 @@
+using Source2.Compiler.KeyValues;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Maps;
 
@@ -18,33 +16,22 @@ public static class VoxelVisibilityReader
 {
     /// <summary>Read from the bytes of a <c>.vvis_c</c>.</summary>
     /// <exception cref="InvalidDataException">The resource carries no readable visibility.</exception>
-    public static VoxelVisibility Read(byte[] bytes)
-    {
-        using var resource = new Resource();
-        resource.Read(new MemoryStream(bytes));
-        return Read(bytes, resource);
-    }
+    public static VoxelVisibility Read(byte[] bytes) => Read(CompiledResource.Read(bytes));
 
     /// <summary>Read from a <c>.vvis_c</c> on disk.</summary>
     public static VoxelVisibility ReadFile(string path) => Read(File.ReadAllBytes(path));
 
-    /// <summary>
-    /// Read using an already-parsed resource, when the caller has one. The bytes
-    /// must be the same ones it was parsed from.
-    /// </summary>
-    public static VoxelVisibility Read(byte[] bytes, Resource resource)
+    /// <summary>Read using an already-parsed resource, when the caller has one.</summary>
+    public static VoxelVisibility Read(CompiledResource resource)
     {
-        var block = resource.GetBlockByType(BlockType.VXVS)
+        var block = resource.Block("VXVS")
             ?? throw new InvalidDataException("No VXVS block: this is not a world visibility resource.");
-        if (resource.DataBlock is not BinaryKV3 kv3)
-            throw new InvalidDataException("The DATA block is not KV3, so VXVS cannot be indexed.");
-
-        var root = kv3.Data.Root;
+        var root = resource.Kv3("DATA")
+            ?? throw new InvalidDataException("The DATA block is not KV3, so VXVS cannot be indexed.");
         if (!root.ContainsKey("m_nBaseClusterCount"))
             throw new InvalidDataException("Pre-octree visibility format, which carries m_clusters instead.");
 
-        return VoxelVisibility.ReadVxvs(
-            bytes.AsSpan((int)block.Offset, (int)block.Size), LayoutOf(root), ScalarsOf(root));
+        return VoxelVisibility.ReadVxvs(block.Data, LayoutOf(root), ScalarsOf(root));
     }
 
     /// <summary>The six (offset, count) pairs exactly as the DATA index states them.</summary>

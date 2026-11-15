@@ -1,14 +1,13 @@
+using Source2.Compiler.Textures;
 using Silk.NET.Vulkan;
 using ValvePak;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 
 namespace Source2.Compiler.Gpu;
 
 /// <summary>
 /// Compiled textures (.vtex_c) as Vulkan images, in their stored format so
 /// the GPU decodes the blocks itself. Formats stored as PNG, JPEG or WebP
-/// are decoded to RGBA8 by VRF.
+/// are decoded to RGBA8 (CompiledTexture.GenerateBitmap).
 /// </summary>
 public static unsafe class GpuTextures
 {
@@ -57,7 +56,7 @@ public static unsafe class GpuTextures
     };
 
     /// <summary>Reads a compiled texture from the packages (first hit) or a loose folder.</summary>
-    public static Texture? Read(IEnumerable<Package> packages, string path, string? looseRoot = null)
+    public static CompiledTexture? Read(IEnumerable<Package> packages, string path, string? looseRoot = null)
     {
         var name = path.Replace('\\', '/');
         if (!name.EndsWith("_c", StringComparison.Ordinal))
@@ -74,23 +73,21 @@ public static unsafe class GpuTextures
         }
         if (bytes == null)
             return null;
-        var resource = new Resource();
-        resource.Read(new MemoryStream(bytes));
-        return resource.DataBlock as Texture;
+        return CompiledTexture.Read(bytes);
     }
 
     /// <summary>
     /// A 2D texture's image ready for sampling, from its preload level down
     /// (<paramref name="cap"/> 0 uploads every level).
     /// </summary>
-    public static GpuDevice.GpuImage Upload(GpuDevice gpu, Texture texture, bool srgb, int cap = MaxPreloadResolution)
+    public static GpuDevice.GpuImage Upload(GpuDevice gpu, CompiledTexture texture, bool srgb, int cap = MaxPreloadResolution)
     {
         var format = VulkanFormat(texture.Format, srgb);
         var mips = (uint)Math.Max(1, (int)texture.NumMipLevels);
         var levels = new List<(uint Level, int Width, int Height, byte[] Data)>();
         if (format == null)
         {
-            // Decoded by VRF to RGBA8, the top level only.
+            // Decoded to RGBA8, the top level only.
             using var bitmap = texture.GenerateBitmap();
             var rgba = new byte[bitmap.Width * bitmap.Height * 4];
             for (var y = 0; y < bitmap.Height; y++)
@@ -106,15 +103,10 @@ public static unsafe class GpuTextures
         }
         else
         {
-            // VRF lists the levels smallest first; a level's extent is the image's
-            // shifted down, not VRF's block-rounded size.
+            // A level's extent is the image's shifted down, not the block-rounded size.
             var first = cap > 0 ? PreloadLevel(texture.Width, texture.Height, texture.NumMipLevels, cap) : 0;
-            foreach (var (level, _, _, _, size) in texture.GetEveryMipLevelMetrics().Where(m => m.Level >= first).OrderBy(m => m.Level))
-            {
-                var data = new byte[size];
-                texture.ReadTextureMipLevel(data, level);
-                levels.Add((level - (uint)first, Math.Max(1, texture.Width >> (int)level), Math.Max(1, texture.Height >> (int)level), data));
-            }
+            for (var level = (uint)first; level < texture.NumMipLevels; level++)
+                levels.Add((level - (uint)first, Math.Max(1, texture.Width >> (int)level), Math.Max(1, texture.Height >> (int)level), texture.ReadMip(level)));
             mips = (uint)levels.Count;
         }
         var image = gpu.CreateImage((uint)levels[0].Width, (uint)levels[0].Height, mips, format.Value, ImageUsageFlags.SampledBit | ImageUsageFlags.TransferDstBit);
@@ -144,20 +136,16 @@ public static unsafe class GpuTextures
     }
 
     /// <summary>
-    /// A cube map's six faces as one cube-compatible image (VRF reads a level's faces one after
+    /// A cube map's six faces as one cube-compatible image (a level's faces are stored one after
     /// another, +x -x +y -y +z -z, as Vulkan's layers), from the preload level down.
     /// </summary>
-    public static GpuDevice.GpuImage UploadCube(GpuDevice gpu, Texture texture, bool srgb, int cap = MaxPreloadResolution)
+    public static GpuDevice.GpuImage UploadCube(GpuDevice gpu, CompiledTexture texture, bool srgb, int cap = MaxPreloadResolution)
     {
         var format = VulkanFormat(texture.Format, srgb) ?? throw new NotSupportedException($"a {texture.Format} cube map");
         var first = cap > 0 ? PreloadLevel(texture.Width, texture.Height, texture.NumMipLevels, cap) : 0;
         var levels = new List<(uint Level, int Width, int Height, byte[] Data)>();
-        foreach (var (level, _, _, _, size) in texture.GetEveryMipLevelMetrics().Where(m => m.Level >= first).OrderBy(m => m.Level))
-        {
-            var data = new byte[size];
-            texture.ReadTextureMipLevel(data, level);
-            levels.Add((level - (uint)first, Math.Max(1, texture.Width >> (int)level), Math.Max(1, texture.Height >> (int)level), data));
-        }
+        for (var level = (uint)first; level < texture.NumMipLevels; level++)
+            levels.Add((level - (uint)first, Math.Max(1, texture.Width >> (int)level), Math.Max(1, texture.Height >> (int)level), texture.ReadMip(level)));
         var image = gpu.CreateImage((uint)levels[0].Width, (uint)levels[0].Height, (uint)levels.Count, format, ImageUsageFlags.SampledBit | ImageUsageFlags.TransferDstBit,
                                     ImageViewType.TypeCube, 6, ImageCreateFlags.CreateCubeCompatibleBit);
         var total = levels.Sum(l => l.Data.Length);

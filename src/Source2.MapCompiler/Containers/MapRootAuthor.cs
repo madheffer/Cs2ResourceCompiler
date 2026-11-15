@@ -1,8 +1,6 @@
+using Source2.Compiler.KeyValues;
 using System.IO.Hashing;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler;
 
@@ -88,24 +86,13 @@ public static class MapRootAuthor
             .OrderBy(c => c, StringComparer.Ordinal)
             .ToList();
 
-        using var resource = new Resource();
-        LegacyContainer.SetResourceVersion(resource, 1);
-
-        var rerl = new ResourceExtRefList { Resource = resource };
-        foreach (var path in references)
-            rerl.ResourceRefInfoList.Add(new ResourceExtRefList.ResourceReferenceInfo
-            {
-                Id = Source2ResourceId.ForPath(path),
-                Name = path,
-            });
-        if (rerl.ResourceRefInfoList.Count > 0)
-            resource.Blocks.Add(rerl);
-
+        var file = new ResourceFile { Version = 1 };
+        if (ResourceRefs.Block(references) is { } rerl)
+            file.Blocks.Add(rerl);
         var red2 = BuildMapRootEditInfo(sourceFileName, sourceCrc, childPaths);
-        resource.Blocks.Add(AuthoredKv3.Block(Source2ContainerAuthor.NarrowIntegers(red2), KV3IDLookup.Get("generic"), BlockType.RED2, resource));
-        resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.DATA, [], resource));
-
-        return ResourceBuilder.Serialize(resource);
+        file.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(Source2ContainerAuthor.NarrowIntegers(red2), Kv3Formats.Get("generic"))));
+        file.Blocks.Add(new ResourceBlock("DATA", []));
+        return file.Write();
     }
 
     private static KVObject BuildMapRootEditInfo(string sourceFileName, uint sourceCrc, IReadOnlyList<string> children)

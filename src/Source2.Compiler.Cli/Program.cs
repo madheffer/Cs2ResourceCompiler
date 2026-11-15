@@ -1,7 +1,6 @@
 using System.Text;
 using Source2.Compiler;
 using Source2.Compiler.Cli;
-using ValveResourceFormat;
 
 // s2c - drive the standalone Source 2 resource compiler from a shell.
 //
@@ -45,7 +44,6 @@ try
         "reencode-parity" => ReencodeParity.Run(args[1..]),
         "kv3-types" => Kv3Types.Run(args[1..]),
         "red2-survey" => Red2Survey.Run(args[1..]),
-        "kv3-read-parity" => Kv3ReadParity.Run(args[1..]),
         _ => Unknown(args[0]),
     };
 }

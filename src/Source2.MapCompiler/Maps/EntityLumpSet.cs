@@ -1,8 +1,8 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Io;
 using System.Globalization;
 using System.Numerics;
 using ValveKeyValue;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler;
 
@@ -249,7 +249,7 @@ public static class EntityLumpSet
             if (!Wildcard.Matches(Text(source, "targetname"), pattern))
                 continue;
 
-            var copy = KVObjectDeepClone.Clone(item.Tree);
+            var copy = Maps.KVObjectDeepClone.Clone(item.Tree);
             var values = ValuesOf(copy);
             var (origin, angles) = relativeTo is { } t
                 ? TemplateTransform.Relative(t.Origin, t.Angles, VectorOf(values, "origin"), VectorOf(values, "angles"))

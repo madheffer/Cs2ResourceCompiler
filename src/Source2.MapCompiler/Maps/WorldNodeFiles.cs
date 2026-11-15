@@ -102,7 +102,7 @@ public static class WorldNodeFiles
         {
             if (!facts.TryGetValue(path, out var f))
                 facts[path] = f = content.Read(path + "_c") is { } bytes
-                    ? new WorldNodeModels.MaterialFacts(Source2.Compiler.MaterialAuthor.ExtractInputSignature(bytes), Source2.Compiler.MaterialAuthor.ExtractDepthSignature(bytes))
+                    ? new WorldNodeModels.MaterialFacts(PackageMaterialAuthor.ExtractInputSignature(bytes), PackageMaterialAuthor.ExtractDepthSignature(bytes))
                     : new WorldNodeModels.MaterialFacts([], []);
             return f;
         }
@@ -201,11 +201,11 @@ public static class WorldNodeFiles
         // The node's scene and manifest, the world and its manifest.
         var vwnod = $"maps/{map}/worldnodes/n0.vwnod";
         outputs.Add(new(vwnod + "_c", Source2ContainerAuthor.AuthorKv3Tree(WorldNodeSceneTrees.Data(sceneObjects, aggregates, layerNames),
-                                                                         ValveResourceFormat.Serialization.KeyValues.KV3IDLookup.Get("generic"), ".vwnod")));
+                                                                         Kv3Formats.Get("generic"), ".vwnod")));
         outputs.Add(new($"maps/{map}/worldnodes/n0.vrman_c", ResourceManifestAuthor.AuthorSaved([vwnod], $"maps/{map}/worldnodes/n0.vrman", addon, [Backslashed(vwnod)])));
         var vwrld = WorldTrees.Data(1024f, [new WorldTrees.Node(nodeMin, nodeMax, $"maps\\{map.Replace('/', '\\')}\\worldnodes\\n0")],
                                     [$"maps/{map}/entities/default_ents.vents"], timestamp, fingerprint ?? (ulong)Random.Shared.NextInt64(), baked);
-        outputs.Add(new($"maps/{map}/world.vwrld_c", Source2ContainerAuthor.AuthorKv3Tree(vwrld, ValveResourceFormat.Serialization.KeyValues.KV3IDLookup.Get("generic"), ".vwrld")));
+        outputs.Add(new($"maps/{map}/world.vwrld_c", Source2ContainerAuthor.AuthorKv3Tree(vwrld, Kv3Formats.Get("generic"), ".vwrld")));
         string[] worldManifest = [$"maps/{map}/world.vwrld", $"maps/{map}/world_physics.vrman", $"maps/{map}/world_visibility.vvis"];
         outputs.Add(new($"maps/{map}/world.vrman_c", ResourceManifestAuthor.AuthorOverride(worldManifest, [.. worldManifest.Select(Backslashed)])));
         return outputs;

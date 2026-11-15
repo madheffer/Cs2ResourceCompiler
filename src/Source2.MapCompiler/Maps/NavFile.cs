@@ -1,5 +1,4 @@
 using ValveKeyValue;
-using ValveResourceFormat.ResourceTypes;
 
 namespace Source2.Compiler.Maps;
 
@@ -38,9 +37,9 @@ public static class NavFile
         w.Write(36);
         w.Write(1);
         w.Write(1);
-        w.Write(Kv3V5Writer.Write(KVObject.Null(), Format, KV3BinaryCompressionMethod.Uncompressed));
+        w.Write(Kv3BlockWriter.Write(KVObject.Null(), Format, Kv3Compression.Uncompressed));
         w.Write(new byte[23]);
-        w.Write(Kv3V5Writer.Write(KVObject.Null(), Format, KV3BinaryCompressionMethod.Uncompressed));
+        w.Write(Kv3BlockWriter.Write(KVObject.Null(), Format, Kv3Compression.Uncompressed));
         w.Write(DefaultGenerationParameters);
         var hull = KVObject.Collection();
         hull.Add("Name", new KVObject("player"));
@@ -52,11 +51,11 @@ public static class NavFile
         generation.Add("HullParams", hulls);
         var parameters = KVObject.Collection();
         parameters.Add("NavGenParams", generation);
-        w.Write(Kv3V5Writer.Write(parameters, Format, KV3BinaryCompressionMethod.Uncompressed));
+        w.Write(Kv3BlockWriter.Write(parameters, Format, Kv3Compression.Uncompressed));
         w.Write(new byte[5]);
         var areas = KVObject.Collection();
         areas.Add("arealist", KVObject.Array());
-        w.Write(Kv3V5Writer.Write(areas, AreaListFormat, KV3BinaryCompressionMethod.Uncompressed));
+        w.Write(Kv3BlockWriter.Write(areas, AreaListFormat, Kv3Compression.Uncompressed));
         return m.ToArray();
     }
 

@@ -1,10 +1,10 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Io;
 using System.Globalization;
 using System.Numerics;
 using System.Text;
 using ValveKeyValue;
 using ValveKeyValue.KeyValues3;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler;
 
@@ -20,7 +20,7 @@ namespace Source2.Compiler;
 public static partial class EntityLumpAuthor
 {
     /// <summary>Format GUID a compiled entity lump's DATA carries.</summary>
-    private static readonly KV3ID Format = KV3IDLookup.Get("generic");
+    private static readonly KV3ID Format = Kv3Formats.Get("generic");
 
     /// <summary>
     /// What the compile puts in front of every entity name when the map asks for

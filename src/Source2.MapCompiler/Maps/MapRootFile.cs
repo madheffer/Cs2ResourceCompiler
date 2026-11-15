@@ -1,9 +1,7 @@
+using Source2.Compiler.KeyValues;
 using System.IO.Hashing;
 using Source2.Compiler.Io;
 using ValveKeyValue;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Maps;
 
@@ -102,16 +100,12 @@ public static class MapRootFile
     {
         var childList = children.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(c => c, StringComparer.Ordinal).ToList();
         var references = childList.Concat(assets).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(c => c, StringComparer.Ordinal).ToList();
-        var generic = KV3IDLookup.Get("generic");
-        using var resource = new Resource();
-        LegacyContainer.SetResourceVersion(resource, 1);
-        var rerl = new ResourceExtRefList { Resource = resource };
-        foreach (var path in references)
-            rerl.ResourceRefInfoList.Add(new ResourceExtRefList.ResourceReferenceInfo { Id = Source2ResourceId.ForPath(path), Name = path });
-        resource.Blocks.Add(rerl);
-        resource.Blocks.Add(AuthoredKv3.Block(EditInfo(compile, childList, subassets), generic, BlockType.RED2, resource));
-        resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.DATA, [], resource));
-        return ValveLayout.Serialize(resource);
+        var generic = Kv3Formats.Get("generic");
+        var file = new ResourceFile { Version = 1 };
+        file.Blocks.Add(ResourceRefs.Block(references, keepEmpty: true)!);
+        file.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(EditInfo(compile, childList, subassets), generic)));
+        file.Blocks.Add(new ResourceBlock("DATA", []));
+        return file.Write();
     }
 
     // The arguments a compile's steps read (ArgumentDependencies records each one read), by step. Readers

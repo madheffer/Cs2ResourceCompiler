@@ -1,6 +1,6 @@
+using Source2.Compiler.Materials;
+using Source2.Compiler.Shaders.Vfx;
 using System.Runtime.InteropServices;
-using ValveResourceFormat.CompiledShader;
-using ValveResourceFormat.ResourceTypes;
 using Value = Source2.Compiler.Gpu.VfxExpression.Value;
 
 namespace Source2.Compiler.Gpu;
@@ -20,7 +20,7 @@ public static class ProgramGlobals
     /// source is ShaderIDColor), when known; <paramref name="reflectivity"/> reads a texture's header reflectivity
     /// (TextureAverageColor).
     /// </summary>
-    public sealed class MaterialScope(Material material, ValveProgram program, IReadOnlyDictionary<string, Value> attributes, Value? shaderIdColor = null,
+    public sealed class MaterialScope(CompiledMaterial material, ValveProgram program, IReadOnlyDictionary<string, Value> attributes, Value? shaderIdColor = null,
                                       Func<string, float[]?>? reflectivity = null) : VfxExpression.IScope
     {
         public float[]? TextureReflectivity(string path) => reflectivity?.Invoke(path);

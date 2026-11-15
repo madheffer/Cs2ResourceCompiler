@@ -1,7 +1,7 @@
+using Source2.Compiler.KeyValues;
 using Source2.Compiler.Io;
 using System.Numerics;
 using ValveKeyValue;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Maps;
 

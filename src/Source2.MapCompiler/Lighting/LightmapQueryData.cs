@@ -79,7 +79,7 @@ public static class LightmapQueryData
         root.Add("index_count", new KVObject(indexCount));
         root.Add("vertices", KVObject.Blob(vertexBlob));
         root.Add("indices", KVObject.Blob(indexBlob));
-        return Kv3V5Writer.Write(root, GenericFormat);
+        return Kv3BlockWriter.Write(root, GenericFormat);
     }
 
     private static int Cvttss2si(float f) => float.IsNaN(f) || f >= 2147483648f || f < -2147483648f ? int.MinValue : (int)f;

@@ -1,8 +1,5 @@
+using Source2.Compiler.KeyValues;
 using System.Text;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
-using ValveResourceFormat.ResourceTypes;
 
 namespace Source2.Compiler.Cli;
 
@@ -59,13 +56,9 @@ internal static class Commands
     public static int Decompile(string[] a)
     {
         var input = Positional(a, "input file");
-        using var res = new Resource { FileName = Path.GetFileName(input) };
-        res.Read(input);
-
-        var block = Opt(a, "--block") is { } b
-            ? Enum.Parse<BlockType>(b, ignoreCase: true)
-            : BlockType.DATA;
-        var text = ResourceDecompiler.BlockToKv3(res, block, out var why);
+        var res = CompiledResource.Read(File.ReadAllBytes(input));
+        var block = (Opt(a, "--block") ?? "DATA").ToUpperInvariant();
+        var text = ResourceText.BlockToKv3(res, block, out var why);
         if (text is null)
         {
             Console.Error.WriteLine("cannot decompile: " + why);
@@ -86,7 +79,7 @@ internal static class Commands
         // --template is optional: without one the container is authored outright.
         var template = Opt(a, "--template") is { } t ? File.ReadAllBytes(t) : null;
 
-        var def = new ResourceBuilder.TextureDef
+        var def = new PackageResourceBuilder.TextureDef
         {
             ImageBytes = File.ReadAllBytes(input),
             GenerateMipmaps = !a.Contains("--no-mips"),
@@ -96,10 +89,10 @@ internal static class Commands
         if (Opt(a, "--max-dim") is { } md)
             def.MaxDimension = int.Parse(md);
 
-        var bytes = ResourceBuilder.BuildTexture(template, def);
+        var bytes = PackageResourceBuilder.BuildTexture(template, def);
         File.WriteAllBytes(outPath, bytes);
         Console.WriteLine($"{outPath}  ({bytes.Length:n0} bytes, {def.Compression}, "
-                        + $"encoder {ResourceBuilder.Bc7CacheTag(def.Bc7Mode)})");
+                        + $"encoder {PackageResourceBuilder.Bc7CacheTag(def.Bc7Mode)})");
         return 0;
     }
 
@@ -130,7 +123,7 @@ internal static class Commands
         var rgba = new byte[atlas.Width * atlas.Height * 4];
         atlas.GetPixelSpan()[..rgba.Length].CopyTo(rgba);
 
-        var def = new ResourceBuilder.TextureDef
+        var def = new PackageResourceBuilder.TextureDef
         {
             RawRgba = rgba,
             RawWidth = atlas.Width,
@@ -138,13 +131,13 @@ internal static class Commands
             // A mip chain would blend neighbouring frames of the atlas into each
             // other, which is why stock sheets ship NO_LOD with a single level.
             GenerateMipmaps = false,
-            Flags = ResourceBuilder.VTexFlags.NO_LOD,
+            Flags = PackageResourceBuilder.VTexFlags.NO_LOD,
             Compression = ParseFormat(Opt(a, "--format")),
             SourceName = Opt(a, "--ship-as") ?? "materials/vpkeditor/" + Path.GetFileName(input),
             SheetData = SpriteSheet.Write(packed.Sequences),
         };
 
-        var bytes = ResourceBuilder.BuildTexture(template, def);
+        var bytes = PackageResourceBuilder.BuildTexture(template, def);
         File.WriteAllBytes(outPath, bytes);
 
         var frames = script.Sequences.Sum(s => s.Frames.Count);
@@ -160,7 +153,7 @@ internal static class Commands
         // --template is optional: without one the container is authored outright.
         var template = Opt(a, "--template") is { } t ? File.ReadAllBytes(t) : null;
 
-        var bytes = ResourceBuilder.BuildPanoramaSvg(template, File.ReadAllBytes(input), Opt(a, "--ship-as"));
+        var bytes = PackageResourceBuilder.BuildPanoramaSvg(template, File.ReadAllBytes(input), Opt(a, "--ship-as"));
         File.WriteAllBytes(outPath, bytes);
         Console.WriteLine($"{outPath}  ({bytes.Length:n0} bytes)");
         return 0;
@@ -173,7 +166,7 @@ internal static class Commands
         // --template is optional: without one the container is authored outright.
         var template = Opt(a, "--template") is { } t ? File.ReadAllBytes(t) : null;
 
-        var bytes = ResourceBuilder.BuildSound(template, File.ReadAllBytes(input), Opt(a, "--ship-as"));
+        var bytes = PackageResourceBuilder.BuildSound(template, File.ReadAllBytes(input), Opt(a, "--ship-as"));
         File.WriteAllBytes(outPath, bytes);
         Console.WriteLine($"{outPath}  ({bytes.Length:n0} bytes)");
         return 0;
@@ -235,8 +228,7 @@ internal static class Commands
 
         var original = File.ReadAllBytes(input);
         var name = Path.GetFileName(input);
-        using var valve = new Resource { FileName = name };
-        valve.Read(new MemoryStream(original));
+        var valve = CompiledResource.Read(original);
 
         // "world.vwrld_c" is compiled from a ".vwrld", which is what the author
         // needs to stamp the right identity on it.
@@ -248,13 +240,11 @@ internal static class Commands
         byte[] ours;
         if (sourceExtension is ".vrman")
         {
-            var data = valve.Blocks.First(b => b.Type == BlockType.DATA);
-            var payload = original.AsSpan((int)data.Offset, (int)data.Size).ToArray();
-            ours = ResourceManifestAuthor.Author(ResourceManifestAuthor.ReadData(payload));
+            ours = ResourceManifestAuthor.Author(ResourceManifestAuthor.ReadData(valve.Block("DATA")!.Data));
         }
-        else if (valve.DataBlock is KeyValuesOrNTRO { Format: { } format } tree)
+        else if (valve.Kv3("DATA") is { } tree && valve.Kv3Format("DATA") is { } format)
         {
-            ours = Source2ContainerAuthor.AuthorKv3Tree(tree.Data, format, sourceExtension);
+            ours = Source2ContainerAuthor.AuthorKv3Tree(tree, format, sourceExtension);
         }
         else
         {
@@ -268,13 +258,12 @@ internal static class Commands
         // writer reproducing the TREE while differing in bytes is a pass, and it
         // is what the authoring tests assert. Say which of the two happened.
         var identical = ours.AsSpan().SequenceEqual(original);
-        using var mine = new Resource { FileName = name };
-        mine.Read(new MemoryStream(ours));
+        var mine = CompiledResource.Read(ours);
 
         // A manifest's DATA is a bare string list rather than KV3, so fall back to
         // comparing that block's bytes instead of calling it "not compared".
-        var theirTree = ResourceDecompiler.DataBlockToKv3(valve, out _);
-        var ourTree = ResourceDecompiler.DataBlockToKv3(mine, out _);
+        var theirTree = ResourceText.DataBlockToKv3(valve, out _);
+        var ourTree = ResourceText.DataBlockToKv3(mine, out _);
         var sameTree = theirTree is not null
             ? theirTree == ourTree
             : DataBytes(original, valve).Span.SequenceEqual(DataBytes(ours, mine).Span);
@@ -301,15 +290,12 @@ internal static class Commands
     }
 
     /// <summary>A container's DATA block payload.</summary>
-    private static ReadOnlyMemory<byte> DataBytes(byte[] bytes, Resource resource)
-    {
-        var block = resource.Blocks.FirstOrDefault(b => b.Type == BlockType.DATA);
-        return block is null ? default : bytes.AsMemory((int)block.Offset, (int)block.Size);
-    }
+    private static ReadOnlyMemory<byte> DataBytes(byte[] bytes, CompiledResource resource)
+        => resource.Block("DATA") is { } block ? block.Data : default;
 
     /// <summary>Every resource id a container's RERL names.</summary>
-    private static HashSet<ulong> References(Resource resource)
-        => [.. (resource.ExternalReferences?.ResourceRefInfoList ?? []).Select(r => r.Id)];
+    private static HashSet<ulong> References(CompiledResource resource)
+        => resource.Block("RERL") is { } rerl ? [.. ResourceRefs.Read(rerl.Data).Select(r => r.Id)] : [];
 
     /// <summary>
     /// Parse every resource in a map VPK and resolve every reference it names.
@@ -346,11 +332,10 @@ internal static class Commands
 
             try
             {
-                using var resource = new Resource { FileName = Path.GetFileName(name) };
-                resource.Read(new MemoryStream(bytes));
+                var resource = CompiledResource.Read(bytes);
                 parsed++;
 
-                foreach (var reference in resource.ExternalReferences?.ResourceRefInfoList ?? [])
+                foreach (var reference in resource.Block("RERL") is { } rerl ? ResourceRefs.Read(rerl.Data) : [])
                 {
                     references++;
                     if (present.Contains(reference.Id))
@@ -494,10 +479,8 @@ internal static class Commands
 
         static List<string> ManifestPaths(byte[] bytes)
         {
-            using var resource = new Resource();
-            resource.Read(new MemoryStream(bytes));
-            var data = resource.Blocks.First(b => b.Type == BlockType.DATA);
-            return [.. ResourceManifestAuthor.ReadData(bytes.AsSpan((int)data.Offset, (int)data.Size)).SelectMany(g => g)];
+            var data = CompiledResource.Read(bytes).Block("DATA")!;
+            return [.. ResourceManifestAuthor.ReadData(data.Data).SelectMany(g => g)];
         }
     }
 
@@ -678,10 +661,8 @@ internal static class Commands
             return "not a compiled resource";
         try
         {
-            using var a = new Resource();
-            a.Read(new MemoryStream(one));
-            using var b = new Resource();
-            b.Read(new MemoryStream(two));
+            var a = ResourceFile.Read(one);
+            var b = ResourceFile.Read(two);
 
             // Every block, paired with the same occurrence of its type in the other
             // (a model with two draw sets has two MVTX and two MIDX).
@@ -699,8 +680,8 @@ internal static class Commands
                         parts.Add($"{label}:only-in-{(k >= ofA.Count ? "candidate" : "reference")}");
                         continue;
                     }
-                    var first = one.AsMemory((int)ofA[k].Offset, (int)ofA[k].Size);
-                    var second = two.AsMemory((int)ofB[k].Offset, (int)ofB[k].Size);
+                    ReadOnlyMemory<byte> first = ofA[k].Data;
+                    ReadOnlyMemory<byte> second = ofB[k].Data;
                     if (!first.Span.SequenceEqual(second.Span))
                         parts.Add($"{label}:differs({first.Length:n0}->{second.Length:n0})");
                 }
@@ -716,12 +697,8 @@ internal static class Commands
     public static int Entities(string[] a)
     {
         var input = Positional(a, "compiled entity lump");
-        using var res = new Resource { FileName = Path.GetFileName(input) };
-        res.Read(input);
-
-        var lump = res.DataBlock as EntityLump
-                   ?? throw new InvalidOperationException($"{input} is not an entity lump.");
-        var root = lump.Data;
+        var root = CompiledResource.Read(File.ReadAllBytes(input)).Kv3("DATA") is { } data && data.ContainsKey("m_entityKeyValues")
+            ? data : throw new InvalidOperationException($"{input} is not an entity lump.");
         Console.WriteLine($"lump\t{root.GetStringProperty("m_name")}");
         foreach (var child in root.GetArray<string>("m_childLumps") ?? [])
             Console.WriteLine($"childLump\t{child}");
@@ -748,50 +725,46 @@ internal static class Commands
     public static int Inspect(string[] a)
     {
         var input = Positional(a, "compiled resource");
-        using var res = new Resource { FileName = Path.GetFileName(input) };
-        res.Read(input);
+        var res = CompiledResource.Read(File.ReadAllBytes(input));
 
-        Console.WriteLine($"type           {res.ResourceType}");
         Console.WriteLine($"resver         {res.Version}");
-        Console.WriteLine($"blocks         {string.Join(' ', res.Blocks.Select(b => b.Type))}");
+        Console.WriteLine($"blocks         {string.Join(' ', res.File.Blocks.Select(b => b.Type))}");
 
-        if (res.EditInfo is { } edit)
+        if (res.Kv3("RED2") is { } edit)
         {
             Console.WriteLine("RED2 special dependencies");
-            foreach (var d in edit.SpecialDependencies)
-                Console.WriteLine($"  {d.String,-38} {d.CompilerIdentifier,-28} fp={d.Fingerprint} user={d.UserData}");
+            foreach (var d in edit.GetArray("m_SpecialDependencies") ?? [])
+                Console.WriteLine($"  {d.GetStringProperty("m_String"),-38} {d.GetStringProperty("m_CompilerIdentifier"),-28} fp={d.GetUInt32Property("m_nFingerprint")} user={d.GetUInt32Property("m_nUserData")}");
             Console.WriteLine("RED2 input dependencies");
-            foreach (var d in edit.InputDependencies)
-                Console.WriteLine($"  {d.ContentRelativeFilename,-58} crc={d.FileCRC}");
+            foreach (var d in edit.GetArray("m_InputDependencies") ?? [])
+                Console.WriteLine($"  {d.GetStringProperty("m_RelativeFilename"),-58} crc={d.GetUInt32Property("m_nFileCRC")}");
         }
 
-        var rerl = res.ExternalReferences?.ResourceRefInfoList;
-        Console.WriteLine($"RERL           {rerl?.Count ?? 0} entries");
-        foreach (var r in rerl ?? [])
+        var rerl = res.Block("RERL") is { } r0 ? ResourceRefs.Read(r0.Data) : [];
+        Console.WriteLine($"RERL           {rerl.Count} entries");
+        foreach (var r in rerl)
         {
-            var expected = r.Name is null ? 0 : Source2ResourceId.ForPath(r.Name);
-            var agrees = r.Name is not null && expected == r.Id ? "ok" : "MISMATCH";
+            var agrees = Source2ResourceId.ForPath(r.Name) == r.Id ? "ok" : "MISMATCH";
             Console.WriteLine($"  {r.Id:x16} {agrees,-8} {r.Name}");
         }
-        // --data: the DATA block as text.
+        // --data: the DATA block as text; --block <type>: that block (PHYS, CTRL, ...).
         if (a.Contains("--data"))
-            Console.WriteLine(res.DataBlock?.ToString());
-        // --block <type>: that block as text (PHYS, CTRL, ...).
+            Console.WriteLine(ResourceText.DataBlockToKv3(res, out var why) ?? why);
         if (Opt(a, "--block") is { } blockType)
-            Console.WriteLine(res.Blocks.FirstOrDefault(b => b.Type.ToString() == blockType)?.ToString());
+            Console.WriteLine(ResourceText.BlockToKv3(res, blockType, out var why2) ?? why2);
         return 0;
     }
 
     // argument plumbing
 
-    private static ResourceBuilder.TextureCompression ParseFormat(string? f) => (f ?? "bc7").ToLowerInvariant() switch
+    private static PackageResourceBuilder.TextureCompression ParseFormat(string? f) => (f ?? "bc7").ToLowerInvariant() switch
     {
-        "bc7" => ResourceBuilder.TextureCompression.BC7,
-        "bc5" => ResourceBuilder.TextureCompression.BC5,
-        "bc4" => ResourceBuilder.TextureCompression.BC4,
-        "bc3" or "dxt5" => ResourceBuilder.TextureCompression.BC3,
-        "bc1" or "dxt1" => ResourceBuilder.TextureCompression.BC1,
-        "rgba" or "none" => ResourceBuilder.TextureCompression.None,
+        "bc7" => PackageResourceBuilder.TextureCompression.BC7,
+        "bc5" => PackageResourceBuilder.TextureCompression.BC5,
+        "bc4" => PackageResourceBuilder.TextureCompression.BC4,
+        "bc3" or "dxt5" => PackageResourceBuilder.TextureCompression.BC3,
+        "bc1" or "dxt1" => PackageResourceBuilder.TextureCompression.BC1,
+        "rgba" or "none" => PackageResourceBuilder.TextureCompression.None,
         _ => throw new ArgumentException($"unknown --format '{f}' (bc7|bc5|bc4|bc3|bc1|rgba)"),
     };
 

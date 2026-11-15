@@ -1,7 +1,7 @@
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using ValveKeyValue;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Physics;
 

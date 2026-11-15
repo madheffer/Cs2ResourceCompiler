@@ -3,7 +3,6 @@ using Source2.Compiler.Lighting;
 using Source2.Compiler.Lighting.Bake;
 using Source2.Compiler.Maps;
 using ValveKeyValue;
-using ValveResourceFormat.ResourceTypes;
 
 namespace Source2.Compiler.Gpu;
 
@@ -81,18 +80,12 @@ public static class OwnLightingBake
         using (var s = File.OpenRead(Path.Combine(folder, "scene_info.kv3")))
             sceneInfo = KVSerializer.Create(KVSerializationFormat.KeyValues3Text).Deserialize(s);
         KVObject sceneMeshes;
-        using (var reader = new BinaryReader(File.OpenRead(Path.Combine(folder, "scene_meshes.kv3"))))
-        using (var owner = new ValveResourceFormat.Resource())
-        {
-            var kv = new BinaryKV3 { Resource = owner };
-            kv.Read(reader);
-            sceneMeshes = kv.Data.Root;
-        }
+        sceneMeshes = Kv3Binary.Read(File.ReadAllBytes(Path.Combine(folder, "scene_meshes.kv3"))).Root;
         var scene = BakeScene.Load(sceneInfo, sceneMeshes, Material, Cubemap);
         var packing = PackingGeometry.Read(File.ReadAllBytes(Path.Combine(folder, "lightmap_packing_geometry.dat")));
-        using var halton = new ValveResourceFormat.Resource();
-        halton.Read(new MemoryStream(Core("textures/dev/scrambled_halton.vdata_c") ?? throw new InvalidOperationException("core's scrambled_halton.vdata_c is missing")));
-        var permutations = HaltonSamples.Permutations(((BinaryKV3)halton.DataBlock!).Data.Root["permutations"].AsBlob());
+        var halton = CompiledResource.Read(Core("textures/dev/scrambled_halton.vdata_c") ?? throw new InvalidOperationException("core's scrambled_halton.vdata_c is missing")).Kv3("DATA")
+                     ?? throw new InvalidDataException("scrambled_halton.vdata_c has no KV3 DATA block.");
+        var permutations = HaltonSamples.Permutations(halton["permutations"].AsBlob());
         var scriptLines = File.ReadAllLines(Path.Combine(folder, "script-gpu.vrad3"));
         var script = Script.Parse(scriptLines);
         var routine = scriptLines.SkipWhile(l => l.Trim() != "process_all_lightmap_blocks:").Skip(1).ToList();

@@ -1,7 +1,7 @@
+using Source2.Compiler.Rubikon;
+using Source2.Compiler.KeyValues;
 using System.Numerics;
 using Source2.Compiler.Maps;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler.Physics;
 
@@ -82,7 +82,7 @@ public static class StaticPropHulls
     public static List<HullNode> Nodes(Prop prop, PhysAggregateData phys) => Nodes(prop, phys, out _);
 
     /// <summary><see cref="Nodes(Prop, PhysAggregateData)"/>, with each node's hull description (collision attribute and surface indices).</summary>
-    public static List<HullNode> Nodes(Prop prop, PhysAggregateData phys, out Dictionary<HullNode, ValveResourceFormat.ResourceTypes.RubikonPhysics.HullDescriptor> descs)
+    public static List<HullNode> Nodes(Prop prop, PhysAggregateData phys, out Dictionary<HullNode, Source2.Compiler.Rubikon.HullDescriptor> descs)
     {
         var nodes = new List<HullNode>();
         descs = new(ReferenceEqualityComparer.Instance);
@@ -178,7 +178,7 @@ public static class StaticPropHulls
     /// the surface: the mesh's own (<c>Surface</c> -1) or, for a mesh split
     /// by per-triangle material, that surface index.
     /// </summary>
-    public sealed record MeshNode(int Part, Vector3[] Points, int[] Indices, ValveResourceFormat.ResourceTypes.RubikonPhysics.MeshDescriptor Desc, int Surface);
+    public sealed record MeshNode(int Part, Vector3[] Points, int[] Indices, Source2.Compiler.Rubikon.MeshDescriptor Desc, int Surface);
 
     /// <summary>
     /// The mesh nodes physicsbuilder makes for a prop's meshes (180153390),
@@ -388,7 +388,7 @@ public static class StaticPropHulls
     }
 
     /// <summary>A deformed prop's hull as the triangle mesh node it becomes, with the hull's description.</summary>
-    public sealed record DeformedHull(int Part, Vector3[] Points, int[] Indices, ValveResourceFormat.ResourceTypes.RubikonPhysics.HullDescriptor Desc);
+    public sealed record DeformedHull(int Part, Vector3[] Points, int[] Indices, Source2.Compiler.Rubikon.HullDescriptor Desc);
 
     /// <summary>
     /// A deformed prop's hulls (1814c7e90 with a deformer), body by body and

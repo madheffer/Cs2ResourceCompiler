@@ -1,5 +1,6 @@
+using Source2.Compiler.Shaders;
+using Source2.Compiler.Shaders.Vfx;
 using ValvePak;
-using ValveResourceFormat.CompiledShader;
 
 namespace Source2.Compiler.Gpu;
 
@@ -42,8 +43,7 @@ public sealed class ValveProgram
     {
         var entry = package.FindEntry($"shaders/vfx/{name}.vcs") ?? throw new FileNotFoundException(name);
         package.ReadEntry(entry, out var bytes);
-        var program = new VfxProgramData();
-        program.Read($"{name}.vcs", new MemoryStream(bytes));
+        var program = VfxProgramData.Read($"{name}.vcs", bytes);
         return program;
     }
 
@@ -74,7 +74,7 @@ public sealed class ValveProgram
     {
         var name = $"{shader}_{platform}_{stage}";
         var program = Read(package, name);
-        using var featureFile = Read(package, $"{shader}_{platform}_features");
+        var featureFile = Read(package, $"{shader}_{platform}_features");
         string[] featureNames = [.. featureFile.StaticComboArray.Select(f => f.Name)];
         long staticId = 0;
         var config = new int[program.StaticComboArray.Length];
@@ -99,7 +99,7 @@ public sealed class ValveProgram
         // A configuration the file's static rules exclude (csgo_vertexlitgeneric's S_SPECULAR_DIRECT in ToolsVis) is
         // reduced as the rules say (VRF's ShaderDataProvider, as MaterialAttributes does); the captures' modules are
         // the reduced combos.
-        if (!program.StaticComboEntries.ContainsKey(staticId) && ValveResourceFormat.IO.ShaderDataProvider.TryReduceStaticConfiguration(program, config, out var reduced))
+        if (!program.StaticComboEntries.ContainsKey(staticId) && VfxCombos.TryReduceStaticConfiguration(program, config, out var reduced))
             staticId = program.StaticComboArray.Sum(c => (long)(reduced[c.Index] - c.RangeMin) * c.ComboIndexValue);
         if (!program.StaticComboEntries.ContainsKey(staticId) && orNone)
             return null;

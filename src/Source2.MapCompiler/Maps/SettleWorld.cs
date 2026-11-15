@@ -1,11 +1,11 @@
-﻿using Source2.Compiler.Io;
+﻿using Source2.Compiler.Rubikon;
+using Source2.Compiler.KeyValues;
+using Source2.Compiler.Io;
 using System.Numerics;
 using Source2.Compiler.Physics;
 using Source2.Compiler.Simulation;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
-using VrfHull = ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Hull;
-using VrfMesh = ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Mesh;
+using HullShape = Source2.Compiler.Rubikon.Shapes.Hull;
+using MeshShape = Source2.Compiler.Rubikon.Shapes.Mesh;
 
 namespace Source2.Compiler.Maps;
 
@@ -990,7 +990,7 @@ public static partial class SettleWorld
     }
 
     /// <summary>An RnHull_t as a model stores it (VPhysXAggregateData_t m_Hull).</summary>
-    public static RnHull Hull(VrfHull h)
+    public static RnHull Hull(HullShape h)
     {
         var mass = h.Data.GetArray<object>("m_MassProperties")?.Select(Convert.ToSingle).ToArray() ?? new float[12];
         var hull = new RnHull
@@ -1029,7 +1029,7 @@ public static partial class SettleWorld
     }
 
     /// <summary>An RnMesh_t as a model stores it.</summary>
-    public static RnMesh Mesh(VrfMesh m)
+    public static RnMesh Mesh(MeshShape m)
     {
         var nodes = m.ParseNodes();
         var triangles = m.GetTriangles();

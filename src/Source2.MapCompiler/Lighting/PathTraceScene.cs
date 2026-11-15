@@ -154,7 +154,7 @@ internal static class PathTraceScene
         foreach (var m in meshes)
             list.Add(MeshNode(m));
         var root = Collection(("meshes", list));
-        return Kv3V5Writer.Write(root, GenericFormat, ValveResourceFormat.ResourceTypes.KV3BinaryCompressionMethod.Uncompressed);
+        return Kv3BlockWriter.Write(root, GenericFormat, Kv3Compression.Uncompressed);
     }
 
     // 1812e4550, key for key.
