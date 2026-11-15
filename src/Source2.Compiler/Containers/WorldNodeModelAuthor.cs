@@ -1,8 +1,6 @@
+using Source2.Compiler.Kv3;
 using ValveKeyValue;
 using ValveKeyValue.KeyValues3;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler;
 
@@ -26,25 +24,23 @@ public static class WorldNodeModelAuthor
     /// buffers come in block index order (each buffer's <c>m_nBlockIndex</c>
     /// in CTRL): a draw set's vertex buffers, then its index buffer.
     /// </summary>
-    public static byte[] Container(IReadOnlyList<(BlockType Type, byte[] Bytes)> buffers, KVObject mdat, KVObject ctrl,
+    public static byte[] Container(IReadOnlyList<(string Type, byte[] Bytes)> buffers, KVObject mdat, KVObject ctrl,
                                    IEnumerable<string> references, KVObject red2, KVObject data)
     {
-        var generic = KV3IDLookup.Get("generic");
-        using var resource = new Resource();
-        Source2ContainerAuthor.SetResourceVersion(resource, ResourceVersion);
+        var generic = Kv3Formats.Get("generic");
+        var file = new ResourceFile { Version = ResourceVersion };
         foreach (var (type, bytes) in buffers)
-            resource.Blocks.Add(ResourceBuilder.RawBlock(type, bytes, resource));
-        resource.Blocks.Add(AuthoredKv3.Block(mdat, generic, BlockType.MDAT, resource));
-        resource.Blocks.Add(AuthoredKv3.Block(ctrl, generic, BlockType.CTRL, resource));
-        var rerl = new ResourceExtRefList { Resource = resource };
+            file.Blocks.Add(new ResourceBlock(type, bytes));
+        file.Blocks.Add(new ResourceBlock("MDAT", Kv3Binary.Write(mdat, generic)));
+        file.Blocks.Add(new ResourceBlock("CTRL", Kv3Binary.Write(ctrl, generic)));
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var path in references)
-            if (!string.IsNullOrEmpty(path) && seen.Add(path))
-                rerl.ResourceRefInfoList.Add(new ResourceExtRefList.ResourceReferenceInfo { Id = Source2ResourceId.ForPath(path), Name = path });
-        if (rerl.ResourceRefInfoList.Count > 0)
-            resource.Blocks.Add(rerl);
-        resource.Blocks.Add(AuthoredKv3.Block(red2, generic, BlockType.RED2, resource));
-        resource.Blocks.Add(AuthoredKv3.Block(data, generic, BlockType.DATA, resource));
-        return ValveLayout.Serialize(resource);
+        // Sorted by V_stricmp_fast of the name, as RERL's one writer (rc 18016c0e0) sorts them.
+        var refs = EditInfo.Red2Sorted(references.Where(path => !string.IsNullOrEmpty(path) && seen.Add(path)), path => path)
+            .Select(path => (Source2ResourceId.ForPath(path), path)).ToList();
+        if (refs.Count > 0)
+            file.Blocks.Add(new ResourceBlock("RERL", ResourceRefs.Write(refs, 0)));
+        file.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(red2, generic)));
+        file.Blocks.Add(new ResourceBlock("DATA", Kv3Binary.Write(data, generic)));
+        return file.Write();
     }
 }

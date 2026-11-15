@@ -131,7 +131,7 @@ public static class VisibilityAuthor
     {
         var generic = KV3IDLookup.Get("generic");
         using var resource = new Resource();
-        Source2ContainerAuthor.SetResourceVersion(resource, 7);
+        LegacyContainer.SetResourceVersion(resource, 7);
         resource.Blocks.Add(AuthoredKv3.Block(Red2(inputFingerprint, published), generic, BlockType.RED2, resource));
         resource.Blocks.Add(AuthoredKv3.Block(Data(vis), generic, BlockType.DATA, resource));
         resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.VXVS, vis.WriteVxvs(), resource));

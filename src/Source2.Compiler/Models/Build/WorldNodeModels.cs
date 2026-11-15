@@ -1,7 +1,6 @@
 using System.Numerics;
 using Source2.Compiler.Io;
 using Source2.Compiler.Meshopt;
-using ValveResourceFormat;
 
 namespace Source2.Compiler.Maps;
 
@@ -48,7 +47,7 @@ public static class WorldNodeModels
                                        IReadOnlyList<Source2ContainerAuthor.MaterialAuthoring.InputSignatureElement> Depth);
 
     /// <summary>A built model: its description, buffer blocks in block order, referenced materials, and each draw's first mesh.</summary>
-    public sealed record Built(WorldNodeModel Model, List<(BlockType Type, byte[] Bytes)> Buffers, List<string> References,
+    public sealed record Built(WorldNodeModel Model, List<(string Type, byte[] Bytes)> Buffers, List<string> References,
                                IReadOnlyList<WorldNodeEntry> DrawSources)
     {
         /// <summary>The vertex buffers before encoding, for comparison.</summary>
@@ -193,7 +192,7 @@ public static class WorldNodeModels
             }
         var vertexBuffers = new List<WorldNodeModel.VertexBuffer>();
         var indexBuffers = new List<WorldNodeModel.IndexBuffer>();
-        var buffers = new List<(BlockType Type, byte[] Bytes)>();
+        var buffers = new List<(string Type, byte[] Bytes)>();
         var raw = new List<byte[]>();
         var described = new Dictionary<DrawInput, WorldNodeModel.Draw>(ReferenceEqualityComparer.Instance);
         var drawBounds = new Dictionary<DrawInput, (Vector3, Vector3)>(ReferenceEqualityComparer.Instance);
@@ -292,11 +291,11 @@ public static class WorldNodeModels
                 var vbBytes = totalVertices > 0 ? MeshoptEncoder.EncodeVertexBuffer(vbs[b], totalVertices, strides[b]) : [];
                 var vbMeshopt = vbBytes.Length < totalVertices * strides[b];
                 vertexBuffers.Add(new WorldNodeModel.VertexBuffer(totalVertices, strides[b], vbMeshopt, [.. slots.Where(l => l.Buffer == b).Select(l => l.Field)]));
-                buffers.Add((BlockType.MVTX, vbMeshopt ? vbBytes : vbs[b]));
+                buffers.Add(("MVTX", vbMeshopt ? vbBytes : vbs[b]));
                 raw.Add(vbs[b]);
             }
             indexBuffers.Add(new WorldNodeModel.IndexBuffer(ib.Count, elementSize, ibMeshopt, aggregate));
-            buffers.Add((BlockType.MIDX, ibBytes));
+            buffers.Add(("MIDX", ibBytes));
         }
         // The draws set by set (ModelCompile_BuildDrawSets 1802f69f0 appends each mesh to the first
         // 400-byte set whose layouts match, and the sets' meshes are compiled set by set): atixref's

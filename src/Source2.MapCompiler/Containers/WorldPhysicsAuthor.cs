@@ -45,7 +45,7 @@ public static class WorldPhysicsAuthor
         ArgumentNullException.ThrowIfNull(data);
         var generic = KV3IDLookup.Get("generic");
         using var resource = new Resource();
-        Source2ContainerAuthor.SetResourceVersion(resource, ResourceVersion);
+        LegacyContainer.SetResourceVersion(resource, ResourceVersion);
         var physBlock = phys == null ? null : AuthoredKv3.Block(phys, generic, BlockType.PHYS, resource);
         if (physBlock != null)
         {

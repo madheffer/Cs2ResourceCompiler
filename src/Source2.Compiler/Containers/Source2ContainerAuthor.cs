@@ -1,11 +1,7 @@
 using System.IO.Hashing;
-using System.Reflection;
+using Source2.Compiler.Kv3;
 using ValveKeyValue;
 using ValveKeyValue.KeyValues3;
-using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 
 namespace Source2.Compiler;
 
@@ -93,16 +89,6 @@ public static partial class Source2ContainerAuthor
         return folder + "/" + safe.ToLowerInvariant() + sourceExtension.ToLowerInvariant();
     }
 
-    // Resource.Version has a private setter (VRF is a reader first); this is
-    // the single reflection point of the author. Cached; loudly fails if the
-    // upstream property ever moves.
-    private static readonly PropertyInfo ResourceVersionProp =
-        typeof(Resource).GetProperty(nameof(Resource.Version), BindingFlags.Public | BindingFlags.Instance)
-        ?? throw new InvalidOperationException("Resource.Version property missing - VRF API changed?");
-
-    /// <summary>Set a resource's container version (VRF keeps the setter private).</summary>
-    public static void SetResourceVersion(Resource resource, ushort version) => ResourceVersionProp.SetValue(resource, version);
-
     /// <summary>
     /// Author a compiled container for the parsed KV3 source <paramref name="userDoc"/>.
     /// </summary>
@@ -173,8 +159,7 @@ public static partial class Source2ContainerAuthor
         KVObject dataRoot, KV3ID format, ContainerSpec spec, string sourceExtension,
         string sourceFileName, byte[] sourceTextBytes, KVDocument? userDoc, bool narrowIntegers, Func<KVObject, KVObject>? editRed2 = null)
     {
-        using var resource = new Resource();
-        ResourceVersionProp.SetValue(resource, spec.ResourceVersion);
+        var file = new ResourceFile { Version = spec.ResourceVersion };
 
         // RERL - resourcecompiler emits the block ONLY when the compiled data
         // actually references other resources (verified: a ref-free vpcf ships
@@ -183,21 +168,12 @@ public static partial class Source2ContainerAuthor
         // own path-hash id (MurmurHash64B - reproduces stock RERL ids exactly).
         var refs = new List<string>();
         CollectResourceRefs(dataRoot, new HashSet<string>(StringComparer.OrdinalIgnoreCase), refs);
-        // A map's child resource lists them by path (probe01's n0.vwnod: the
-        // aggregate models before the cluster model).
-        if (spec.ChildResource)
-            refs = [.. refs.OrderBy(r => r, StringComparer.Ordinal)];
+        // RERL's one writer (rc 18016c0e0) std::sorts the entries by V_stricmp_fast of the name,
+        // whatever order they were added in (probe01's n0.vwnod: the aggregate models before the
+        // cluster model).
+        refs = EditInfo.Red2Sorted(refs, r => r);
         if (refs.Count > 0)
-        {
-            var rerl = new ResourceExtRefList { Resource = resource };
-            foreach (var path in refs)
-                rerl.ResourceRefInfoList.Add(new ResourceExtRefList.ResourceReferenceInfo
-                {
-                    Id = Source2ResourceId.ForPath(path),
-                    Name = path,
-                });
-            resource.Blocks.Add(rerl);
-        }
+            file.Blocks.Add(new ResourceBlock("RERL", ResourceRefs.Write([.. refs.Select(path => (Source2ResourceId.ForPath(path), path))], 0)));
 
         // RED2 - authored for THIS compile (real source name + CRC, correct
         // compiler identity, real subasset data), as a binary-KV3 blob with the
@@ -207,18 +183,17 @@ public static partial class Source2ContainerAuthor
         var red2Doc = BuildRed2Document(spec, sourceExtension, sourceFileName, sourceTextBytes, userDoc);
         if (editRed2 != null)
             red2Doc = editRed2(red2Doc);
-        resource.Blocks.Add(AuthoredKv3.Block(NarrowIntegers(red2Doc), KV3IDLookup.Get("generic"), BlockType.RED2, resource));
+        file.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(NarrowIntegers(red2Doc), Kv3Formats.Get("generic"))));
 
         // DATA - the caller's tree, under its own format GUID.
-        resource.Blocks.Add(AuthoredKv3.Block(
-            narrowIntegers ? NarrowIntegers(dataRoot) : dataRoot, format, BlockType.DATA, resource));
+        file.Blocks.Add(new ResourceBlock("DATA", Kv3Binary.Write(narrowIntegers ? NarrowIntegers(dataRoot) : dataRoot, format)));
 
         // FLCI (source-file line map) is deliberately not authored: it is
         // editor-only metadata and pre-FLCI stock resources load fine without it.
 
-        // A map's child resources take the compiler's own layout (RERL's entry
-        // array on an 8-byte boundary, blocks padded with zeros).
-        return spec.ChildResource ? ValveLayout.Serialize(resource) : ResourceBuilder.Serialize(resource);
+        // resourcecompiler's layout (RERL's entry array on an 8-byte boundary, blocks
+        // padded with zeros), for a child resource and a compiled source alike.
+        return file.Write();
     }
 
     /// <summary>
@@ -231,13 +206,12 @@ public static partial class Source2ContainerAuthor
         ArgumentNullException.ThrowIfNull(dataRoot);
         ArgumentNullException.ThrowIfNull(snap);
         var spec = SpecByExtension[".vsnap"];
-        using var resource = new Resource();
-        ResourceVersionProp.SetValue(resource, spec.ResourceVersion);
+        var file = new ResourceFile { Version = spec.ResourceVersion };
         var red2Doc = BuildRed2Document(spec, ".vsnap", sourceFileName: "", sourceTextBytes: [], userDoc: null, saved);
-        resource.Blocks.Add(AuthoredKv3.Block(NarrowIntegers(red2Doc), KV3IDLookup.Get("generic"), BlockType.RED2, resource));
-        resource.Blocks.Add(AuthoredKv3.Block(dataRoot, KV3IDLookup.Get("generic"), BlockType.DATA, resource));
-        resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.SNAP, snap, resource));
-        return ValveLayout.Serialize(resource);
+        file.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(NarrowIntegers(red2Doc), Kv3Formats.Get("generic"))));
+        file.Blocks.Add(new ResourceBlock("DATA", Kv3Binary.Write(dataRoot, Kv3Formats.Get("generic"))));
+        file.Blocks.Add(new ResourceBlock("SNAP", snap));
+        return file.Write();
     }
 
     /// <summary>
@@ -263,26 +237,20 @@ public static partial class Source2ContainerAuthor
                 $"'{sourceExtension}' is compiled from its own source, so it records that source. "
               + "Use AuthorKv3Resource.");
 
-        using var resource = new Resource();
-        ResourceVersionProp.SetValue(resource, spec.ResourceVersion);
+        var file = new ResourceFile { Version = spec.ResourceVersion };
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var rerl = new ResourceExtRefList { Resource = resource };
-        foreach (var path in references)
-            if (!string.IsNullOrWhiteSpace(path) && seen.Add(path))
-                rerl.ResourceRefInfoList.Add(new ResourceExtRefList.ResourceReferenceInfo
-                {
-                    Id = Source2ResourceId.ForPath(path),
-                    Name = path,
-                });
-        if (rerl.ResourceRefInfoList.Count > 0)
-            resource.Blocks.Add(rerl);
+        // Sorted by V_stricmp_fast of the name, as RERL's one writer (rc 18016c0e0) sorts them.
+        var refs = EditInfo.Red2Sorted(references.Where(path => !string.IsNullOrWhiteSpace(path) && seen.Add(path)), path => path)
+            .Select(path => (Source2ResourceId.ForPath(path), path)).ToList();
+        if (refs.Count > 0)
+            file.Blocks.Add(new ResourceBlock("RERL", ResourceRefs.Write(refs, 0)));
 
         var red2Doc = BuildRed2Document(spec, sourceExtension, sourceFileName: "", sourceTextBytes: [], userDoc: null, savedSource, overrideFingerprint);
-        resource.Blocks.Add(AuthoredKv3.Block(NarrowIntegers(red2Doc), KV3IDLookup.Get("generic"), BlockType.RED2, resource));
-        resource.Blocks.Add(ResourceBuilder.RawBlock(BlockType.DATA, dataBytes, resource));
+        file.Blocks.Add(new ResourceBlock("RED2", Kv3Binary.Write(NarrowIntegers(red2Doc), Kv3Formats.Get("generic"))));
+        file.Blocks.Add(new ResourceBlock("DATA", dataBytes));
 
-        return ValveLayout.Serialize(resource);
+        return file.Write();
     }
 
     /// <summary>Build the RED2 CResourceEditInfo document resourcecompiler would

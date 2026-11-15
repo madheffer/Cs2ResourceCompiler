@@ -40,6 +40,27 @@ Still from outside, as plain NuGet packages with no patches:
 | ValvePak `Package` | template lookup in a VPK |
 | SkiaSharp | image decode and the `SKBitmap` texture decode returns |
 
+## Checked against CS2, not against VRF (user, 2026-11-15)
+
+The user's rule for the owned code: it must be 1:1 with CS2, and being equal to VRF does not show that.
+Several readers above were ported from VRF and proven equal to VRF only. Each row says what it is proven
+against today and the CS2 oracle it still needs. Nothing here may be called done on VRF agreement alone.
+
+| piece | proven against | CS2 evidence | still to do |
+|---|---|---|---|
+| container read/write, RERL | Valve's bytes | all 137,469 pak01 files round-trip byte for byte (`s2c container-parity`) | none |
+| KV3 v5 writer (`Kv3BlockWriter`) | Valve's bytes | 2026-11-15 `Kv3WriterAbProbe`: every v5 block of 13 pak01 types (5,027 blocks, 400 files a type) and of four Valve-compiled maps (de_mirage, cs_office, de_vertigo, ar_baggage: 9,689 blocks) read and written again equal Valve's, except two zstd `vmdl_c` blocks (de_vertigo, ar_baggage; the map line's old writer misses them too). The old writer (`Kv3V5Writer`) missed 343 `vmdl_c` and 32 `vnmclip_c` pak01 blocks this one gets | the zstd encoder on those two blocks; all of pak01 |
+| KV3 reader (`Kv3/Reading`, from VRF) | VRF's trees on 245,859 blocks; Valve's bytes through the writer probe above (a reader that dropped or retyped a value could not round-trip) | the probe's blocks | the legacy VKV3 and v1-v4 versions have no writer to round-trip: check against tier0's reader (decompile) |
+| texture decode (`Texture/Decoding`, from VRF) | VRF's pixels on 71,966 textures | none | the GPU's own decode of the same blocks (BCn is decoded by the hardware CS2 renders with; `Source2.Compiler.Gpu` can upload and read back), and rendersystem's CPU paths for formats it decodes itself |
+| animation decode (`Anim/`, from VRF) | VRF's bones on 15,195,587 frames | none | animationsystem's decode of the same clips (Frida on cubehost, or the decompiled segment decoders) |
+| skeleton, model internals, `Vbib` | VRF's values | none | the engine's bind pose and vertex fetch (cubehost), or the decompiled readers |
+| `VfxEval` (from VRF) | VRF's text | none | materialsystem2's evaluation of the same expressions |
+| material, texture and model compilers | Valve's bytes (RcReference, RC's own compiles) | the RC parity tests | none beyond the ledger's open items |
+
+The map compiler's readers (compiled shaders, `PhysAggregateData`, worlds, world nodes, smart props, entity
+lumps, nav, VXVS) are still VRF's on `split/maps`; they get the same treatment when they are ported
+(docs/MAP_SPLIT.md, "No VRF in either repo").
+
 ## Roadmap: what VRF still does for vpkstuff that we do not
 
 In order. The counts are uses in vpkstuff's own code (2026-10-14), so they show what each step

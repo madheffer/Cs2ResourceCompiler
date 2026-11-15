@@ -68,11 +68,11 @@ public class WorldNodeModelAuthorTests(ITestOutputHelper output)
     }
 
     /// <summary>The MVTX and MIDX blocks in file order.</summary>
-    internal static List<(BlockType Type, byte[] Bytes)> BufferBlocks(byte[] file)
+    internal static List<(string Type, byte[] Bytes)> BufferBlocks(byte[] file)
     {
         var blockOffset = BitConverter.ToUInt32(file, 8);
         var count = BitConverter.ToUInt32(file, 12);
-        var list = new List<(BlockType, byte[])>();
+        var list = new List<(string, byte[])>();
         for (int i = 0, at = 8 + (int)blockOffset; i < count; i++, at += 12)
         {
             var t = System.Text.Encoding.ASCII.GetString(file, at, 4);
@@ -80,7 +80,7 @@ public class WorldNodeModelAuthorTests(ITestOutputHelper output)
                 continue;
             var offset = BitConverter.ToUInt32(file, at + 4);
             var size = BitConverter.ToUInt32(file, at + 8);
-            list.Add((t == "MVTX" ? BlockType.MVTX : BlockType.MIDX, file.AsSpan(at + 4 + (int)offset, (int)size).ToArray()));
+            list.Add((t, file.AsSpan(at + 4 + (int)offset, (int)size).ToArray()));
         }
         return list;
     }

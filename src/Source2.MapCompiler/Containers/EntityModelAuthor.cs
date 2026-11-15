@@ -20,7 +20,7 @@ namespace Source2.Compiler;
 public static class EntityModelAuthor
 {
     /// <summary>One embedded mesh: its CTRL name, description and encoded buffers in block order.</summary>
-    public sealed record Mesh(string Name, WorldNodeModel Model, IReadOnlyList<(BlockType Type, byte[] Bytes)> Buffers, IReadOnlyList<string> Materials);
+    public sealed record Mesh(string Name, WorldNodeModel Model, IReadOnlyList<(string Type, byte[] Bytes)> Buffers, IReadOnlyList<string> Materials);
 
     public static KVObject Ctrl(IReadOnlyList<Mesh> meshes, int physBlock)
     {
@@ -116,11 +116,11 @@ public static class EntityModelAuthor
     {
         var generic = KV3IDLookup.Get("generic");
         using var resource = new Resource();
-        Source2ContainerAuthor.SetResourceVersion(resource, WorldNodeModelAuthor.ResourceVersion);
+        LegacyContainer.SetResourceVersion(resource, WorldNodeModelAuthor.ResourceVersion);
         foreach (var m in meshes)
         {
             foreach (var (type, bytes) in m.Buffers)
-                resource.Blocks.Add(ResourceBuilder.RawBlock(type, bytes, resource));
+                resource.Blocks.Add(ResourceBuilder.RawBlock(Enum.Parse<BlockType>(type), bytes, resource));
             resource.Blocks.Add(AuthoredKv3.Block(WorldNodeModelTrees.Mdat(m.Model), generic, BlockType.MDAT, resource));
         }
         var physBlock = resource.Blocks.Count;
