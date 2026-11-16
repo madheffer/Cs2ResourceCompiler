@@ -66,11 +66,16 @@ public static class NodeDraw
     /// floats a vertex, the position at <paramref name="positionOffset"/>;
     /// <paramref name="streams"/> describe them for the weld.
     /// </summary>
+    public static Result Build(float[] vertices, int stride, int positionOffset, int[] indices, IReadOnlyList<Physics.MeshWeld.Stream> streams,
+                               bool aggregate, float coneWeight)
+        => Build(vertices, stride, positionOffset, indices, streams, aggregate, coneWeight, false);
+
+    /// <summary>As above; <paramref name="corners"/> welds the mesh unrolled to its corners.</summary>
     /// <param name="corners">The mesh went through WRB_MeshesToModelDoc's round trip, which hands CMesh_Weld one
     /// vertex per corner in index order, indices 0..n-1 (capture_weldinput.py on Mako's pipec_2, ledger 320): the
     /// weld then visits corners in index order, so of two vertices within tolerance the one used first leads.</param>
     public static Result Build(float[] vertices, int stride, int positionOffset, int[] indices, IReadOnlyList<Physics.MeshWeld.Stream> streams,
-                               bool aggregate, float coneWeight, bool corners = false)
+                               bool aggregate, float coneWeight, bool corners)
     {
         var weldInput = vertices;
         var weldIndices = indices;
