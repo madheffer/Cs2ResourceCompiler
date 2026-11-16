@@ -66,10 +66,22 @@ public static class NodeDraw
     /// floats a vertex, the position at <paramref name="positionOffset"/>;
     /// <paramref name="streams"/> describe them for the weld.
     /// </summary>
+    /// <param name="corners">The mesh went through WRB_MeshesToModelDoc's round trip, which hands CMesh_Weld one
+    /// vertex per corner in index order, indices 0..n-1 (capture_weldinput.py on Mako's pipec_2, ledger 320): the
+    /// weld then visits corners in index order, so of two vertices within tolerance the one used first leads.</param>
     public static Result Build(float[] vertices, int stride, int positionOffset, int[] indices, IReadOnlyList<Physics.MeshWeld.Stream> streams,
-                               bool aggregate, float coneWeight)
+                               bool aggregate, float coneWeight, bool corners = false)
     {
-        var (welded, weldedIndices) = Physics.MeshWeld.Weld(vertices, stride, indices, streams, 1e-7f, true);
+        var weldInput = vertices;
+        var weldIndices = indices;
+        if (corners)
+        {
+            weldInput = new float[indices.Length * stride];
+            for (var i = 0; i < indices.Length; i++)
+                Array.Copy(vertices, indices[i] * stride, weldInput, i * stride, stride);
+            weldIndices = [.. Enumerable.Range(0, indices.Length)];
+        }
+        var (welded, weldedIndices) = Physics.MeshWeld.Weld(weldInput, stride, weldIndices, streams, 1e-7f, true);
         var count = welded.Length / stride;
         var positions = new float[count * 3];
         for (var v = 0; v < count; v++)
@@ -79,7 +91,15 @@ public static class NodeDraw
         var meshlets = new List<MeshoptMeshlets.Meshlet>();
         if (aggregate)
         {
-            var built = MeshoptMeshlets.Build(ordered, positions, count, 3, MeshletVertices, MeshletTriangles, MeshletTriangles, coneWeight);
+            // buildMeshlets sees the vertices renumbered by first use in the overdraw output
+            // (capture_meshletbuild.py on Mako, ledger 320); its meshlet vertices are mapped back.
+            var (firstUse, firstUseRemap) = MeshoptOptimizers.RenumberByFirstUse(ordered);
+            var firstUsePositions = new float[firstUseRemap.Length * 3];
+            for (var v = 0; v < firstUseRemap.Length; v++)
+                Array.Copy(positions, firstUseRemap[v] * 3, firstUsePositions, v * 3, 3);
+            var built = MeshoptMeshlets.Build(firstUse, firstUsePositions, firstUseRemap.Length, 3, MeshletVertices, MeshletTriangles, MeshletTriangles, coneWeight);
+            for (var v = 0; v < built.Vertices.Count; v++)
+                built.Vertices[v] = firstUseRemap[built.Vertices[v]];
             var final = new List<int>(ordered.Length + 3);
             foreach (var m in built.Meshlets)
             {

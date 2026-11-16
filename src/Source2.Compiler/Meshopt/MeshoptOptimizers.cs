@@ -260,9 +260,12 @@ public static class MeshoptOptimizers
             var invArea = area == 0f ? 0f : 1f / area;
             var length = MathF.Sqrt((ny * ny) + (nx * nx) + (nz * nz));
             var invLength = length != 0f ? 1f / length : 0f;
-            result[cl] = ((cx * invArea) - (mx / count)) * nx * invLength
-                + ((cy * invArea) - (my / count)) * ny * invLength
-                + ((cz * invArea) - (mz / count)) * nz * invLength;
+            // The normal is normalised first, then dotted with the offset: (c - mean) * (n * invLength)
+            // (1812c4767..1812c478a; ledger 320). (c - mean) * n * invLength puts some keys a bucket off.
+            float ux = nx * invLength, uy = ny * invLength, uz = nz * invLength;
+            result[cl] = (((cx * invArea) - (mx / count)) * ux)
+                + (((cy * invArea) - (my / count)) * uy)
+                + (((cz * invArea) - (mz / count)) * uz);
         }
         return result;
     }

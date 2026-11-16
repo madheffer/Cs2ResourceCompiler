@@ -117,7 +117,16 @@ public static class WorldNodeModels
             var streams = WeldStreams(first.Facts.Streams);
             var position = streams.First(s => s.Name == "position").First;
             var cone = NodeDraw.ConeWeight((first.Facts.Attributes & 0x100000000) != 0);
-            draws.Add(new DrawInput(first.Material, NodeDraw.Build(vertices, first.Stride, position, indices, streams, aggregate, cone),
+            // S2C_DUMP_DRAW=<file>|<material substring>: the draw's NodeDraw input as a JSON line (diagnostics).
+            if (Environment.GetEnvironmentVariable("S2C_DUMP_DRAW")?.Split('|') is [var dumpFile, var dumpMaterial]
+                && first.Material.Contains(dumpMaterial, StringComparison.OrdinalIgnoreCase))
+                File.AppendAllLines(dumpFile, [System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    model = name, material = first.Material, stride = first.Stride, vertices = vertices.Length / first.Stride,
+                    streams = streams.Select(s => new { name = s.Name, first = s.First, count = s.Count }),
+                    data = string.Concat(vertices.Select(v => BitConverter.SingleToUInt32Bits(v).ToString("x8"))), indices,
+                })]);
+            draws.Add(new DrawInput(first.Material, NodeDraw.Build(vertices, first.Stride, position, indices, streams, aggregate, cone, mapMesh),
                                     first.Stride, first.Facts.Streams, first.Facts));
         }
 

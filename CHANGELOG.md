@@ -3,6 +3,23 @@
 The `Source2.Compiler` package. Versions are `0.1.<commit count of main>`; one entry per published
 version that changes something a host sees.
 
+## Unreleased (overdraw sort keys)
+
+### Fixed
+- `MeshoptOptimizers.OptimizeOverdraw` scores a cluster as calculateSortData does: the offset from the mesh centre
+  dotted with the normal after it is normalised, `(c - mean) * (n * invLength)`; `(c - mean) * n * invLength` put
+  some clusters one key bucket off, so the draw's triangle order differed (ledger 320; Mako's
+  chainlink_fence_wire_002 aggregate).
+- `NodeDraw.Build` builds an aggregate's meshlets on the vertices renumbered by first use in the overdraw output, as
+  CMeshletBuilder passes them to meshopt_buildMeshlets (ledger 320).
+- A world node model's draw is welded unrolled, one vertex per corner in index order, as the ModelDoc round trip
+  hands CMesh_Weld its mesh: of two vertices within the weld's tolerances the one the index list uses first now
+  leads (`NodeDraw.Build`'s new `corners` argument, on for map meshes; ledger 320, Mako's pipec_2).
+
+### Added
+- `S2C_DUMP_DRAW=<file>|<material substring>` (diagnostics): `WorldNodeModels.Build` appends each matching draw's
+  NodeDraw input (streams, every float, indices) as a JSON line.
+
 ## Unreleased (aggregate base vertex, LOD fields)
 
 ### Fixed
