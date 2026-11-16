@@ -3,6 +3,18 @@
 The `Source2.Compiler` package. Versions are `0.1.<commit count of main>`; one entry per published
 version that changes something a host sees.
 
+## Unreleased (aggregate base vertex, LOD fields)
+
+### Fixed
+- An aggregate's draws rebase as resourcecompiler's UseBaseVertex does (`WorldNodeModel.Draw.BaseVertex`): a draw
+  keeps the current base while its vertex end less the base stays under 0x10000, else starts a new one, so the
+  index buffer stays 16-bit (ledger 318; Mako's train_steel_walkways_01 aggregates, 94,578 vertices).
+- An aggregate's fragments sort by CMesh +0x58 (the LOD mask) first, as WRB_BuildAggregate does.
+
+### Added
+- `WrbMeshEntry.LodOrigin` and `LodScale` (entry +0x204 and +0x1f8), which a host fills for baked LOD props to
+  build their LOD setups (ledger 318).
+
 ## Unreleased (draw alpha)
 
 ### Fixed

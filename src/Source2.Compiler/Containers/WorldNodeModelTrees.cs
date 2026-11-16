@@ -87,7 +87,7 @@ public static class WorldNodeModelTrees
         o.Add("m_rigidMeshParts", KVObject.Array());
         o.Add("m_rootBvhNodes", KVObject.Array());
         o.Add("m_nPrimitiveType", new KVObject("RENDER_PRIM_TRIANGLES"));
-        o.Add("m_nBaseVertex", I32(0));
+        o.Add("m_nBaseVertex", I32(d.BaseVertex));
         o.Add("m_nVertexCount", I32(d.VertexEnd));
         o.Add("m_nStartIndex", I32(d.StartIndex));
         o.Add("m_nIndexCount", I32(d.IndexCount));

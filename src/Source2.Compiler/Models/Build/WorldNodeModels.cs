@@ -212,9 +212,14 @@ public static class WorldNodeModels
             var vbs = strides.Select(st => new byte[totalVertices * st]).ToArray();
             var ib = new List<uint>();
             var vertexBase = 0;
+            // An aggregate's draws rebase (UseBaseVertex, see WorldNodeModel.Draw.BaseVertex): 1802ed7f0's
+            // test (count - base) + offset < 0x10000 keeps the base, else the draw starts a new one.
+            var baseVertex = 0;
             foreach (var d in setDraws)
             {
                 var g = d.Geometry;
+                if (aggregate && (g.VertexCount - baseVertex) + vertexBase >= 0x10000)
+                    baseVertex = vertexBase;
                 var offsets = d.Offsets ?? StreamOffsets(d.Streams);
                 if (ObserveTangentFrame is not null)
                     ObservedDraw = $"{name}|{d.Material}{(d.RenormaliseFrame ? "|renormalised" : "")}";
@@ -243,7 +248,7 @@ public static class WorldNodeModels
                         meshlets.Add(new WorldNodeModel.Meshlet(pmin, pmax, c.Item1, c.Item2, c.Item3, c.Item4, vertexBase,
                                                                 (startIndex / 3) + m.TriangleOffset, m.VertexCount, m.TriangleCount - (padded ? 1 : 0)));
                     }
-                ib.AddRange(g.Indices.Select(i => (uint)(i + vertexBase)));
+                ib.AddRange(g.Indices.Select(i => (uint)(i + vertexBase - baseVertex)));
                 var uv = TexcoordValues(g, d.Stride, offsets);
                 var density = uv == null ? 0f : UvDensity.Compute(positions, uv, g.DensityIndices ?? g.Indices);
                 // S2C_DUMP_UVD=<file>|<model substring>: each draw's density inputs, per index as
@@ -266,7 +271,7 @@ public static class WorldNodeModels
                 // that (Mako's offseclight_custom; AddDrawDescriptors 1802ed7f0 reads the CMesh's tint).
                 var tint = aggregate ? (d.Facts.DebugColor ? DrawTint(d.Facts with { Field28 = Vector4.One }) : Vector4.One) : DrawTint(d.Facts);
                 described[d] = new WorldNodeModel.Draw(d.Material, new Vector3(tint.X, tint.Y, tint.Z), density, firstMeshlet, meshlets.Count - firstMeshlet,
-                    vertexBase, bufferCount > 1 || (mapMesh && factsOf(d).Depth.Count > 0) ? 0 : 255, vertexBase + g.VertexCount, startIndex, g.Indices.Length, indexBuffers.Count, handles,
+                    vertexBase - baseVertex, bufferCount > 1 || (mapMesh && factsOf(d).Depth.Count > 0) ? 0 : 255, vertexBase + g.VertexCount - baseVertex, startIndex, g.Indices.Length, indexBuffers.Count, handles,
                     d.Streams.Any(s => s.Name.Equals("PerVertexLighting", StringComparison.OrdinalIgnoreCase)),
                     // A field the material has no input for (atixref's milwall001 object keeps
                     // VertexPaintTintColor and VertexPaintBlendParams) marks the draw unmatched;
@@ -279,6 +284,7 @@ public static class WorldNodeModels
                     CompressedNormalTangent = d.Streams.Any(s => s.Name.Equals("normal", StringComparison.OrdinalIgnoreCase)),
                     // The tint's alpha, not gamma-expanded (1802ed7f0 copies CMesh +0x160 as it is); 1 untinted.
                     Alpha = tint.W,
+                    BaseVertex = baseVertex,
                 };
                 vertexBase += g.VertexCount;
             }
@@ -363,7 +369,8 @@ public static class WorldNodeModels
     // vertex copies go to the group's entries ("Computing tangents mesh %i, %i v -> %i"). A weld can leave a tangent
     // off unit length (atixref: brick02's 243-vertex fragment, |t|^2 0.9927 at vertex 236; A.14 capture), so
     // Valve recomputes it here, before the DmeMesh round trip renormalises (ledger 253).
-    // BuildAggregate then sorts: +0x58 (0 for every map mesh), welded vertex count descending, then memcmp of the vertices.
+    // BuildAggregate then sorts: +0x58 ascending (0 for a map mesh, the LOD mask of a baked LOD prop's), welded vertex
+    // count descending, then memcmp of the vertices.
     private static List<WorldNodeEntry> FragmentOrder(IReadOnlyList<WorldNodeEntry> meshes)
     {
         var welded = meshes.Select(e =>
@@ -373,6 +380,9 @@ public static class WorldNodeModels
         }).ToArray();
         MsvcSort.Sort(welded, (a, b) =>
         {
+            // CMesh +0x58 ascending first: 0 for a map mesh, a baked LOD prop's LOD mask (ledger 318).
+            if (a.Facts.Mesh58 != b.Facts.Mesh58)
+                return a.Facts.Mesh58 < b.Facts.Mesh58;
             var (na, nb) = (a.Vertices.Length / a.Stride, b.Vertices.Length / b.Stride);
             if (na != nb)
                 return nb <= na;

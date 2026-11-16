@@ -88,6 +88,16 @@ public sealed record WrbMeshEntry
     /// +-16 (FUN_180d4a120), which GroupAggregates' texcoord promotion reads.
     /// </summary>
     public bool TexcoordsPast16 { get; init; }
+    /// <summary>
+    /// +0x1f8: the prop's scale per axis. WRB_BuildAggregate (180268e80) gives a LOD setup the largest |component|
+    /// as its m_fMaxObjectScale.
+    /// </summary>
+    public Vector3 LodScale { get; init; } = Vector3.One;
+    /// <summary>
+    /// +0x204: the prop's LOD origin, one point for all its entries (Mako's baked cage lights: the centre of its
+    /// meshes' placed bounds, both LODs). WRB_BuildAggregate's LOD setup takes it as m_vLODOrigin.
+    /// </summary>
+    public Vector3 LodOrigin { get; init; }
 
     /// <summary>FUN_180d4a120 on every texcoord stream of a vertex array: |u| or |v| past 16.</summary>
     public static bool TexcoordsPastSixteen(float[] vertices, int stride, IEnumerable<Physics.MeshWeld.Stream> streams)

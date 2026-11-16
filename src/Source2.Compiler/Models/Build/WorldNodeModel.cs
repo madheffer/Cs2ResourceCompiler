@@ -66,6 +66,16 @@ public sealed record WorldNodeModel(
         /// as it is when the mesh has a tint (+0x14f), else 1 (Mako's overlay 7527, renderAmt 212: 0.83137256).
         /// </summary>
         public float Alpha { get; init; } = 1f;
+
+        /// <summary>
+        /// m_nBaseVertex: the vertex the draw's indices count from. AddDrawDescriptors (1802ed7f0) rebases only a
+        /// mesh with m_bUseBaseVertex (CMesh +0x14e), which Step_SplittingMeshWith (180260710) sets on every
+        /// aggregate fragment: a draw keeps the current base while its vertex end less the base stays under
+        /// 0x10000, else its own first vertex becomes the base. <see cref="AppliedIndexOffset"/> and
+        /// <see cref="VertexEnd"/> count from it (Mako's train_steel_walkways_01 aggregates, 94,578 vertices:
+        /// base 61,560 from the second draw on, 16-bit indices).
+        /// </summary>
+        public int BaseVertex { get; init; }
     }
 
     /// <summary>A scene object: its bounds, draw calls, per-draw bounds and meshlets.</summary>
