@@ -22,6 +22,11 @@ public static class Kv3ReadLimit
     /// <summary>16M (16,777,216). The most values counted in a real block is 5,351,200 (de_boulder's world_physics PHYS), every node and typed-array element included; a value costs about 85 bytes of memory.</summary>
     public const long DefaultMaxValues = 16L << 20;
 
+    /// <summary>32M (33,554,432): the value limit inside <see cref="UseTrusted"/>. CS2 1.41.9.9 (2026-11-18)
+    /// ships csgo_environment_blend's pixel shaders (pc_50 136,077,566 bytes, vulkan_50 173,238,965) with between
+    /// 17M and 18M values in one block, over <see cref="DefaultMaxValues"/>; reading one allocates about 1.2 GB.</summary>
+    public const long TrustedMaxValues = 32L << 20;
+
     private static readonly AsyncLocal<(long Bytes, long Values)?> s_current = new();
 
     /// <summary>The byte limit in force here: the innermost <see cref="Use(long, long)"/>, else the default.</summary>
@@ -39,6 +44,19 @@ public static class Kv3ReadLimit
         ArgumentOutOfRangeException.ThrowIfNegative(maxValues);
         var outer = s_current.Value;
         s_current.Value = (Math.Min(maxUncompressedBytes, MaxUncompressedBytes), Math.Min(maxValues, MaxValues));
+        return new Scope(outer);
+    }
+
+    /// <summary>
+    /// Read files the host vouches for with the value limit at <see cref="TrustedMaxValues"/> until the result is
+    /// disposed; the byte limit in force stays. Unlike <see cref="Use(long, long)"/> this raises the limit, also past
+    /// an enclosing scope's, so open it only around content that does not come from a user: the game install's own
+    /// shader packages, say, never an uploaded file. A <see cref="Use(long, long)"/> inside it lowers as usual.
+    /// </summary>
+    public static IDisposable UseTrusted()
+    {
+        var outer = s_current.Value;
+        s_current.Value = (MaxUncompressedBytes, TrustedMaxValues);
         return new Scope(outer);
     }
 

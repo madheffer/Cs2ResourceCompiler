@@ -3,6 +3,14 @@
 The `Source2.Compiler` package. Versions are `0.1.<commit count of main>`; one entry per published
 version that changes something a host sees.
 
+## Unreleased (trusted KV3 read scope)
+
+### Added
+- `Kv3ReadLimit.UseTrusted()` raises the value limit to `TrustedMaxValues` (32M) for content the host vouches for,
+  such as the game install's shader packages. CS2 1.41.9.9's csgo_environment_blend pixel shaders hold 17M to 18M
+  values in one block, over the 16M default, so every map with blend materials failed to read them. The default
+  limit, the byte limit and `Use` are unchanged.
+
 ## Unreleased (overdraw sort keys)
 
 ### Fixed
